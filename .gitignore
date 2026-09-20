@@ -42,15 +42,19 @@ server/local.env
 **/keys/
 !**/keys/.gitkeep
 
-# local SQLite + runtime data (do not push live candidate DB)
+# local SQLite + runtime data (do not push live candidate DB by default)
 *.sqlite
 *.sqlite-*
 *.db
 *.db-journal
+# Allow the portable seed DB used for Vercel first boot
+!database/database.sqlite
 /prisma/dev.db
 /prisma/dev.db-journal
 /data/
-/database/
+/database/**
+!/database/
+!/database/database.sqlite
 server/data/
 server/uploads/
 server/tmp/

@@ -87,7 +87,11 @@ function pickRicherDb(currentPath, candidatePath) {
     try {
         const curSize = fs.statSync(currentPath).size;
         const srcSize = fs.statSync(candidatePath).size;
-        if (srcSize > curSize * 2 && curSize < 512 * 1024) {
+        // On Vercel /tmp often keeps a tiny empty schema from an earlier cold start.
+        // Prefer the bundled seed whenever it is clearly richer.
+        const vercelTiny = !!process.env.VERCEL && curSize < 1024 * 1024 && srcSize > curSize * 2;
+        const localTiny = srcSize > curSize * 2 && curSize < 512 * 1024;
+        if (vercelTiny || localTiny) {
             const stamp = new Date().toISOString().replace(/[:.]/g, '-');
             const backup = `${currentPath}.empty-backup-${stamp}`;
             fs.copyFileSync(currentPath, backup);
