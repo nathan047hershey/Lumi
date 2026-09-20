@@ -70,11 +70,14 @@ async function adoptServerUrls(settings) {
     } catch {
         return settings;
     }
-    const inferred = tabs.map((t) => urlsFromPage(t.url || '')).find(Boolean);
+    // Prefer Vercel / hosted desk whenever a Lumi tab is open — overrides stale :9017.
+    const inferredList = tabs.map((t) => urlsFromPage(t.url || '')).filter(Boolean);
+    const vercel = inferredList.find((u) => /\.vercel\.(app|sh)|\/api$/i.test(u.apiBaseUrl));
+    const inferred = vercel || inferredList[0];
     if (!inferred) return settings;
     const storedIsLocal = isLoopbackUrl(settings.apiBaseUrl) || !settings.apiBaseUrl;
     const remote = !isLoopbackUrl(inferred.apiBaseUrl);
-    if (storedIsLocal && remote) {
+    if ((storedIsLocal && remote) || (vercel && settings.apiBaseUrl !== inferred.apiBaseUrl)) {
         await saveSettings(inferred);
         return { ...settings, ...inferred };
     }

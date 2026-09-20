@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lumi",
-  "version": "1.9.51",
+  "version": "1.9.52",
   "description": "Autofill selects like a human: open → see options → match → click.",
   "permissions": [
     "storage",

@@ -1,9 +1,9 @@
 /**
  * Keep the extension linked to the Lumi API.
- * Local Express (:9017) uses WebSocket /extension/live.
- * Vercel / Next serverless has no persistent WS — poll /extension/version over HTTP instead.
+ * Never open a WebSocket unless the API is reachable and advertises a socket URL.
+ * Vercel / Next / down local servers use HTTP /extension/version polling only.
  */
-import { getSettings } from './api.js';
+import { getSettings, saveSettings, normalizeBaseUrl } from './api.js';
 
 const LOCAL_VER = () => chrome.runtime.getManifest()?.version || '0';
 
@@ -18,12 +18,41 @@ function cmpVer(a, b) {
     return 0;
 }
 
-/** True when the API host cannot offer a long-lived /extension/live socket. */
+function isLoopbackUrl(url) {
+    return /localhost|127\.0\.0\.1/i.test(String(url || ''));
+}
+
+/** Prefer an open Lumi desk tab (especially Vercel) over stale localhost :9017 settings. */
+export async function adoptDeskUrlsFromTabs() {
+    let tabs = [];
+    try {
+        tabs = await chrome.tabs.query({});
+    } catch {
+        return null;
+    }
+    for (const tab of tabs) {
+        try {
+            const u = new URL(tab.url || '');
+            if (!/^https?:$/i.test(u.protocol)) continue;
+            const host = u.hostname.toLowerCase();
+            if (host.endsWith('.vercel.app') || host.endsWith('.vercel.sh')) {
+                const origin = `${u.protocol}//${u.hostname}`;
+                const patch = {
+                    apiBaseUrl: `${origin}/api`,
+                    frontendBaseUrl: origin
+                };
+                await saveSettings(patch);
+                return patch;
+            }
+        } catch { /* next tab */ }
+    }
+    return null;
+}
+
 function isHttpOnlyLiveHost(apiBaseUrl) {
     const base = String(apiBaseUrl || '');
     if (!base) return true;
     if (/vercel\.app|vercel\.sh|netlify\.app|cloudflare\.pages/i.test(base)) return true;
-    // Next.js local / production UI on :3000 proxies API under /api — no WS upgrade.
     if (/:(3000)(?:\/|$)/.test(base) || /\/api\/?$/.test(base)) return true;
     return false;
 }
@@ -67,11 +96,9 @@ async function onServerVersion(serverVersion, live = false) {
     if (!newer) return;
     try {
         chrome.runtime.requestUpdateCheck((status) => {
-            if (status === 'update_available') {
-                chrome.runtime.reload();
-            }
+            if (status === 'update_available') chrome.runtime.reload();
         });
-    } catch { /* unpacked installs ignore this */ }
+    } catch { /* unpacked */ }
     try {
         chrome.notifications.create('lumi-update', {
             type: 'basic',
@@ -82,24 +109,38 @@ async function onServerVersion(serverVersion, live = false) {
     } catch { /* ignore */ }
 }
 
+async function fetchVersion(apiBaseUrl) {
+    const url = versionUrlFromApi(apiBaseUrl);
+    if (!url) return null;
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 4000);
+    try {
+        const res = await fetch(url, { method: 'GET', cache: 'no-store', signal: controller.signal });
+        if (!res.ok) return null;
+        return await res.json();
+    } catch {
+        return null;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
 async function pollVersionHttp() {
     const settings = await getSettings();
-    const url = versionUrlFromApi(settings.apiBaseUrl);
-    if (!url) {
-        await mark('offline', { lumiLiveError: 'API URL not set' });
-        return;
-    }
-    try {
-        const res = await fetch(url, { method: 'GET', cache: 'no-store' });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        await onServerVersion(data?.version || '', true);
-    } catch (err) {
+    const data = await fetchVersion(settings.apiBaseUrl);
+    if (!data) {
         await mark('offline', {
-            lumiLiveError: err?.message || String(err),
+            lumiLiveError: `Cannot reach ${settings.apiBaseUrl}. Set API to https://YOUR-APP.vercel.app/api`,
             lumiLiveMode: 'http'
         });
+        return null;
     }
+    await onServerVersion(data.version || '', true);
+    await mark(
+        socket && socket.readyState === 1 ? 'connected' : 'connected',
+        { lumiLiveMode: 'http', lumiLiveError: '' }
+    );
+    return data;
 }
 
 function startHttpPoll() {
@@ -129,12 +170,32 @@ function scheduleReconnect() {
     }, 30000);
 }
 
+/**
+ * Open WS only when:
+ * - host is not serverless, AND
+ * - /extension/version is reachable, AND
+ * - version payload includes a socket URL (local Express advertises it; Vercel returns null)
+ */
 export async function connectLiveLink() {
+    // Auto-fix stale localhost when the Vercel desk is open.
+    const adopted = await adoptDeskUrlsFromTabs();
     const settings = await getSettings();
-    const api = settings.apiBaseUrl;
+    const api = normalizeBaseUrl(adopted?.apiBaseUrl || settings.apiBaseUrl);
 
-    // Serverless / Next hosts: never open WS (avoids ERR_CONNECTION_REFUSED spam).
-    if (isHttpOnlyLiveHost(api)) {
+    if (isHttpOnlyLiveHost(api) || isLoopbackUrl(api)) {
+        // Loopback :9017 with no local server → never touch WebSocket (stops console spam).
+        startHttpPoll();
+        return;
+    }
+
+    const version = await fetchVersion(api);
+    if (!version) {
+        startHttpPoll();
+        return;
+    }
+    await onServerVersion(version.version || '', true);
+
+    if (!version.socket || version.liveMode === 'http') {
         startHttpPoll();
         return;
     }
@@ -164,17 +225,14 @@ export async function connectLiveLink() {
     socket.onmessage = (ev) => {
         let msg = null;
         try { msg = JSON.parse(ev.data); } catch { msg = null; }
-        const ver = msg?.version;
-        if (ver) onServerVersion(ver, true).catch(() => {});
+        if (msg?.version) onServerVersion(msg.version, true).catch(() => {});
     };
     socket.onerror = () => {
-        // Browser still logs the failed handshake once; we fall back to HTTP.
         mark('offline', { lumiLiveMode: 'ws-error' });
     };
     socket.onclose = () => {
         socket = null;
         if (!opened) {
-            // Connection refused / no WS server — switch to HTTP polling permanently for this session.
             startHttpPoll();
             return;
         }
