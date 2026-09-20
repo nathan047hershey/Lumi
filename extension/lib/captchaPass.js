@@ -394,7 +394,7 @@ export const HELPER_EXTENSION_IDS = {
 
 /**
  * Probe whether NopeCHA / Buster are installed in this Chrome profile.
- * Uses chrome.management when available.
+ * Uses chrome.management when the optional permission is granted.
  */
 export async function probeCaptchaHelpers() {
     const result = {
@@ -406,6 +406,15 @@ export async function probeCaptchaHelpers() {
     try {
         if (!chrome?.management?.getAll) {
             return result;
+        }
+        if (chrome.permissions?.contains) {
+            const has = await chrome.permissions.contains({ permissions: ['management'] });
+            if (!has && chrome.permissions.request) {
+                const granted = await chrome.permissions.request({ permissions: ['management'] });
+                if (!granted) return result;
+            } else if (!has) {
+                return result;
+            }
         }
         const all = await chrome.management.getAll();
         result.probed = true;

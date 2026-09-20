@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Lumi",
-  "version": "1.9.52",
-  "description": "Autofill selects like a human: open → see options → match → click.",
+  "name": "Lumi Auto Bidder",
+  "version": "2.0.0",
+  "description": "Connect to Lumi to autofill job applications, sync Outlook mail OTPs, and run guided auto-bid fills.",
   "permissions": [
     "storage",
     "activeTab",
@@ -10,34 +10,25 @@
     "scripting",
     "notifications",
     "clipboardWrite",
-    "debugger",
-    "management",
     "alarms"
+  ],
+  "optional_permissions": [
+    "debugger",
+    "management"
   ],
   "host_permissions": [
     "<all_urls>",
-    "http://localhost:9017/*",
-    "http://127.0.0.1:9017/*",
-    "http://localhost:8001/*",
-    "http://127.0.0.1:8001/*",
-    "http://localhost:3000/*",
-    "http://127.0.0.1:3000/*",
     "https://*.vercel.app/*",
-    "https://*.vercel.sh/*"
+    "https://*.vercel.sh/*",
+    "http://localhost/*",
+    "http://127.0.0.1/*"
   ],
   "externally_connectable": {
     "matches": [
-      "http://localhost:5173/*",
-      "http://127.0.0.1:5173/*",
-      "http://localhost:3000/*",
-      "http://127.0.0.1:3000/*",
-      "http://localhost:4173/*",
-      "http://127.0.0.1:4173/*",
-      "http://localhost:9017/*",
-      "http://127.0.0.1:9017/*",
-      "http://*/*",
       "https://*.vercel.app/*",
-      "https://*.vercel.sh/*"
+      "https://*.vercel.sh/*",
+      "http://localhost/*",
+      "http://127.0.0.1/*"
     ]
   },
   "background": {
@@ -46,7 +37,7 @@
   },
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Lumi",
+    "default_title": "Lumi Auto Bidder",
     "default_icon": {
       "16": "icons/icon16.png",
       "48": "icons/icon48.png",
@@ -100,10 +91,6 @@
         "http://127.0.0.1:4173/*",
         "http://localhost:9017/*",
         "http://127.0.0.1:9017/*",
-        "http://*:5173/*",
-        "http://*:3000/*",
-        "http://*:4173/*",
-        "http://*:9017/*",
         "https://*.vercel.app/*",
         "https://*.vercel.sh/*"
       ],
@@ -120,10 +107,6 @@
         "http://127.0.0.1:4173/*",
         "http://localhost:9017/*",
         "http://127.0.0.1:9017/*",
-        "http://*:5173/*",
-        "http://*:3000/*",
-        "http://*:4173/*",
-        "http://*:9017/*",
         "https://*.vercel.app/*",
         "https://*.vercel.sh/*"
       ],

@@ -433,12 +433,33 @@ export async function logCourseEvent(applicationId, eventType, meta = {}) {
 
 const pageDebuggerTabs = new Set();
 
+async function ensureDebuggerPermission() {
+    if (!chrome.debugger) return false;
+    try {
+        if (chrome.permissions?.contains) {
+            const has = await chrome.permissions.contains({ permissions: ['debugger'] });
+            if (has) return true;
+            if (chrome.permissions.request) {
+                return await chrome.permissions.request({ permissions: ['debugger'] });
+            }
+        }
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
 function isJobApplyAppUrl(u) {
-    return /localhost:5173|127\.0\.0\.1:5173|localhost:3000|127\.0\.0\.1:3000/i.test(u || '');
+    return /localhost:5173|127\.0\.0\.1:5173|localhost:3000|127\.0\.0\.1:3000|vercel\.app/i.test(u || '');
 }
 
 export async function attachPageDebugger(tabId) {
     if (!tabId) return false;
+    const ok = await ensureDebuggerPermission();
+    if (!ok) {
+        console.warn('[bidder] debugger permission not granted — continuing without CDP');
+        return false;
+    }
     try {
         await chrome.debugger.attach({ tabId }, '1.3');
         pageDebuggerTabs.add(tabId);
