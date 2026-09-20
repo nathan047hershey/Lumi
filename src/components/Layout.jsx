@@ -142,6 +142,7 @@ function buildNavTree({ isAdmin, isCaller, isManagerOnly, isDeveloperOnly, hasMa
                     ]
                 },
                 { to: '/user/generate', label: 'Resume', icon: FileText, match: ['/user/generate'] },
+                { to: '/admin/mailbox', label: 'Mailbox', icon: Mail, match: ['/admin/mailbox', '/user/inbox'] },
                 {
                     id: 'people',
                     label: 'People',
@@ -203,7 +204,7 @@ function buildNavTree({ isAdmin, isCaller, isManagerOnly, isDeveloperOnly, hasMa
             },
             { to: '/user/generate', label: 'Resume', icon: FileText, match: ['/user/generate'] },
             { to: '/user/cv-quality', label: 'CV Quality', icon: ClipboardList, match: ['/user/cv-quality'] },
-            { to: '/user/inbox', label: 'Inbox', icon: Mail, match: ['/user/inbox'] }
+            { to: '/user/inbox', label: 'Mailbox', icon: Mail, match: ['/user/inbox'] }
         ],
         more
     };

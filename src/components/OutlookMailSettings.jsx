@@ -57,7 +57,7 @@ export default function OutlookMailSettings({ className = '' }) {
     const disconnectAll = async () => {
         if (!window.confirm('Remove ALL mailboxes?')) return;
         setBusy(true);
-        try { await userAPI.deleteOutlook(); refresh(); setMsg('All removed.'); }
+        try { await userAPI.disconnectOutlook(); refresh(); setMsg('All removed.'); }
         catch (err) { setMsg(err.response?.data?.error || err.message); }
         finally { setBusy(false); }
     };

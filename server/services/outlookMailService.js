@@ -218,8 +218,10 @@ function ensureTables() {
       )
     `);
     try { db.run(`ALTER TABLE outlook_messages ADD COLUMN mailbox_id INTEGER`); } catch (_) { /* exists */ }
+    try { db.run(`ALTER TABLE outlook_messages ADD COLUMN folder TEXT DEFAULT 'inbox'`); } catch (_) { /* exists */ }
     db.run(`CREATE INDEX IF NOT EXISTS idx_outlook_msg_user_recv ON outlook_messages(user_id, received_at DESC)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_outlook_msg_otp ON outlook_messages(user_id, otp_code)`);
+    db.run(`CREATE INDEX IF NOT EXISTS idx_outlook_msg_folder ON outlook_messages(user_id, folder, received_at DESC)`);
     try { saveDatabase(); } catch (_) { /* ignore */ }
 }
 
@@ -335,18 +337,20 @@ function htmlToText(html) {
 
 function upsertInboundMessage(userId, msg) {
     ensureTables();
+    const folder = String(msg.folder || 'inbox').toLowerCase() || 'inbox';
     runQuery(
         `INSERT INTO outlook_messages (
             user_id, mailbox_id, graph_id, subject, from_address, from_name, received_at,
-            body_preview, body_text, otp_code, is_read
-         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            body_preview, body_text, otp_code, is_read, folder
+         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
          ON CONFLICT(user_id, graph_id) DO UPDATE SET
             mailbox_id = COALESCE(excluded.mailbox_id, outlook_messages.mailbox_id),
             subject = excluded.subject,
             body_preview = excluded.body_preview,
             body_text = excluded.body_text,
             otp_code = COALESCE(excluded.otp_code, outlook_messages.otp_code),
-            is_read = excluded.is_read`,
+            is_read = excluded.is_read,
+            folder = COALESCE(excluded.folder, outlook_messages.folder)`,
         [
             userId,
             msg.mailbox_id || null,
@@ -358,7 +362,8 @@ function upsertInboundMessage(userId, msg) {
             msg.body_preview || '',
             (msg.body_text || '').slice(0, 20000),
             msg.otp_code || null,
-            msg.is_read ? 1 : 0
+            msg.is_read ? 1 : 0,
+            folder
         ]
     );
     return msg.otp_code || null;
@@ -632,7 +637,14 @@ async function refreshProfile(mailboxId) {
     return { email, display_name: me.displayName || null };
 }
 
-function upsertMessage(userId, mailboxId, msg) {
+const SYNC_FOLDERS = [
+    { id: 'inbox', path: 'inbox' },
+    { id: 'junkemail', path: 'junkemail' },
+    { id: 'sentitems', path: 'sentitems' },
+    { id: 'drafts', path: 'drafts' }
+];
+
+function upsertMessage(userId, mailboxId, msg, folder = 'inbox') {
     const from = msg.from?.emailAddress || {};
     const bodyText = msg.body?.contentType === 'html'
         ? htmlToText(msg.body?.content)
@@ -648,8 +660,23 @@ function upsertMessage(userId, mailboxId, msg) {
         body_preview: msg.bodyPreview || '',
         body_text: bodyText,
         otp_code: otp,
-        is_read: msg.isRead ? 1 : 0
+        is_read: msg.isRead ? 1 : 0,
+        folder
     });
+}
+
+async function syncFolder(mailbox, folderSpec) {
+    const data = await graphGet(mailbox.id, `/me/mailFolders/${folderSpec.path}/messages`, {
+        $top: MAX_SYNC,
+        $orderby: 'receivedDateTime desc',
+        $select: 'id,subject,from,receivedDateTime,bodyPreview,body,isRead'
+    });
+    const list = Array.isArray(data?.value) ? data.value : [];
+    let otps = 0;
+    for (const msg of list) {
+        if (upsertMessage(mailbox.user_id, mailbox.id, msg, folderSpec.id)) otps += 1;
+    }
+    return { folder: folderSpec.id, synced: list.length, withOtp: otps };
 }
 
 async function syncInbox(mailboxIdOrUserId, maybeUserId) {
@@ -661,23 +688,37 @@ async function syncInbox(mailboxIdOrUserId, maybeUserId) {
         return syncAllMailboxesForUser(mailboxIdOrUserId);
     }
     if (!mailbox) throw new Error('mailbox not found');
-    const uid = mailbox.user_id;
     try {
-        const data = await graphGet(mailbox.id, '/me/mailFolders/inbox/messages', {
-            $top: MAX_SYNC,
-            $orderby: 'receivedDateTime desc',
-            $select: 'id,subject,from,receivedDateTime,bodyPreview,body,isRead'
-        });
-        const list = Array.isArray(data?.value) ? data.value : [];
+        const folders = [];
+        let synced = 0;
         let otps = 0;
-        for (const msg of list) {
-            if (upsertMessage(uid, mailbox.id, msg)) otps += 1;
+        for (const folderSpec of SYNC_FOLDERS) {
+            try {
+                const result = await syncFolder(mailbox, folderSpec);
+                folders.push(result);
+                synced += result.synced;
+                otps += result.withOtp;
+            } catch (folderErr) {
+                folders.push({
+                    folder: folderSpec.id,
+                    synced: 0,
+                    withOtp: 0,
+                    error: folderErr?.message || String(folderErr)
+                });
+            }
         }
         runQuery(
             `UPDATE outlook_mailboxes SET last_sync_at = ?, last_error = NULL, updated_at = ? WHERE id = ?`,
             [new Date().toISOString(), new Date().toISOString(), mailbox.id]
         );
-        return { ok: true, mailbox_id: mailbox.id, email: mailbox.email, synced: list.length, withOtp: otps };
+        return {
+            ok: true,
+            mailbox_id: mailbox.id,
+            email: mailbox.email,
+            synced,
+            withOtp: otps,
+            folders
+        };
     } catch (err) {
         const msg = err?.message || String(err);
         runQuery(
@@ -701,17 +742,64 @@ async function syncAllMailboxesForUser(userId) {
     return { ok: true, mailboxes: results.length, results };
 }
 
-function listMessages(userId, { limit = 30 } = {}) {
+function listMessages(userId, { limit = 30, mailbox_id = null, folder = null } = {}) {
     ensureTables();
-    return getAll(
+    const params = [userId];
+    let sql = `
+        SELECT id, mailbox_id, graph_id, subject, from_address, from_name, received_at,
+               body_preview, body_text, otp_code, is_read, created_at,
+               COALESCE(folder, 'inbox') AS folder
+        FROM outlook_messages
+        WHERE user_id = ?`;
+    if (mailbox_id != null && mailbox_id !== '' && mailbox_id !== 'all') {
+        sql += ` AND mailbox_id = ?`;
+        params.push(Number(mailbox_id));
+    }
+    if (folder && folder !== 'all') {
+        sql += ` AND COALESCE(folder, 'inbox') = ?`;
+        params.push(String(folder).toLowerCase());
+    }
+    sql += ` ORDER BY received_at DESC, id DESC LIMIT ?`;
+    params.push(Math.min(200, Math.max(1, Number(limit) || 30)));
+    return getAll(sql, params);
+}
+
+function getMessage(userId, messageId) {
+    ensureTables();
+    return getOne(
         `SELECT id, mailbox_id, graph_id, subject, from_address, from_name, received_at,
-                body_preview, otp_code, is_read, created_at
+                body_preview, body_text, otp_code, is_read, created_at,
+                COALESCE(folder, 'inbox') AS folder
          FROM outlook_messages
-         WHERE user_id = ?
-         ORDER BY received_at DESC, id DESC
-         LIMIT ?`,
-        [userId, Math.min(100, Math.max(1, Number(limit) || 30))]
+         WHERE user_id = ? AND id = ?`,
+        [userId, Number(messageId)]
+    ) || null;
+}
+
+function markMessageRead(userId, messageId, isRead = true) {
+    ensureTables();
+    runQuery(
+        `UPDATE outlook_messages SET is_read = ? WHERE user_id = ? AND id = ?`,
+        [isRead ? 1 : 0, userId, Number(messageId)]
     );
+    return getMessage(userId, messageId);
+}
+
+function folderCounts(userId, mailboxId = null) {
+    ensureTables();
+    const params = [userId];
+    let sql = `
+        SELECT COALESCE(folder, 'inbox') AS folder,
+               COUNT(*) AS total,
+               SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread
+        FROM outlook_messages
+        WHERE user_id = ?`;
+    if (mailboxId != null && mailboxId !== '' && mailboxId !== 'all') {
+        sql += ` AND mailbox_id = ?`;
+        params.push(Number(mailboxId));
+    }
+    sql += ` GROUP BY COALESCE(folder, 'inbox')`;
+    return getAll(sql, params);
 }
 
 function findLatestOtp(userId, { afterIso = null, fromHint = null } = {}) {
@@ -1050,6 +1138,9 @@ module.exports = {
     syncInbox,
     syncAllMailboxesForUser,
     listMessages,
+    getMessage,
+    markMessageRead,
+    folderCounts,
     findLatestOtp,
     waitForOtp,
     disconnect,

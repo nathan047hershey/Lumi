@@ -4680,12 +4680,38 @@ router.post('/outlook/sync', async (req, res) => {
 
 router.get('/outlook/messages', (req, res) => {
     try {
-        const limit = parseInt(req.query.limit, 10) || 30;
-        const messages = outlookMail.listMessages(req.user.id, { limit });
-        res.json({ messages });
+        const limit = parseInt(req.query.limit, 10) || 50;
+        const mailbox_id = req.query.mailbox_id || null;
+        const folder = req.query.folder || null;
+        const messages = outlookMail.listMessages(req.user.id, { limit, mailbox_id, folder });
+        const folders = outlookMail.folderCounts(req.user.id, mailbox_id);
+        res.json({ messages, folders });
     } catch (err) {
         console.error('Outlook messages error:', err);
         res.status(500).json({ error: err.message || 'Failed to list messages' });
+    }
+});
+
+router.get('/outlook/messages/:id', (req, res) => {
+    try {
+        const message = outlookMail.getMessage(req.user.id, req.params.id);
+        if (!message) return res.status(404).json({ error: 'Message not found' });
+        res.json({ message });
+    } catch (err) {
+        console.error('Outlook message error:', err);
+        res.status(500).json({ error: err.message || 'Failed to load message' });
+    }
+});
+
+router.post('/outlook/messages/:id/read', (req, res) => {
+    try {
+        const isRead = req.body?.is_read !== false && req.body?.is_read !== 0;
+        const message = outlookMail.markMessageRead(req.user.id, req.params.id, isRead);
+        if (!message) return res.status(404).json({ error: 'Message not found' });
+        res.json({ message });
+    } catch (err) {
+        console.error('Outlook mark-read error:', err);
+        res.status(500).json({ error: err.message || 'Failed to update message' });
     }
 });
 

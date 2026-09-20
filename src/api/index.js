@@ -422,6 +422,8 @@ export const userAPI = {
     pollOutlookDeviceCode: (device_code) => api.post('/user/outlook/device-code/poll', { device_code }),
     syncOutlook: (payload = {}) => api.post('/user/outlook/sync', payload),
     listOutlookMessages: (params = {}) => api.get('/user/outlook/messages', { params }),
+    getOutlookMessage: (id) => api.get(`/user/outlook/messages/${id}`),
+    markOutlookMessageRead: (id, is_read = true) => api.post(`/user/outlook/messages/${id}/read`, { is_read }),
     waitOutlookOtp: (payload = {}) => api.post('/user/outlook/wait-otp', payload, { timeout: 620000 }),
     disconnectOutlookMailbox: (id) => api.delete(`/user/outlook/mailboxes/${id}`),
     disconnectOutlook: () => api.delete('/user/outlook'),

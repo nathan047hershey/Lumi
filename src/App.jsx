@@ -14,6 +14,7 @@ import AdminSettings from './views/admin/Settings';
 import AdminResumeTemplates from './views/admin/ResumeTemplates';
 import Developers from './views/admin/Developers';
 import AdminJobLinks from './views/admin/JobLinks';
+import Inbox from './views/user/Inbox';
 import JobLinkDetail from './views/JobLinkDetail';
 import UserDashboard from './views/user/Dashboard';
 import UserStatsDashboard from './views/user/UserStatsDashboard';
@@ -28,7 +29,6 @@ import BidInsights from './views/user/BidInsights';
 import Analyze from './views/user/Analyze';
 import BidCourses from './views/user/BidCourses';
 import CvQualityReport from './views/user/CvQualityReport';
-import Inbox from './views/user/Inbox';
 import CallerDashboard from './views/caller/CallerDashboard';
 import CallerProfile from './views/caller/CallerProfile';
 import ManagerDashboard from './views/manager/Dashboard';
@@ -116,6 +116,7 @@ function App() {
                 <Route path="autofill-settings" element={<AutofillSettingsPage />} />
                 <Route path="assignments" element={<Assignments />} />
                 <Route path="settings" element={<AdminSettings />} />
+                <Route path="mailbox" element={<Inbox />} />
                 <Route path="resume-templates" element={<AdminResumeTemplates />} />
 
                 <Route path="pipeline" element={<PipelineHub />}>
