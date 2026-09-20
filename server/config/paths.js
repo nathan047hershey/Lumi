@@ -19,7 +19,24 @@ if (process.env.VERCEL && !process.env.LUMI_DATA_ROOT && !process.env.JOB_APPLY_
 }
 
 const SERVER_DIR = path.join(__dirname, '..');
-const PROJECT_ROOT = path.join(SERVER_DIR, '..');
+// On Vercel the Express tree is NFT-copied under process.cwd() (/var/task).
+// __dirname may point at a bundled chunk, so prefer cwd when it looks like the app root.
+function resolveProjectRoot() {
+    const cwd = process.cwd();
+    const fromDirname = path.join(SERVER_DIR, '..');
+    const candidates = [cwd, fromDirname];
+    for (const root of candidates) {
+        if (
+            fs.existsSync(path.join(root, 'package.json')) ||
+            fs.existsSync(path.join(root, 'database', 'database.sqlite')) ||
+            fs.existsSync(path.join(root, 'server', 'vercelHandler.js'))
+        ) {
+            return root;
+        }
+    }
+    return fromDirname;
+}
+const PROJECT_ROOT = resolveProjectRoot();
 const DEFAULT_DATA_ROOT = path.join(PROJECT_ROOT, 'database');
 const LEGACY_DB = path.join(SERVER_DIR, 'database.sqlite');
 const LEGACY_RESUMES = path.join(SERVER_DIR, 'resumes');
@@ -109,9 +126,17 @@ function pickRicherDb(currentPath, candidatePath) {
 function migrateLegacyIfNeeded() {
     try {
         const bundledDb = path.join(PROJECT_ROOT, 'database', 'database.sqlite');
+        const cwdDb = path.join(process.cwd(), 'database', 'database.sqlite');
         const legacyDataDirDb = path.join(SERVER_DIR, 'data', 'database.sqlite');
         const standaloneDb = path.join(LEGACY_STANDALONE, 'database.sqlite');
-        const sources = [bundledDb, LEGACY_DB, legacyDataDirDb, standaloneDb].filter((p) => fs.existsSync(p));
+        const sources = [bundledDb, cwdDb, LEGACY_DB, legacyDataDirDb, standaloneDb]
+            .filter((p, i, arr) => arr.indexOf(p) === i && fs.existsSync(p));
+
+        console.log(
+            '[paths] PROJECT_ROOT =', PROJECT_ROOT,
+            '| seed candidates =', sources.length,
+            sources.length ? sources[0] : '(none)'
+        );
 
         if (!fs.existsSync(DB_PATH) && sources.length) {
             fs.copyFileSync(sources[0], DB_PATH);
