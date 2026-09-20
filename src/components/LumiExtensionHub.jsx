@@ -18,8 +18,19 @@ function apiBaseFromWindow() {
     if (typeof window === 'undefined') return '';
     const env = process.env.NEXT_PUBLIC_API_URL || '';
     if (env) return String(env).replace(/\/+$/, '');
-    // Built app serves API on the same origin (:5173 and :9017).
-    return window.location.origin;
+    const { origin, port, hostname } = window.location;
+    // Express serving UI+API on :9017 — same origin (no /api prefix).
+    if (port === '9017' || port === '8001') return origin;
+    // Next.js / Vercel — Express is mounted under /api.
+    if (
+        port === '3000' || port === '5173' || port === '4173'
+        || hostname.endsWith('.vercel.app')
+        || hostname.endsWith('.vercel.sh')
+        || !port
+    ) {
+        return `${origin}/api`;
+    }
+    return origin;
 }
 
 function frontendBaseFromWindow() {

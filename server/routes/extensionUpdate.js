@@ -28,19 +28,25 @@ function readExtensionId() {
 
 function publicBase(req) {
     const host = String(req.headers.host || '127.0.0.1:9017').split(',')[0].trim();
-    return `http://${host}`;
+    const proto = String(req.headers['x-forwarded-proto'] || '').split(',')[0].trim()
+        || (host.includes('localhost') || host.startsWith('127.') ? 'http' : 'https');
+    return `${proto}://${host}`;
 }
 
 function registerExtensionUpdateRoutes(app) {
     app.get('/extension/version', (req, res) => {
         const version = readManifestVersion();
         const crx = findCrx();
+        const base = publicBase(req);
+        const wsHost = String(req.headers.host || '').split(',')[0].trim();
+        const serverless = /\.vercel\.app|\.vercel\.sh/i.test(wsHost);
         res.json({
             version,
             id: readExtensionId() || null,
             crx: !!crx,
-            updateXml: `${publicBase(req)}/extension/update.xml`,
-            socket: `ws://${String(req.headers.host || '').split(',')[0].trim()}/extension/live`
+            updateXml: `${base}/extension/update.xml`,
+            socket: serverless ? null : `ws://${wsHost}/extension/live`,
+            liveMode: serverless ? 'http' : 'ws'
         });
     });
 

@@ -16,14 +16,17 @@ export function isAppUrl(url, frontendBaseUrl = '') {
     if (frontendBaseUrl && raw.startsWith(String(frontendBaseUrl).replace(/\/+$/, ''))) return true;
     try {
         const u = new URL(raw);
+        const host = u.hostname.toLowerCase();
+        if (host.endsWith('.vercel.app') || host.endsWith('.vercel.sh') || host.endsWith('neptunemart.space')) {
+            return true;
+        }
         const port = u.port || (u.protocol === 'https:' ? '443' : '80');
         if (!APP_PORTS.has(port)) return false;
         if (port === '9017' && isPrivateLanHost(u.hostname)) return true;
         if (port === '9017' && u.hostname === '51.68.138.192') return true;
-        if (u.hostname.endsWith('neptunemart.space')) return true;
         return isPrivateLanHost(u.hostname);
     } catch (_) {
-        return /localhost:5173|127\.0\.0\.1:5173|localhost:3000|127\.0\.0\.1:3000/i.test(raw);
+        return /localhost:5173|127\.0\.0\.1:5173|localhost:3000|127\.0\.0\.1:3000|vercel\.app/i.test(raw);
     }
 }
 
@@ -44,11 +47,13 @@ export const APP_TAB_QUERY_PATTERNS = [
     'http://*:5173/*',
     'http://*:3000/*',
     'http://*:4173/*',
-    'http://*:9017/*'
+    'http://*:9017/*',
+    'https://*.vercel.app/*',
+    'https://*.vercel.sh/*'
 ];
 
 export function appOpenHint(frontendBaseUrl = '') {
     const base = String(frontendBaseUrl || '').replace(/\/+$/, '');
     if (base) return base;
-    return 'http://YOUR_SERVER_IP:5173 (or :9017 if using bundled client)';
+    return 'https://YOUR-APP.vercel.app (or http://127.0.0.1:3000 locally)';
 }

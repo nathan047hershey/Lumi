@@ -23,17 +23,40 @@ function isLoopbackUrl(url) {
     return /localhost|127\.0\.0\.1/i.test(String(url || ''));
 }
 
-/** If a Lumi tab is open on a remote host, use that host instead of localhost defaults. */
+/** If a Lumi tab is open, prefer that host over stale localhost defaults. */
 function urlsFromPage(raw) {
     try {
         const u = new URL(raw);
         if (!/^https?:$/i.test(u.protocol)) return null;
-        if (!['5173', '9017', '4173'].includes(u.port)) return null;
-        const origin5173 = `${u.protocol}//${u.hostname}:5173`;
+        const host = u.hostname.toLowerCase();
+        const port = u.port || (u.protocol === 'https:' ? '443' : '80');
+
+        // Vercel / hosted Next — API lives under /api on the same origin.
+        if (
+            host.endsWith('.vercel.app')
+            || host.endsWith('.vercel.sh')
+            || (u.protocol === 'https:' && port === '443' && !isLoopbackUrl(host))
+        ) {
+            const origin = `${u.protocol}//${u.hostname}`;
+            return {
+                apiBaseUrl: `${origin}/api`,
+                frontendBaseUrl: origin
+            };
+        }
+
+        if (!['5173', '9017', '4173', '3000'].includes(port)) return null;
+        const origin = `${u.protocol}//${u.hostname}${port ? `:${port}` : ''}`;
+        if (port === '9017') {
+            return { apiBaseUrl: origin, frontendBaseUrl: origin };
+        }
+        // Next on :3000 / Vite :5173 — API under /api or separate :9017.
+        if (port === '3000') {
+            return { apiBaseUrl: `${origin}/api`, frontendBaseUrl: origin };
+        }
         const origin9017 = `${u.protocol}//${u.hostname}:9017`;
         return {
             apiBaseUrl: origin9017,
-            frontendBaseUrl: u.port === '9017' ? origin9017 : origin5173
+            frontendBaseUrl: origin
         };
     } catch {
         return null;

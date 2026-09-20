@@ -97,7 +97,7 @@ async function request(path, { method = 'GET', body, token, apiBaseUrl, timeout 
         const msg = String(err?.message || err || '');
         if (/Failed to fetch|NetworkError|ECONNREFUSED|fetch failed/i.test(msg)) {
             throw new Error(
-                `Cannot reach API at ${base}. On another PC use http://SERVER_IP:9017 (server must be running). On this PC try http://127.0.0.1:9017`
+                `Cannot reach API at ${base}. For Vercel use https://YOUR-APP.vercel.app/api. Locally try http://127.0.0.1:9017`
             );
         }
         throw err;
