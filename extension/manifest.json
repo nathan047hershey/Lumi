@@ -1,9 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lumi",
-  "version": "1.9.50",
-  "update_url": "http://51.68.138.192:9017/extension/update.xml",
-
+  "version": "1.9.51",
   "description": "Autofill selects like a human: open → see options → match → click.",
   "permissions": [
     "storage",
@@ -21,7 +19,11 @@
     "http://localhost:9017/*",
     "http://127.0.0.1:9017/*",
     "http://localhost:8001/*",
-    "http://127.0.0.1:8001/*"
+    "http://127.0.0.1:8001/*",
+    "http://localhost:3000/*",
+    "http://127.0.0.1:3000/*",
+    "https://*.vercel.app/*",
+    "https://*.vercel.sh/*"
   ],
   "externally_connectable": {
     "matches": [
@@ -33,7 +35,9 @@
       "http://127.0.0.1:4173/*",
       "http://localhost:9017/*",
       "http://127.0.0.1:9017/*",
-      "http://*/*"
+      "http://*/*",
+      "https://*.vercel.app/*",
+      "https://*.vercel.sh/*"
     ]
   },
   "background": {
@@ -99,7 +103,9 @@
         "http://*:5173/*",
         "http://*:3000/*",
         "http://*:4173/*",
-        "http://*:9017/*"
+        "http://*:9017/*",
+        "https://*.vercel.app/*",
+        "https://*.vercel.sh/*"
       ],
       "js": ["content/controlMatch.js", "content/scrape.js", "content/fillShared.js", "content/fill.js", "content/bidderFill.js"],
       "run_at": "document_idle"
@@ -117,7 +123,9 @@
         "http://*:5173/*",
         "http://*:3000/*",
         "http://*:4173/*",
-        "http://*:9017/*"
+        "http://*:9017/*",
+        "https://*.vercel.app/*",
+        "https://*.vercel.sh/*"
       ],
       "js": ["content/app-bridge.js"],
       "run_at": "document_idle"
