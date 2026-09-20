@@ -2,7 +2,8 @@ const jwt = require('jsonwebtoken');
 const { getOne, getAll } = require('../config/database');
 
 function getJwtSecret() {
-    const secret = process.env.JWT_SECRET;
+    // Bracket access so Next/webpack does not inline an empty build-time value.
+    const secret = String(process.env['JWT_SECRET'] || '').trim();
     if (!secret) {
         throw new Error('JWT_SECRET is not set in environment. Add it to server/.env or Vercel env.');
     }
