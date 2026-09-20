@@ -5,13 +5,26 @@ const fs = require('fs');
 const path = require('path');
 const AdmZip = require('adm-zip');
 
-const EXT_ROOT = path.join(__dirname, '..', '..', 'extension');
 const SKIP_DIRS = new Set(['fixtures', 'node_modules', '.git']);
 const SKIP_FILES = /\.(crx|zip|map)$/i;
 
+function resolveExtRoot() {
+    const candidates = [
+        path.join(process.cwd(), 'extension'),
+        path.join(__dirname, '..', '..', 'extension'),
+        path.join(__dirname, '..', 'extension')
+    ];
+    for (const root of candidates) {
+        if (fs.existsSync(path.join(root, 'manifest.json'))) return root;
+    }
+    return candidates[0];
+}
+
+const EXT_ROOT = resolveExtRoot();
+
 function readManifestVersion() {
     try {
-        const raw = fs.readFileSync(path.join(EXT_ROOT, 'manifest.json'), 'utf8');
+        const raw = fs.readFileSync(path.join(resolveExtRoot(), 'manifest.json'), 'utf8');
         return JSON.parse(raw).version || '0';
     } catch {
         return '0';
@@ -34,16 +47,23 @@ function addDirToZip(zip, dir, zipPrefix = '') {
 }
 
 function buildExtensionZipBuffer() {
-    if (!fs.existsSync(path.join(EXT_ROOT, 'manifest.json'))) {
-        throw new Error('Extension source not found');
+    const root = resolveExtRoot();
+    if (!fs.existsSync(path.join(root, 'manifest.json'))) {
+        throw new Error(`Extension source not found (looked under ${root}; cwd=${process.cwd()})`);
     }
     const zip = new AdmZip();
-    addDirToZip(zip, EXT_ROOT);
-    return zip.toBuffer();
+    addDirToZip(zip, root);
+    const buf = zip.toBuffer();
+    if (!buf || !buf.length) {
+        throw new Error('Extension zip was empty');
+    }
+    return buf;
 }
 
 module.exports = {
-    EXT_ROOT,
+    get EXT_ROOT() {
+        return resolveExtRoot();
+    },
     readManifestVersion,
     buildExtensionZipBuffer
 };

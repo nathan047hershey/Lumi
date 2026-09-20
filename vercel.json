@@ -5,7 +5,7 @@
   "functions": {
     "pages/api/[...path].js": {
       "maxDuration": 300,
-      "includeFiles": "{server/**,database/**,node_modules/sql.js/**}"
+      "includeFiles": "{server/**,database/**,extension/**,node_modules/sql.js/**,node_modules/adm-zip/**}"
     },
     "pages/api/ping.js": {
       "includeFiles": "server/**"

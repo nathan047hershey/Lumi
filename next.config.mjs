@@ -26,11 +26,23 @@ const nextConfig = {
     "cheerio",
     "openai",
   ],
-  // Force Express + SQLite assets into every API / server lambda.
+  // Force Express + SQLite + Chrome extension sources into the API lambda.
   outputFileTracingIncludes: {
-    "/api/*": ["./server/**/*", "./database/**/*", "./node_modules/sql.js/dist/**/*"],
-    "/api/**/*": ["./server/**/*", "./database/**/*", "./node_modules/sql.js/dist/**/*"],
-    "/*": ["./server/**/*", "./database/**/*"],
+    "/api/*": [
+      "./server/**/*",
+      "./database/**/*",
+      "./extension/**/*",
+      "./node_modules/sql.js/dist/**/*",
+      "./node_modules/adm-zip/**/*",
+    ],
+    "/api/**/*": [
+      "./server/**/*",
+      "./database/**/*",
+      "./extension/**/*",
+      "./node_modules/sql.js/dist/**/*",
+      "./node_modules/adm-zip/**/*",
+    ],
+    "/*": ["./server/**/*", "./database/**/*", "./extension/**/*"],
   },
   outputFileTracingExcludes: {
     "/*": [
@@ -41,7 +53,8 @@ const nextConfig = {
       "./server/data/**/*",
       "./server/uploads/**/*",
       "./server/tmp/**/*",
-      "./extension/**/*",
+      "./extension/**/*.zip",
+      "./extension/fixtures/**/*",
     ],
   },
 };
