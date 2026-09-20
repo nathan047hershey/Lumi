@@ -33,20 +33,30 @@ function publicBase(req) {
     return `${proto}://${host}`;
 }
 
+function isServerlessOrNextHost(host) {
+    const h = String(host || '');
+    if (/\.vercel\.app|\.vercel\.sh/i.test(h)) return true;
+    // Next.js dev/prod on :3000 — no Express upgrade for /extension/live
+    if (/:(3000)(?:$|,)/.test(h) || /^localhost:3000$/i.test(h) || /^127\.0\.0\.1:3000$/i.test(h)) {
+        return true;
+    }
+    return false;
+}
+
 function registerExtensionUpdateRoutes(app) {
     app.get('/extension/version', (req, res) => {
         const version = readManifestVersion();
         const crx = findCrx();
         const base = publicBase(req);
         const wsHost = String(req.headers.host || '').split(',')[0].trim();
-        const serverless = /\.vercel\.app|\.vercel\.sh/i.test(wsHost);
+        const httpOnly = isServerlessOrNextHost(wsHost);
         res.json({
             version,
             id: readExtensionId() || null,
             crx: !!crx,
-            updateXml: `${base}/extension/update.xml`,
-            socket: serverless ? null : `ws://${wsHost}/extension/live`,
-            liveMode: serverless ? 'http' : 'ws'
+            updateXml: `${base}/api/extension/update.xml`,
+            socket: httpOnly ? null : `ws://${wsHost}/extension/live`,
+            liveMode: httpOnly ? 'http' : 'ws'
         });
     });
 
