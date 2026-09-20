@@ -4626,9 +4626,12 @@ router.post('/outlook/device-code/poll', async (req, res) => {
         const deviceCode = String(req.body?.device_code || '').trim();
         if (!deviceCode) return res.status(400).json({ error: 'device_code required' });
         const account = await outlookMail.pollDeviceCode(req.user.id, deviceCode, {
-            maxWaitMs: 20_000
+            maxWaitMs: 12_000
         });
-        res.json({ status: 'connected', account });
+        const persist_bundle = account?.persist_bundle || outlookMail.createPersistBundle(req.user.id);
+        const publicAccount = { ...account };
+        delete publicAccount.persist_bundle;
+        res.json({ status: 'connected', account: publicAccount, persist_bundle });
     } catch (err) {
         const msg = err?.message || String(err);
         if (/authorization_pending|Timed out waiting/i.test(msg) || /authorization pending/i.test(msg)) {
@@ -4641,6 +4644,27 @@ router.post('/outlook/device-code/poll', async (req, res) => {
         }
         console.error('Outlook device-code poll error:', err);
         res.status(400).json({ error: msg || 'Outlook poll failed', status: 'error' });
+    }
+});
+
+router.get('/outlook/persist-bundle', (req, res) => {
+    try {
+        const persist_bundle = outlookMail.createPersistBundle(req.user.id);
+        res.json({ persist_bundle, accounts: outlookMail.listMailboxesPublic(req.user.id) });
+    } catch (err) {
+        res.status(500).json({ error: err.message || 'Failed to export mailboxes' });
+    }
+});
+
+router.post('/outlook/persist-bundle/restore', (req, res) => {
+    try {
+        const bundle = String(req.body?.persist_bundle || '').trim();
+        if (!bundle) return res.status(400).json({ error: 'persist_bundle required' });
+        const result = outlookMail.restorePersistBundle(req.user.id, bundle);
+        res.json({ ok: true, ...result });
+    } catch (err) {
+        console.error('Outlook persist restore error:', err);
+        res.status(400).json({ error: err.message || 'Failed to restore mailboxes' });
     }
 });
 

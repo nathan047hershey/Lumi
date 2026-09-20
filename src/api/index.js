@@ -424,6 +424,8 @@ export const userAPI = {
     listOutlookMessages: (params = {}) => api.get('/user/outlook/messages', { params }),
     getOutlookMessage: (id) => api.get(`/user/outlook/messages/${id}`),
     markOutlookMessageRead: (id, is_read = true) => api.post(`/user/outlook/messages/${id}/read`, { is_read }),
+    getOutlookPersistBundle: () => api.get('/user/outlook/persist-bundle'),
+    restoreOutlookPersistBundle: (persist_bundle) => api.post('/user/outlook/persist-bundle/restore', { persist_bundle }),
     waitOutlookOtp: (payload = {}) => api.post('/user/outlook/wait-otp', payload, { timeout: 620000 }),
     disconnectOutlookMailbox: (id) => api.delete(`/user/outlook/mailboxes/${id}`),
     disconnectOutlook: () => api.delete('/user/outlook'),

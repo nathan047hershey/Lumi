@@ -446,7 +446,11 @@ async function pollDeviceCode(userId, deviceCode, { maxWaitMs = 15 * 60 * 1000 }
             }
             if (POLL_ENABLED || graphPollActive()) ensureSyncLoop();
             console.log('[outlook] mailbox connected', updated?.email || mailbox?.id);
-            return accountPublic(getMailbox(mailbox.id) || updated);
+            const account = accountPublic(getMailbox(mailbox.id) || updated);
+            return {
+                ...account,
+                persist_bundle: createPersistBundle(uid)
+            };
         }
         if (data?.error === 'authorization_pending') continue;
         if (data?.error === 'slow_down') {
@@ -1131,6 +1135,98 @@ function stopOutlookMailService() {
     }
 }
 
+function createPersistBundle(userId) {
+    ensureTables();
+    const rows = listMailboxes(userId);
+    if (!rows.length) return null;
+    const payload = {
+        v: 1,
+        user_id: Number(userId),
+        exported_at: new Date().toISOString(),
+        mailboxes: rows.map((row) => ({
+            email: row.email,
+            display_name: row.display_name,
+            access_token: row.access_token,
+            refresh_token: row.refresh_token,
+            expires_at: row.expires_at,
+            scope: row.scope,
+            connected_at: row.connected_at
+        }))
+    };
+    return encryptToken(JSON.stringify(payload));
+}
+
+function restorePersistBundle(userId, bundle) {
+    ensureTables();
+    const uid = parseInt(userId, 10);
+    if (!uid) throw new Error('user_id required');
+    const raw = decryptToken(String(bundle || '').trim());
+    if (!raw) throw new Error('Invalid mailbox backup');
+    let payload;
+    try {
+        payload = JSON.parse(raw);
+    } catch (_) {
+        throw new Error('Invalid mailbox backup payload');
+    }
+    if (!payload || Number(payload.user_id) !== uid) {
+        throw new Error('Mailbox backup does not belong to this user');
+    }
+    const list = Array.isArray(payload.mailboxes) ? payload.mailboxes : [];
+    let restored = 0;
+    const now = new Date().toISOString();
+    for (const box of list) {
+        const email = String(box.email || '').trim();
+        if (!email || (!box.access_token && !box.refresh_token)) continue;
+        const existing = getOne(
+            `SELECT id FROM outlook_mailboxes WHERE user_id = ? AND lower(email) = lower(?)`,
+            [uid, email]
+        );
+        if (existing) {
+            runQuery(
+                `UPDATE outlook_mailboxes SET
+                    access_token = ?, refresh_token = COALESCE(?, refresh_token),
+                    expires_at = ?, scope = ?, display_name = ?,
+                    updated_at = ?, last_error = NULL
+                 WHERE id = ?`,
+                [
+                    box.access_token || null,
+                    box.refresh_token || null,
+                    box.expires_at || null,
+                    box.scope || SCOPES,
+                    box.display_name || null,
+                    now,
+                    existing.id
+                ]
+            );
+        } else {
+            runQuery(
+                `INSERT INTO outlook_mailboxes (
+                    user_id, email, display_name, access_token, refresh_token, expires_at, scope,
+                    connected_at, updated_at, last_error
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL)`,
+                [
+                    uid,
+                    email,
+                    box.display_name || null,
+                    box.access_token || null,
+                    box.refresh_token || null,
+                    box.expires_at || null,
+                    box.scope || SCOPES,
+                    box.connected_at || now,
+                    now
+                ]
+            );
+        }
+        restored += 1;
+    }
+    try { saveDatabase(); } catch (_) { /* flush */ }
+    return {
+        restored,
+        accounts: listMailboxesPublic(uid),
+        persist_bundle: createPersistBundle(uid)
+    };
+}
+
 module.exports = {
     configStatus,
     getAccount,
@@ -1166,7 +1262,9 @@ module.exports = {
     startOutlookMailService,
     stopOutlookMailService,
     ensureSyncLoop,
-    clientId
+    clientId,
+    createPersistBundle,
+    restorePersistBundle
 };
 
 

@@ -16,7 +16,10 @@ import {
     Settings2
 } from 'lucide-react';
 import { userAPI } from '../../api';
-import OutlookMailSettings from '@/components/OutlookMailSettings';
+import OutlookMailSettings, {
+    loadOutlookPersistBundle,
+    saveOutlookPersistBundle
+} from '@/components/OutlookMailSettings';
 import { cn } from '@/lib/utils';
 
 const FOLDERS = [
@@ -105,8 +108,39 @@ export default function OutlookMailbox() {
     }, [fetchStatus, fetchMessages]);
 
     useEffect(() => {
-        fetchStatus();
-    }, [fetchStatus]);
+        let cancelled = false;
+        (async () => {
+            const data = await fetchStatus();
+            if (cancelled) return;
+            if ((data?.accounts || []).length) return;
+            const bundle = loadOutlookPersistBundle();
+            if (!bundle) return;
+            try {
+                setError(null);
+                const restored = await userAPI.restoreOutlookPersistBundle(bundle);
+                if (cancelled) return;
+                if (restored.data?.persist_bundle) {
+                    saveOutlookPersistBundle(restored.data.persist_bundle);
+                }
+                setAccounts(restored.data?.accounts || []);
+                if ((restored.data?.accounts || []).length) {
+                    setShowConnect(false);
+                    setSyncing(true);
+                    try {
+                        await userAPI.syncOutlook();
+                        await fetchMessages();
+                    } finally {
+                        if (!cancelled) setSyncing(false);
+                    }
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    console.warn('Outlook persist restore failed:', err?.response?.data?.error || err.message);
+                }
+            }
+        })();
+        return () => { cancelled = true; };
+    }, [fetchStatus, fetchMessages]);
 
     useEffect(() => {
         setLoading(true);

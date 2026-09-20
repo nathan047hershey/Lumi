@@ -1,11 +1,31 @@
 /**
  * OutlookMailSettings - Microsoft Graph / Outlook mailboxes.
  * Supports multiple mailboxes with individual add/remove.
+ *
+ * On Vercel, SQLite under /tmp is ephemeral — we keep an encrypted
+ * persist_bundle in localStorage so reconnect survives cold starts.
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { userAPI } from '@/api';
 import { Trash2, Plus } from 'lucide-react';
+
+const PERSIST_KEY = 'lumi.outlook.persist.v1';
+
+export function saveOutlookPersistBundle(bundle) {
+    try {
+        if (bundle) localStorage.setItem(PERSIST_KEY, bundle);
+        else localStorage.removeItem(PERSIST_KEY);
+    } catch (_) { /* private mode */ }
+}
+
+export function loadOutlookPersistBundle() {
+    try {
+        return localStorage.getItem(PERSIST_KEY) || '';
+    } catch (_) {
+        return '';
+    }
+}
 
 export default function OutlookMailSettings({ className = '', onAccountsChange } = {}) {
     const [status, setStatus] = useState(null);
@@ -19,6 +39,14 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
             const { data } = await userAPI.getOutlookStatus();
             setStatus(data || null);
             onAccountsChange?.(data?.accounts || []);
+            if ((data?.accounts || []).length) {
+                try {
+                    const bundleRes = await userAPI.getOutlookPersistBundle();
+                    if (bundleRes.data?.persist_bundle) {
+                        saveOutlookPersistBundle(bundleRes.data.persist_bundle);
+                    }
+                } catch (_) { /* optional */ }
+            }
             return data;
         } catch (_) {
             setStatus(null);
@@ -38,8 +66,8 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
             try {
                 const { data } = await userAPI.pollOutlookDeviceCode(device.device_code);
                 if (cancelled) return;
-                // API returns { status: 'connected', account } — not access_token.
                 if (data?.status === 'connected' || data?.account) {
+                    if (data.persist_bundle) saveOutlookPersistBundle(data.persist_bundle);
                     setDevice(null);
                     setMsg(`Connected ${data.account?.email || ''}`.trim());
                     setBusy(false);
@@ -48,7 +76,7 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
                         await userAPI.syncOutlook(
                             data.account?.id ? { mailbox_id: data.account.id } : {}
                         );
-                    } catch (_) { /* sync best-effort; UI can retry */ }
+                    } catch (_) { /* sync best-effort */ }
                     const latest = await refresh();
                     onAccountsChange?.(latest?.accounts || [], { synced: true });
                     return;
@@ -61,15 +89,14 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
                 }
                 if (++poll < 90) setTimeout(tick, 2000);
                 else {
-                    setMsg('Timed out — click Add mailbox and try again.');
+                    setMsg('Timed out — click Add mailbox and try again. Keep this panel open while signing in.');
                     setDevice(null);
                     setBusy(false);
                 }
             } catch (err) {
                 if (cancelled) return;
                 const errMsg = err?.response?.data?.error || err.message || '';
-                // Real failures (declined / expired) should stop; transient keep polling.
-                if (/declined|expired|invalid_grant|device_code/i.test(errMsg) && !/pending/i.test(errMsg)) {
+                if (/declined|expired|invalid_grant/i.test(errMsg) && !/pending/i.test(errMsg)) {
                     setMsg(errMsg);
                     setDevice(null);
                     setBusy(false);
@@ -93,7 +120,7 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
             const { data } = await userAPI.startOutlookDeviceCode();
             if (data.device_code) {
                 setDevice(data);
-                setMsg('Sign in at microsoft.com/devicelogin, then wait here — do not close this panel.');
+                setMsg('Keep this panel open. Sign in at microsoft.com/devicelogin, then wait for “Connected”.');
             } else {
                 setMsg(data.error || 'Failed');
                 setBusy(false);
@@ -110,7 +137,14 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
         try {
             await userAPI.disconnectOutlookMailbox(id);
             setMsg('Removed.');
-            await refresh();
+            const data = await refresh();
+            if (!(data?.accounts || []).length) saveOutlookPersistBundle('');
+            else {
+                try {
+                    const bundleRes = await userAPI.getOutlookPersistBundle();
+                    saveOutlookPersistBundle(bundleRes.data?.persist_bundle || '');
+                } catch (_) { /* ignore */ }
+            }
         } catch (err) {
             setMsg(err.response?.data?.error || err.message);
         } finally {
@@ -123,6 +157,7 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
         setBusy(true);
         try {
             await userAPI.disconnectOutlook();
+            saveOutlookPersistBundle('');
             await refresh();
             setMsg('All removed.');
         } catch (err) {
@@ -144,7 +179,7 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
                     </Button>
                 )}
             </div>
-            <p className="text-xs text-muted-foreground">Connect Outlook/Hotmail mailboxes. Microsoft Graph is free.</p>
+            <p className="text-xs text-muted-foreground">Connect Outlook/Hotmail. Keep the panel open until it says Connected.</p>
             {status?.config?.clientIdSet
                 ? <p className="text-xs text-emerald-300/80">Graph ready</p>
                 : <p className="text-xs text-amber-200/90">Set OUTLOOK_CLIENT_ID in server/.env</p>}
