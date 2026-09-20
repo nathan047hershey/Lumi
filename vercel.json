@@ -1,0 +1,11 @@
+{
+  "framework": "nextjs",
+  "buildCommand": "npm run build",
+  "installCommand": "npm install",
+  "functions": {
+    "pages/api/[...path].js": {
+      "maxDuration": 300,
+      "memory": 3008
+    }
+  }
+}

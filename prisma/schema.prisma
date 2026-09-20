@@ -1,0 +1,334 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  admin
+  user
+  caller
+  manager
+  developer
+}
+
+enum Techstack {
+  python
+  java
+  dotnet
+  golang
+  nodejs
+  frontend
+}
+
+enum ApplicationStatus {
+  pending
+  applied
+  rejected
+  interview
+}
+
+enum ApplicationState {
+  in_progress
+  completed
+  cancelled
+  rejected
+}
+
+enum GenerationStatus {
+  pending
+  generating
+  ready
+  failed
+}
+
+enum InterviewStatus {
+  requested
+  scheduled
+  completed
+  cancelled
+}
+
+enum BidOutcome {
+  unknown
+  applied
+  interview
+  rejected
+}
+
+model User {
+  id           Int      @id @default(autoincrement())
+  username     String   @unique
+  passwordHash String
+  role         Role
+  createdAt    DateTime @default(now())
+
+  extraRoles   UserRole[]
+  assignments  Assignment[]
+  applications JobApplication[] @relation("CreatedBy")
+  bidCourses   BidCourse[]
+  interviews   Interview[]      @relation("CallerInterviews")
+  mailbox      Mailbox?
+  developer    DeveloperProfile?
+  caller       CallerProfile?
+}
+
+model UserRole {
+  id     Int  @id @default(autoincrement())
+  userId Int
+  role   Role
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, role])
+}
+
+model CandidateProfile {
+  id                   Int      @id @default(autoincrement())
+  firstName            String
+  lastName             String
+  middleName           String?
+  email                String?
+  phone                String?
+  city                 String?
+  state                String?
+  country              String?
+  postalCode           String?
+  address              String?
+  linkedinUrl          String?
+  githubUrl            String?
+  websiteUrl           String?
+  portfolioUrl         String?
+  salaryRange          String?
+  locationFlag         String   @default("US")
+  workExperience       String?
+  education            String?
+  resumePrompt         String?
+  gender               String?
+  workAuthorization    String?
+  requiresSponsorship  String?
+  disabilityStatus     String?
+  veteranStatus        String?
+  raceEthnicity        String?
+  yearsOfExperience    String?
+  educationLevel       String?
+  willingToRelocate    String?
+  willingToTravel      String?
+  noticePeriod         String?
+  earliestStartDate    String?
+  over18               String?
+  hispanicLatino       String?
+  howHeard             String?
+  securityClearance    String?
+  preferredName        String?
+  school               String?
+  degree               String?
+  discipline           String?
+  birthdate            String?
+  preferredTemplateId  Int?
+  preferredTemplateKind String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  techstacks   ProfileTechstack[]
+  assignments  Assignment[]
+  applications JobApplication[]
+}
+
+model ProfileTechstack {
+  profileId Int
+  techstack Techstack
+  profile   CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@id([profileId, techstack])
+}
+
+model Assignment {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  profileId Int
+  isDefault Boolean  @default(false)
+  assignedAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  profile   CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, profileId])
+}
+
+model JobLink {
+  id          Int      @id @default(autoincrement())
+  sourceUrl   String?
+  applyUrl    String
+  company     String?
+  title       String?
+  description String?
+  techstack   Techstack
+  locationFlag String  @default("US")
+  fetchStatus String   @default("pending")
+  fetchError  String?
+  lastFetchedAt DateTime?
+  isAvailable Boolean  @default(true)
+  metaJson    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  applications JobApplication[]
+
+  @@unique([applyUrl])
+}
+
+model JobApplication {
+  id                 Int               @id @default(autoincrement())
+  profileId          Int
+  createdById        Int?
+  jobLinkId          Int?
+  companyName        String
+  jobRole            String?
+  jobDescription     String
+  coreSkills         String?
+  resumeMarkdown     String?
+  answersJson        String?
+  status             ApplicationStatus @default(pending)
+  state              ApplicationState  @default(in_progress)
+  source             String            @default("user")
+  generationStatus   GenerationStatus  @default(pending)
+  generationError    String?
+  qualityScore       Int?
+  qualityReport      String?
+  metaJson           String?
+  createdAt          DateTime          @default(now())
+  updatedAt          DateTime          @updatedAt
+
+  profile   CandidateProfile @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  createdBy User?            @relation("CreatedBy", fields: [createdById], references: [id], onDelete: SetNull)
+  jobLink   JobLink?         @relation(fields: [jobLinkId], references: [id], onDelete: SetNull)
+  interview Interview?
+  bidCourse BidCourse?
+}
+
+model Interview {
+  id            Int             @id @default(autoincrement())
+  applicationId Int             @unique
+  callerId      Int?
+  status        InterviewStatus @default(requested)
+  interviewType String?
+  scheduledAt   DateTime?
+  timezone      String?
+  meetingLink   String?
+  notes         String?
+  createdAt     DateTime        @default(now())
+  updatedAt     DateTime        @updatedAt
+
+  application JobApplication @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  caller      User?          @relation("CallerInterviews", fields: [callerId], references: [id], onDelete: SetNull)
+}
+
+model BidCourse {
+  id            Int        @id @default(autoincrement())
+  applicationId Int        @unique
+  profileId     Int
+  userId        Int
+  jobUrl        String?
+  companyName   String?
+  jobRole       String?
+  outcome       BidOutcome @default(unknown)
+  answersJson   String?
+  startedAt     DateTime   @default(now())
+  appliedAt     DateTime?
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application JobApplication  @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  events      BidCourseEvent[]
+}
+
+model BidCourseEvent {
+  id        Int      @id @default(autoincrement())
+  courseId  Int
+  eventType String
+  metaJson  String?
+  at        DateTime @default(now())
+  course    BidCourse @relation(fields: [courseId], references: [id], onDelete: Cascade)
+}
+
+model Mailbox {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  provider  String
+  email     String
+  status    String   @default("connected")
+  secretJson String?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages  InboxMessage[]
+}
+
+model InboxMessage {
+  id         Int      @id @default(autoincrement())
+  mailboxId  Int
+  fromAddr   String
+  subject    String
+  snippet    String?
+  otpCode    String?
+  receivedAt DateTime @default(now())
+  mailbox    Mailbox  @relation(fields: [mailboxId], references: [id], onDelete: Cascade)
+}
+
+model AppSettings {
+  id              Int      @id
+  aiProvider      String   @default("groq")
+  aiModel         String   @default("llama-3.3-70b-versatile")
+  autofillJson    String?
+  bidderPrefsJson String?
+  updatedAt       DateTime @updatedAt
+}
+
+model ResumeTemplate {
+  id          Int      @id @default(autoincrement())
+  name        String
+  description String?
+  kind        String   @default("admin")
+  userId      Int?
+  styleSpec   String
+  isDefault   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+}
+
+model QuestionMemory {
+  id             Int      @id @default(autoincrement())
+  profileId      Int
+  questionLabel  String
+  answer         String
+  updatedAt      DateTime @updatedAt
+}
+
+model BidderPref {
+  id     Int    @id @default(autoincrement())
+  userId Int    @unique
+  json   String
+}
+
+model DeveloperProfile {
+  userId           Int     @id
+  technicalSkills  String?
+  availability     String?
+  contactEmail     String?
+  contactTelegram  String?
+  contactWhatsapp  String?
+  contactPhone     String?
+  resumeNote       String?
+  user             User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model CallerProfile {
+  userId              Int     @id
+  profileInfo         String?
+  yearsOfExperience   String?
+  mainTechStack       String?
+  availability        String?
+  location            String?
+  email               String?
+  whatsapp            String?
+  telegram            String?
+  user                User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}

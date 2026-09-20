@@ -1,36 +1,49 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Lumi
 
-## Getting Started
+Native Next.js talent desk. Turn a job link into a submitted application and an interview.
 
-First, run the development server:
+This is a rebuild of the previous Lumi auto-bid system: App Router first, deployable on Vercel, new UI.
 
-```bash
+## Run locally
+
+```bat
+cd lumi
+copy .env.example .env
+npm install
+npx prisma migrate dev --name init
+npm run db:seed
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Open http://localhost:3000
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+| Username | Password | Desk |
+|---|---|---|
+| admin | LumiAdmin!26 | Full desk |
+| bidder | LumiBidder!26 | Apply loop |
+| manager | LumiManager!26 | Profiles |
+| caller | LumiCaller!26 | Interviews |
+| developer | LumiDev!26 | Roster |
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
-
-## Learn More
-
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Change these after first login. They are not the passwords from the old zip.
 
 ## Deploy on Vercel
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+1. Import the `lumi` folder as the project root.
+2. Set `DATABASE_URL` to a Postgres URL and `JWT_SECRET` to a new secret.
+3. Change `prisma/schema.prisma` `provider` from `sqlite` to `postgresql` before the first production migrate, or start a fresh Neon database and run `npx prisma migrate deploy`.
+4. Build command: `prisma generate && next build`
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+SQLite is for local only. Vercel’s filesystem is ephemeral.
+
+## What shipped
+
+- Auth and five roles
+- Candidate profiles and assignments
+- Job links with optional page fetch
+- Resume / answers package
+- Applications, bid courses, interviews
+- Demo inbox for OTP
+- Extension-friendly APIs: `/api/auth/login`, `/api/auth/me`, `/api/user/profiles`, `/api/applications`
+
+The Chrome extension from the previous project can be pointed at this origin once you add the new API base URL.
