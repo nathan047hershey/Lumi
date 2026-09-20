@@ -4,7 +4,11 @@
   "installCommand": "npm install",
   "functions": {
     "pages/api/[...path].js": {
-      "maxDuration": 300
+      "maxDuration": 300,
+      "includeFiles": "{server/**,database/**,node_modules/sql.js/**}"
+    },
+    "pages/api/ping.js": {
+      "includeFiles": "server/**"
     }
   }
 }

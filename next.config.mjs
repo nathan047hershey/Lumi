@@ -27,9 +27,12 @@ const nextConfig = {
     "openai",
   ],
   // Keep the Express API + SQLite data next to the serverless function on Vercel.
+  // Keys cover both App- and Pages-router NFT path forms used by Next 16 / Vercel.
   outputFileTracingIncludes: {
-    "/api/[...path]": ["./server/**/*", "./database/**/*"],
+    "/api/[...path]": ["./server/**/*", "./database/**/*", "./node_modules/sql.js/**/*"],
     "/api/ping": ["./server/**/*"],
+    "pages/api/[...path].js": ["./server/**/*", "./database/**/*", "./node_modules/sql.js/**/*"],
+    "pages/api/ping.js": ["./server/**/*"],
   },
 };
 
