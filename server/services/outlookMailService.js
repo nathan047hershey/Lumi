@@ -416,8 +416,13 @@ async function pollDeviceCode(userId, deviceCode, { maxWaitMs = 15 * 60 * 1000 }
     if (!uid) throw new Error('user_id required');
     const started = Date.now();
     let intervalSec = 5;
+    let first = true;
     while (Date.now() - started < maxWaitMs) {
-        await new Promise((r) => setTimeout(r, intervalSec * 1000));
+        // Client already polls every ~2s — try immediately on first attempt.
+        if (!first) {
+            await new Promise((r) => setTimeout(r, intervalSec * 1000));
+        }
+        first = false;
         const body = new URLSearchParams({
             grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
             client_id: clientId(),
@@ -431,6 +436,7 @@ async function pollDeviceCode(userId, deviceCode, { maxWaitMs = 15 * 60 * 1000 }
         });
         if (data?.access_token) {
             const mailbox = await saveTokensForNewOrExisting(uid, data);
+            try { saveDatabase(); } catch (_) { /* sql.js flush */ }
             await refreshProfile(mailbox.id);
             const updated = getMailbox(mailbox.id);
             try {
@@ -439,6 +445,7 @@ async function pollDeviceCode(userId, deviceCode, { maxWaitMs = 15 * 60 * 1000 }
                 console.warn('[outlook] subscription after connect:', err?.message || err);
             }
             if (POLL_ENABLED || graphPollActive()) ensureSyncLoop();
+            console.log('[outlook] mailbox connected', updated?.email || mailbox?.id);
             return accountPublic(getMailbox(mailbox.id) || updated);
         }
         if (data?.error === 'authorization_pending') continue;

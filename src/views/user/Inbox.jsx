@@ -69,8 +69,10 @@ export default function OutlookMailbox() {
             setStatus(res.data);
             setAccounts(res.data?.accounts || []);
             if (!(res.data?.accounts || []).length) setShowConnect(true);
+            return res.data;
         } catch (err) {
             console.error('Failed to fetch outlook status:', err);
+            return null;
         }
     }, []);
 
@@ -88,6 +90,19 @@ export default function OutlookMailbox() {
             setLoading(false);
         }
     }, [folder, mailboxId]);
+
+    const onAccountsChange = useCallback(async (nextAccounts, meta = {}) => {
+        if (Array.isArray(nextAccounts)) {
+            setAccounts(nextAccounts);
+            if (nextAccounts.length) setShowConnect(false);
+        } else {
+            await fetchStatus();
+        }
+        if (meta.synced) {
+            setLoading(true);
+            await fetchMessages();
+        }
+    }, [fetchStatus, fetchMessages]);
 
     useEffect(() => {
         fetchStatus();
@@ -282,7 +297,10 @@ export default function OutlookMailbox() {
 
                     {showConnect && (
                         <div className="max-h-[45%] overflow-y-auto border-t border-white/[0.06] p-2">
-                            <OutlookMailSettings className="!border-white/[0.08] !bg-white/[0.03]" />
+                            <OutlookMailSettings
+                                className="!border-white/[0.08] !bg-white/[0.03]"
+                                onAccountsChange={onAccountsChange}
+                            />
                         </div>
                     )}
                 </aside>
