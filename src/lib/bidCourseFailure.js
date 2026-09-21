@@ -208,12 +208,14 @@ export function isFilledEvent(eventType) {
 /** Incomplete required fields — not FILLED and not hard FAILED. */
 export function isIncompleteFillEvent(eventType, meta) {
     const t = String(eventType || '');
-    if (/fill_incomplete|submit_blocked_incomplete/i.test(t)) return true;
+    if (/fill_incomplete|submit_blocked_incomplete|cv_presubmit_blocked|cv_regen_pending|cv_regenerate_pending|cv_regenerate_needed/i.test(t)) {
+        return true;
+    }
     const m = meta && typeof meta === 'object' ? meta : {};
     if (m.incomplete === true) return true;
     const rt = Number(m.requiredTotal);
     const ro = Number(m.requiredOk);
-    if (rt > 0 && Number.isFinite(ro) && ro < rt && /submit_blocked|fill_done|package_saved|mid_fill/i.test(t)) {
+    if (rt > 0 && Number.isFinite(ro) && ro < rt && /submit_blocked|fill_done|package_saved|mid_fill|fill_evidence/i.test(t)) {
         return true;
     }
     return false;
@@ -470,7 +472,7 @@ export function isNoiseEvent(eventType) {
  * fill/submit results (e.g. package_saved after awaiting_manual_submit).
  */
 export function isSecondaryStatusEvent(eventType) {
-    return /^(package_saved|dial_country|cv_regenerate_needed|cv_regenerated|ai_skipped_budget)$/i.test(
+    return /^(package_saved|dial_country|ai_skipped_budget)$/i.test(
         String(eventType || '')
     );
 }
@@ -1026,13 +1028,17 @@ export function bidStageProgress({
             : /awaiting_captcha/i.test(qStatus)
                 ? 'CAPTCHA wait — helpers / Resume (fill starts when form ready)'
                 : 'Paused — CAPTCHA / login', 'amber');
+    } else if (/awaiting_cv_regen/i.test(qStatus) || /cv_presubmit_blocked|cv_regen_pending|cv_regenerate_pending|cv_regenerate_needed/i.test(t)) {
+        bump(2, 45, /cv_presubmit/i.test(t)
+            ? 'INCOMPLETE — CV blocked / regenerating'
+            : 'Paused — CV regenerating (will auto-rebid)', 'amber');
     } else if (/done/i.test(qStatus)) {
         // Queue ended — classify outcome even if last event is still mid-fill.
         if (/marked_applied|submitted_ok|submitted/i.test(t)) {
             bump(4, 100, 'APPLIED — Confirmed on site', 'emerald');
         } else if (/awaiting_manual_submit|after_fill|fill_done|ready_to_submit|reautofill_done/i.test(t)) {
             bump(4, 100, 'Filled — waiting for thank-you', 'sky');
-        } else if (/fill_incomplete|submit_blocked_incomplete/i.test(t)) {
+        } else if (/fill_incomplete|submit_blocked_incomplete|cv_presubmit_blocked|cv_regen_pending|cv_regenerate/i.test(t)) {
             const ro = Number(meta.requiredOk);
             const rt = Number(meta.requiredTotal);
             const ratio = rt > 0 && Number.isFinite(ro) ? ` ${ro}/${rt}` : '';
@@ -1040,9 +1046,11 @@ export function bidStageProgress({
                 ? meta.missing
                 : (Array.isArray(meta.missingRequired) ? meta.missingRequired : []);
             const missHint = missing.filter(Boolean).slice(0, 2).join('; ');
-            bump(4, 90, missHint
+            bump(4, 70, missHint
                 ? `INCOMPLETE —${ratio} ${missHint}`
-                : `INCOMPLETE — required fields empty${ratio}`, 'amber');
+                : (/cv_/i.test(t)
+                    ? 'INCOMPLETE — CV missing / regenerating'
+                    : `INCOMPLETE — required fields empty${ratio}`), 'amber');
         } else if (/fill_failed|open_failed|blocked_ats|cv_regenerate_failed|captcha_abandoned|bid_budget_exceeded|reautofill_failed/i.test(t)
             || isBudgetExceededEvent(t, meta)) {
             bump(4, 100, isBudgetExceededEvent(t, meta)
@@ -1123,13 +1131,21 @@ export function bidStageProgress({
     }
 
     // Blend queue position with current-job stage so multi-job Process advances the bar.
+    // Never force 100% on "done" unless the outcome is a real success / filled thank-you wait.
     if (queueTotal && queueIndex != null && tone !== 'rose') {
         const stageFrac = Math.min(1, Math.max(0, pct / 100));
         const overall = ((Math.max(0, queueIndex - 1) + stageFrac) / queueTotal) * 100;
-        if (/done/i.test(qStatus)) {
+        const doneIsSuccess = /done/i.test(qStatus)
+            && /APPLIED|Filled — waiting|SUCCESS/i.test(label)
+            && !/INCOMPLETE|FAILED|SKIPPED|TAB CLOSED|0 processed|CV /i.test(label);
+        if (doneIsSuccess) {
             pct = 100;
-            // Keep outcome label from the done-branch above — don't re-prefix mid-fill text.
-            if (queueLabel && label && !/SUCCESS|FAILED|FILLED|TIME LIMIT|TAB CLOSED|SKIPPED|RE-FILL|Queue finished|Needs CAPTCHA|INCOMPLETE/i.test(label)) {
+            if (queueLabel && label && !/SUCCESS|FAILED|FILLED|TIME LIMIT|TAB CLOSED|SKIPPED|RE-FILL|Queue finished|Needs CAPTCHA|INCOMPLETE|APPLIED/i.test(label)) {
+                label = `${queueLabel} · ${label}`;
+            }
+        } else if (/done/i.test(qStatus)) {
+            pct = Math.round(Math.min(85, Math.max(pct, overall)));
+            if (queueLabel && label && !/Queue finished|INCOMPLETE/i.test(label)) {
                 label = `${queueLabel} · ${label}`;
             }
         } else {
@@ -1140,7 +1156,7 @@ export function bidStageProgress({
                 label = queueLabel;
             }
         }
-    } else if (queueLabel && label && !/done|stopped/i.test(qStatus) && !/Queue finished/i.test(label)) {
+    } else if (queueLabel && label && !/done|stopped|awaiting_cv_regen/i.test(qStatus) && !/Queue finished/i.test(label)) {
         label = `${queueLabel} · ${label}`;
     }
 

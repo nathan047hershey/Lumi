@@ -302,6 +302,99 @@ function findExistingJobLinkByUrl(url) {
 }
 
 // -----------------------------------------------------------------------------
+// Sort whitelist for list + detail prev/next (never interpolate raw user input)
+// -----------------------------------------------------------------------------
+function jobLinkListOrderSql(sort) {
+    switch (String(sort || 'latest').toLowerCase()) {
+        case 'oldest':
+            return 'ORDER BY created_at ASC, id ASC';
+        case 'updated':
+            return 'ORDER BY COALESCE(updated_at, created_at) DESC, id DESC';
+        case 'title':
+            return 'ORDER BY position_title COLLATE NOCASE ASC, id DESC';
+        case 'company':
+            return 'ORDER BY company_name COLLATE NOCASE ASC, id DESC';
+        case 'latest':
+        default:
+            return 'ORDER BY created_at DESC, id DESC';
+    }
+}
+
+function jobLinkNeighborQuery(sort, jobLink) {
+    const s = String(sort || 'latest').toLowerCase();
+    if (s === 'oldest') {
+        return {
+            prev: {
+                cond: '(created_at, id) < (?, ?)',
+                order: 'ORDER BY created_at DESC, id DESC',
+                params: [jobLink.created_at, jobLink.id]
+            },
+            next: {
+                cond: '(created_at, id) > (?, ?)',
+                order: 'ORDER BY created_at ASC, id ASC',
+                params: [jobLink.created_at, jobLink.id]
+            }
+        };
+    }
+    if (s === 'updated') {
+        const ts = jobLink.updated_at || jobLink.created_at;
+        return {
+            prev: {
+                cond: '(COALESCE(updated_at, created_at), id) > (?, ?)',
+                order: 'ORDER BY COALESCE(updated_at, created_at) ASC, id ASC',
+                params: [ts, jobLink.id]
+            },
+            next: {
+                cond: '(COALESCE(updated_at, created_at), id) < (?, ?)',
+                order: 'ORDER BY COALESCE(updated_at, created_at) DESC, id DESC',
+                params: [ts, jobLink.id]
+            }
+        };
+    }
+    if (s === 'title') {
+        return {
+            prev: {
+                cond: '(position_title COLLATE NOCASE, id) < (?, ?)',
+                order: 'ORDER BY position_title COLLATE NOCASE DESC, id ASC',
+                params: [jobLink.position_title || '', jobLink.id]
+            },
+            next: {
+                cond: '(position_title COLLATE NOCASE, id) > (?, ?)',
+                order: 'ORDER BY position_title COLLATE NOCASE ASC, id DESC',
+                params: [jobLink.position_title || '', jobLink.id]
+            }
+        };
+    }
+    if (s === 'company') {
+        return {
+            prev: {
+                cond: '(company_name COLLATE NOCASE, id) < (?, ?)',
+                order: 'ORDER BY company_name COLLATE NOCASE DESC, id ASC',
+                params: [jobLink.company_name || '', jobLink.id]
+            },
+            next: {
+                cond: '(company_name COLLATE NOCASE, id) > (?, ?)',
+                order: 'ORDER BY company_name COLLATE NOCASE ASC, id DESC',
+                params: [jobLink.company_name || '', jobLink.id]
+            }
+        };
+    }
+    // latest (DESC by created_at)
+    return {
+        prev: {
+            cond: '(created_at, id) > (?, ?)',
+            order: 'ORDER BY created_at ASC, id ASC',
+            params: [jobLink.created_at, jobLink.id]
+        },
+        next: {
+            cond: '(created_at, id) < (?, ?)',
+            order: 'ORDER BY created_at DESC, id DESC',
+            params: [jobLink.created_at, jobLink.id]
+        }
+    };
+}
+
+// -----------------------------------------------------------------------------
 // GET /job-links — paginated list with filters (any user)
 // -----------------------------------------------------------------------------
 function listHandler(req, res) {
@@ -313,11 +406,12 @@ function listHandler(req, res) {
         const offset = (page - 1) * limit;
 
         const { where, params } = jobLinkListWhereClause(req.query);
+        const orderSql = jobLinkListOrderSql(req.query.sort);
 
         const total = getOne(`SELECT COUNT(*) AS total FROM job_links ${where}`, params)?.total || 0;
         const rows = getAll(
             `SELECT * FROM job_links ${where}
-             ORDER BY created_at DESC, id DESC
+             ${orderSql}
              LIMIT ? OFFSET ?`,
             [...params, limit, offset]
         );
@@ -882,21 +976,22 @@ function applicationsListHandler(req, res) {
         // (techstack, search, etc.) so Next/Prev on the detail page
         // stay inside the user's current view.
         const { conds: filterConds, params: filterParams } = buildJobLinkListFilters(req.query);
-        const prevConds = [...filterConds, '(created_at, id) > (?, ?)'];
-        const nextConds = [...filterConds, '(created_at, id) < (?, ?)'];
+        const neighbors = jobLinkNeighborQuery(req.query.sort, jobLink);
+        const prevConds = [...filterConds, neighbors.prev.cond];
+        const nextConds = [...filterConds, neighbors.next.cond];
         const prev = getOne(
             `SELECT id FROM job_links
               WHERE ${prevConds.join(' AND ')}
-              ORDER BY created_at ASC, id ASC
+              ${neighbors.prev.order}
               LIMIT 1`,
-            [...filterParams, jobLink.created_at, jobLink.id]
+            [...filterParams, ...neighbors.prev.params]
         );
         const next = getOne(
             `SELECT id FROM job_links
               WHERE ${nextConds.join(' AND ')}
-              ORDER BY created_at DESC, id DESC
+              ${neighbors.next.order}
               LIMIT 1`,
-            [...filterParams, jobLink.created_at, jobLink.id]
+            [...filterParams, ...neighbors.next.params]
         );
 
         res.json({

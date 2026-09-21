@@ -518,6 +518,8 @@ function listFiltersFromSearchParams(searchParams) {
     if (available && available !== 'all') filters.available = available;
     const bidState = searchParams.get('bid_state');
     if (bidState && bidState !== 'all') filters.bid_state = bidState;
+    const sort = searchParams.get('sort');
+    if (sort && sort !== 'latest') filters.sort = sort;
     if (dateFrom) filters.date_from = dateFrom;
     if (dateTo) filters.date_to = dateTo;
     if (searchParams.get('has_generated_resume') === '1') filters.has_generated_resume = 1;

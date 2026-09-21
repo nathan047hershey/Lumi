@@ -244,12 +244,16 @@
         ) {
             return 'state';
         }
-        // "Where are you located?" before US-resident help-text demotes it from city.
+        // "Where are you located?" / "From where do you intend to work?" before US-resident help-text demotes it from city.
         if (
             /\bwhere (?:are|do) you (?:located|currently reside|live)\b/.test(hay)
             || /\bwhere are you located\b/.test(hay)
             || /\bcurrent[\s_-]*location\b/.test(hay)
             || /\bwhere do you currently reside\b/.test(hay)
+            || /\bfrom where (?:do|will|would) you\b/.test(hay)
+            || /\bintend to work\b/.test(hay)
+            || /\bwhere (?:do|will|would) you (?:intend to )?work\b/.test(hay)
+            || /\bwork from (?:where|location|city|office)\b/.test(hay)
         ) {
             if (
                 /\bstates?\s+we\s+do\s+not\s+hire|\bdo not hire in\b|\bstates? we do not\b/.test(hay)
@@ -760,7 +764,7 @@
                 + 'I own design through delivery, write clear code, and collaborate closely with product and ops on shipped systems.'
             );
         }
-        if (/\b(why|interest|motivat|what draws|excited about)\b/i.test(lab)) {
+        if (/\b(why|interest|motivat|what draws|excited about|want to join)\b/i.test(lab)) {
             return 'This role matches the production work on my resume, and I want to apply that experience on this team.';
         }
         if (jd && /\b(why|company|role|team)\b/i.test(lab)) {
@@ -2903,7 +2907,17 @@
                     continue;
                 }
 
-                const wanted = profileValue(profile, answersById, answersByLabel, field, payload.jobDescription);
+                const wantedRaw = profileValue(profile, answersById, answersByLabel, field, payload.jobDescription);
+                let wanted = wantedRaw;
+                if (!wanted && field.required) {
+                    wanted = fallbackEssayForQuestion(field.label, profile, payload.jobDescription)
+                        || (field.kind === 'city'
+                            ? [profile?.city, profile?.state].filter(Boolean).join(', ')
+                            : '')
+                        || (field.type === 'textarea'
+                            ? `I have relevant production experience described on my resume and can apply that work directly to this role.`
+                            : '');
+                }
                 if (!wanted && !field.required) continue;
 
                 // Skip if already correct (prevents begin→end→begin overwrite).

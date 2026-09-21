@@ -1330,7 +1330,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         const watching = (open && selectedId) || (monitorActive && selectedId);
         if (!watching) return undefined;
         const activeBid = !!(queueState?.running
-            || /awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|running/i.test(String(queueState?.status || ''))
+            || /awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_cv_regen|running/i.test(String(queueState?.status || ''))
             || /gating|filling|opening/i.test(String(queueState?.runState || '')));
         const listTimer = setInterval(() => {
             loadList({ silent: true });
@@ -1513,7 +1513,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         let alive = true;
         const activeBid = !!(
             queueState?.running
-            || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_next|gating|filling)$/i.test(
+            || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_cv_regen|awaiting_next|gating|filling)$/i.test(
                 String(queueState?.status || '')
             )
             || /^(?:gating|filling|opening|verifying|submitting)$/i.test(String(queueState?.runState || ''))
@@ -1679,11 +1679,16 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         const s = String(queueState?.status || '');
         if (/awaiting_email_otp/i.test(s)) return 'Paused — email security code (Instruct Lumi)';
         if (/awaiting_captcha/i.test(s)) return 'Paused — CAPTCHA / login';
+        if (/awaiting_cv_regen/i.test(s)) return 'Paused — CV regenerating (will auto-rebid)';
+        if (/awaiting_manual_submit/i.test(s)) return 'Paused — review / manual submit';
         if (/awaiting_next/i.test(s)) return 'Waiting — click Next for the next job';
         if (/running/i.test(s)) return 'Bidding in progress…';
         if (/done/i.test(s)) {
             const n = queueState?.processed;
             const skip = queueState?.skippedAts;
+            if (n != null && Number(n) <= 0) {
+                return 'Queue ended — 0 processed (not complete)';
+            }
             return `Queue finished${n != null ? ` — ${n} processed` : ''}${skip ? ` · ${skip} skipped` : ''}`;
         }
         if (/stopped/i.test(s)) return 'Queue stopped';
@@ -2641,7 +2646,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
 
     const queueBlocked = !!(
         queueState?.running
-        || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_next)$/i.test(String(queueState?.status || ''))
+        || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_cv_regen|awaiting_next)$/i.test(String(queueState?.status || ''))
     );
     const canDockProcess = !busy && !!profileId && jobLinkIds.length > 0;
     const dockProcessLabel = queueBlocked ? 'Stop & Process' : 'Process';
@@ -3459,7 +3464,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             captchaTabMissing={captchaTabMissing}
             ownedTabAlive={ownedTabAlive}
             queueRunning={
-                /running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_next/i.test(String(queueState?.status || ''))
+                /running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_cv_regen|awaiting_next/i.test(String(queueState?.status || ''))
                 || !!queueState?.running
                 || monitorActive
             }

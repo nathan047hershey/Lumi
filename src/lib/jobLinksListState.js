@@ -10,11 +10,16 @@ export const EMPTY_JOB_LINKS_LIST_STATE = {
     hasGeneratedResume: false,
     dateFrom: '',
     dateTo: '',
-    today: false
+    today: false,
+    sort: 'latest'
 };
 
 export function parseJobLinksListState(searchParams) {
     const pageRaw = parseInt(searchParams?.get?.('page') || '1', 10);
+    const sortRaw = String(searchParams?.get?.('sort') || 'latest').toLowerCase();
+    const sort = ['latest', 'oldest', 'updated', 'title', 'company'].includes(sortRaw)
+        ? sortRaw
+        : 'latest';
     return {
         page: Number.isFinite(pageRaw) && pageRaw >= 1 ? pageRaw : 1,
         search: searchParams?.get?.('search') || '',
@@ -25,7 +30,8 @@ export function parseJobLinksListState(searchParams) {
         hasGeneratedResume: searchParams?.get?.('has_generated_resume') === '1',
         dateFrom: searchParams?.get?.('date_from') || '',
         dateTo: searchParams?.get?.('date_to') || '',
-        today: searchParams?.get?.('today') === '1'
+        today: searchParams?.get?.('today') === '1',
+        sort
     };
 }
 
@@ -40,7 +46,8 @@ export function jobLinksListStateHasMemory(state) {
         || !!state.hasGeneratedResume
         || !!state.dateFrom
         || !!state.dateTo
-        || !!state.today;
+        || !!state.today
+        || (state.sort && state.sort !== 'latest');
 }
 
 export function jobLinksListStateToQuery(state) {
@@ -56,6 +63,7 @@ export function jobLinksListStateToQuery(state) {
     if (state.dateFrom) next.set('date_from', state.dateFrom);
     if (state.dateTo) next.set('date_to', state.dateTo);
     if (state.today) next.set('today', '1');
+    if (state.sort && state.sort !== 'latest') next.set('sort', state.sort);
     const q = next.toString();
     return q ? `?${q}` : '';
 }

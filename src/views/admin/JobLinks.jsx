@@ -1405,6 +1405,7 @@ function JobLinks({ embedded = false }) {
     const [platformFilter, setPlatformFilter] = useState(initialFiltersRef.current.platform);
     const [availableFilter, setAvailableFilter] = useState(initialFiltersRef.current.available);
     const [bidStateFilter, setBidStateFilter] = useState(initialFiltersRef.current.bidState || 'all');
+    const [sortFilter, setSortFilter] = useState(initialFiltersRef.current.sort || 'latest');
     // Restrict the list to job_links that have at least one
     // job_applications row with a ready resume. Useful for the
     // post-batch pass — show only what actually produced a
@@ -1454,7 +1455,8 @@ function JobLinks({ embedded = false }) {
             hasGeneratedResume: hasGeneratedResumeFilter,
             dateFrom: dateFrom || debouncedDateFrom,
             dateTo: dateTo || debouncedDateTo,
-            today: isTodayActive
+            today: isTodayActive,
+            sort: sortFilter
         };
         writeSavedJobLinksListState(snapshot);
         const nextQuery = jobLinksListStateToQuery({
@@ -1480,6 +1482,7 @@ function JobLinks({ embedded = false }) {
         debouncedDateFrom,
         debouncedDateTo,
         isTodayActive,
+        sortFilter,
         searchParams,
         setSearchParams
     ]);
@@ -1569,6 +1572,10 @@ function JobLinks({ embedded = false }) {
         setBidStateFilter(value || 'all');
         setPage(1);
     }, [setPage]);
+    const changeSortFilter = useCallback((value) => {
+        setSortFilter(value || 'latest');
+        setPage(1);
+    }, [setPage]);
 
     // Active-filter chip list for the top bar.
     const activeChips = useMemo(() => {
@@ -1599,6 +1606,19 @@ function JobLinks({ embedded = false }) {
                 key: 'bid_state',
                 label: `Bid: ${bidStateFilter.toUpperCase()}`,
                 onClear: () => changeBidStateFilter('all')
+            });
+        }
+        if (sortFilter && sortFilter !== 'latest') {
+            const sortLabel = {
+                oldest: 'Oldest',
+                updated: 'Updated',
+                title: 'Title',
+                company: 'Company'
+            }[sortFilter] || sortFilter;
+            out.push({
+                key: 'sort',
+                label: `Sort: ${sortLabel}`,
+                onClear: () => changeSortFilter('latest')
             });
         }
         if (hasGeneratedResumeFilter) {
@@ -1642,7 +1662,7 @@ function JobLinks({ embedded = false }) {
             });
         }
         return out;
-    }, [techstackFilter, platformFilter, availableFilter, bidStateFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, debouncedSearch, isTodayActive, changeTechstackFilter, changePlatformFilter, changeAvailableFilter, changeBidStateFilter, changeHasGeneratedResumeFilter]);
+    }, [techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, debouncedSearch, isTodayActive, changeTechstackFilter, changePlatformFilter, changeAvailableFilter, changeBidStateFilter, changeSortFilter, changeHasGeneratedResumeFilter]);
 
     const resetFilters = () => {
         setSearch('');
@@ -1650,6 +1670,7 @@ function JobLinks({ embedded = false }) {
         setPlatformFilter('all');
         setAvailableFilter('all');
         setBidStateFilter('all');
+        setSortFilter('latest');
         setHasGeneratedResumeFilter(false);
         setDateFrom('');
         setDateTo('');
@@ -1720,6 +1741,7 @@ function JobLinks({ embedded = false }) {
             if (debouncedDateTo)     filters.date_to = debouncedDateTo;
             if (hasGeneratedResumeFilter) filters.has_generated_resume = 1;
             if (bidStateFilter && bidStateFilter !== 'all') filters.bid_state = bidStateFilter;
+            if (sortFilter && sortFilter !== 'latest') filters.sort = sortFilter;
 
             try {
                 const [listRes, cronRes] = await Promise.all([
@@ -1766,7 +1788,7 @@ function JobLinks({ embedded = false }) {
                 if (!silent) setTableLoading(false);
             }
         }
-    }, [page, limit, debouncedSearch, techstackFilter, platformFilter, availableFilter, bidStateFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo]);
+    }, [page, limit, debouncedSearch, techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo]);
 
     useEffect(() => {
         load();
@@ -2090,6 +2112,18 @@ function JobLinks({ embedded = false }) {
                                         <SelectItem value="success">SUCCESS</SelectItem>
                                         <SelectItem value="filled">FILLED</SelectItem>
                                         <SelectItem value="failed">FAILED</SelectItem>
+                                    </SelectContent>
+                                </Select>
+                                <Select value={sortFilter} onValueChange={changeSortFilter}>
+                                    <SelectTrigger className="h-9 w-[9rem] border-white/10 bg-black/20">
+                                        <SelectValue placeholder="Sort" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="latest">Latest</SelectItem>
+                                        <SelectItem value="oldest">Oldest</SelectItem>
+                                        <SelectItem value="updated">Updated</SelectItem>
+                                        <SelectItem value="title">Title</SelectItem>
+                                        <SelectItem value="company">Company</SelectItem>
                                     </SelectContent>
                                 </Select>
                                 <div className="w-[9rem]">

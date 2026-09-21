@@ -7509,7 +7509,8 @@
                     }
                     // Soft resume: try upload, but never abort the whole fill on resume_missing.
                     // Contact/profile fields still write; resume status is a warning.
-                    const skipFiles = !!(msg.payload?.skipFiles || msg.payload?.profileOnly);
+                    // profileOnly must still upload CV/cover — only skipFiles=true skips uploads.
+                    const skipFiles = !!msg.payload?.skipFiles;
                     const hasResumeBytes = !!(
                         msg.payload?.base64
                         || msg.payload?.resume?.base64

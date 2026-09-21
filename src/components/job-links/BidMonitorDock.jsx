@@ -393,10 +393,16 @@ export default function BidMonitorDock({
             return { label: outcomeShort || 'ATTENTION', tone: 'amber' };
         }
         if (outcomeBadge?.kind === 'failed') return { label: outcomeShort || 'FAILED', tone: 'rose' };
+        if (/awaiting_cv_regen/i.test(String(queueStatus || ''))) {
+            return { label: 'CV PENDING', tone: 'amber' };
+        }
         if (queuePaused) return { label: 'PAUSED', tone: 'amber' };
         const queueDone = /^(?:done|stopped|empty)$/i.test(String(queueStatus || ''));
         if (!queueDone && (queueRunning || progressPct > 0)) {
             return { label: 'RUNNING', tone: 'emerald' };
+        }
+        if (queueDone && (outcomeShort === 'INCOMPLETE' || /cv_|incomplete/i.test(String(lastEventType || '')))) {
+            return { label: 'INCOMPLETE', tone: 'amber' };
         }
         if (queueDone) return { label: 'DONE', tone: 'muted' };
         if (appStatusRaw === 'pending' || appStatusRaw) {

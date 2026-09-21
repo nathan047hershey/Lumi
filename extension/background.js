@@ -356,34 +356,46 @@ async function processPendingCvRegenQueue() {
             }
 
             if (qa?.blockSubmit || qa?.ok === false) {
+                const hardFail = Array.isArray(qa?.hard_reasons) ? qa.hard_reasons : [];
+                const noFile = hardFail.includes('missing_resume_file')
+                    && !(resumeFilename || uploadFilename);
                 await updatePendingCvRegen(appId, {
-                    status: 'failed',
+                    status: noFile ? 'failed' : 'ready',
                     error: (qa?.hard_reasons || qa?.reasons || ['quality_failed']).join(',')
                 });
                 await logCourseEvent(appId, 'cv_presubmit_blocked', {
                     via: 'pending_queue_after_regen',
                     reasons: qa?.reasons || [],
                     hard_reasons: qa?.hard_reasons || [],
-                    quality: qa?.quality || null
+                    quality: qa?.quality || null,
+                    soft_continue: !noFile
                 }).catch(() => {});
+                if (noFile) {
+                    await removePendingCvRegen(appId);
+                    await notify(
+                        'Bidder',
+                        `CV still missing after regen (#${appId}) — skipped rebid`
+                    ).catch(() => {});
+                    continue;
+                }
+                // Soft QA fail: still rebid so the form gets filled / CV uploaded.
                 await removePendingCvRegen(appId);
                 await notify(
                     'Bidder',
-                    `CV still failing after regen (#${appId}) — skipped rebid`
+                    `CV QA soft-fail (#${appId}) — rebid to upload / finish form`
                 ).catch(() => {});
-                continue;
+            } else {
+                await updatePendingCvRegen(appId, { status: 'ready' });
+                await removePendingCvRegen(appId);
+                await logCourseEvent(appId, 'cv_check_ok', {
+                    via: 'pending_queue_after_regen',
+                    quality: qa?.quality || null
+                }).catch(() => {});
+                await notify(
+                    'Bidder',
+                    `CV passed (#${appId}) — auto rebid`
+                ).catch(() => {});
             }
-
-            await updatePendingCvRegen(appId, { status: 'ready' });
-            await removePendingCvRegen(appId);
-            await logCourseEvent(appId, 'cv_check_ok', {
-                via: 'pending_queue_after_regen',
-                quality: qa?.quality || null
-            }).catch(() => {});
-            await notify(
-                'Bidder',
-                `CV passed (#${appId}) — auto rebid`
-            ).catch(() => {});
 
             // Auto rebid this application when queue is idle.
             try {
@@ -2745,7 +2757,10 @@ async function captureFailEvidence(applicationId, tabId, reason, extra = {}) {
     try {
         await uploadScreenshot(applicationId, 'pre_close', tabId, { settleMs: 0, stayInApp: true });
     } catch (_) { /* ignore */ }
-    await logCourseEvent(applicationId, 'tab_closed', {
+    const evidenceType = /cv_regen|fill_failed|form_too_thin|bid_time_budget/i.test(String(reason || ''))
+        ? 'fill_evidence'
+        : 'tab_closed';
+    await logCourseEvent(applicationId, evidenceType, {
         reason: String(reason || 'unknown'),
         phase: extra.phase || reason,
         tabId,
@@ -2759,7 +2774,7 @@ async function captureFailEvidence(applicationId, tabId, reason, extra = {}) {
             requiredOk: formSnap.requiredOk,
             requiredTotal: formSnap.requiredTotal,
             url: formSnap.url || extra.url || null,
-            eventType: 'tab_closed'
+            eventType: evidenceType
         }).catch(() => {});
     }
     try {
@@ -3984,8 +3999,8 @@ async function processReadyQueue(opts = {}) {
                                 : `Fill failed — tab kept for review: ${errMsg.slice(0, 80)}`))
                 );
                 await playBidderSound(prefs.soundEnabled);
-                // Unattended + captcha/regen: close after evidence. Otherwise PARK for checkout.
-                if (prefs.unattended && (isCaptcha || parkedRegen)) {
+                // Keep apply tab for CV regen / fill review — never close on regen alone.
+                if (prefs.unattended && isCaptcha && !parkedRegen) {
                     await clearTabMapping({ applicationId: item.id, tabId: opened.tabId }).catch(() => {});
                     try { await chrome.tabs.remove(opened.tabId); } catch (_) { /* ignore */ }
                     openTabs.delete(opened.tabId);
@@ -4638,12 +4653,19 @@ async function processReadyQueue(opts = {}) {
         const firstOtpItem = firstOtpTab ? holdEmailOtpTabs.get(firstOtpTab) : null;
         const firstReviewTab = reviewHoldCount ? [...manualReviewTabs.keys()][0] : null;
         const firstReviewItem = firstReviewTab ? manualReviewTabs.get(firstReviewTab) : null;
+        let pendingCvCount = 0;
+        try {
+            pendingCvCount = (await listPendingCvRegen()).length;
+        } catch (_) { /* ignore */ }
+        const stillWorking = otpHoldCount > 0 || reviewHoldCount > 0 || pendingCvCount > 0;
 
         await setQueueState({
-            running: otpHoldCount > 0 || reviewHoldCount > 0,
+            running: stillWorking,
             status: otpHoldCount > 0
                 ? 'awaiting_email_otp'
-                : (reviewHoldCount > 0 ? 'awaiting_manual_submit' : 'done'),
+                : (reviewHoldCount > 0
+                    ? 'awaiting_manual_submit'
+                    : (pendingCvCount > 0 ? 'awaiting_cv_regen' : 'done')),
             processed,
             skippedAts,
             queueEndedAt: Date.now(),
@@ -4654,7 +4676,9 @@ async function processReadyQueue(opts = {}) {
                 ? 'Security code tab(s) kept open — Instruct Lumi with the code, then Submit'
                 : (reviewHoldCount > 0
                     ? 'Apply tab kept open — review answers in popup or submit on the form'
-                    : null),
+                    : (pendingCvCount > 0
+                        ? `CV regenerating (${pendingCvCount}) — form kept; auto-rebid when ready`
+                        : null)),
             coachAt: Date.now()
         });
         if (otpHoldCount > 0) {
@@ -4672,9 +4696,11 @@ async function processReadyQueue(opts = {}) {
             ? `Queue paused — ${otpHoldCount} tab(s) need email security code (Instruct Lumi)`
             : (reviewHoldCount > 0
                 ? `Queue paused — ${reviewHoldCount} tab(s) open for review / manual submit`
-                : (skippedAts
-                    ? `Queue finished — processed ${processed}, skipped ${skippedAts} unsupported`
-                    : `Queue finished — processed ${processed}`));
+                : (pendingCvCount > 0
+                    ? `Queue paused — ${pendingCvCount} CV(s) regenerating (will auto-rebid)`
+                    : (skippedAts
+                        ? `Queue finished — processed ${processed}, skipped ${skippedAts} unsupported`
+                        : `Queue finished — processed ${processed}`)));
         await notify('Bidder', doneMsg);
 
         // Drain any CVs that finished regenerating while this Process was running.
@@ -4683,7 +4709,7 @@ async function processReadyQueue(opts = {}) {
             const rebidIds = Array.isArray(stEnd?.pendingRebidIds)
                 ? stEnd.pendingRebidIds.map((id) => parseInt(id, 10)).filter((n) => Number.isInteger(n) && n > 0)
                 : [];
-            if (rebidIds.length && otpHoldCount === 0 && reviewHoldCount === 0) {
+            if (rebidIds.length && otpHoldCount === 0 && reviewHoldCount === 0 && pendingCvCount === 0) {
                 await setQueueState({ pendingRebidIds: [] });
                 // Release lock first so nested Process can acquire it.
                 clearInterval(keepAlive);
@@ -6955,22 +6981,26 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         );
 
         if (mustRegenNow) {
+            // Park for regen, but CONTINUE fill so essays / profile / file upload still run.
+            // Throwing here left Greenhouse empty and falsely ended the queue at 100%.
             await parkApplicationForCvRegen({
                 item,
                 app,
                 qa,
                 reason: 'cv_quality_hard'
             });
-            await setAutofillPanelStatus(tabId, 'CV pending regenerate — will auto-rebid when ready', 20);
+            await setAutofillPanelStatus(tabId, 'CV regenerating — filling form anyway…', 20);
             await notify(
                 'Bidder',
                 qa?.quality?.summary
-                    ? `CV parked for regen (${qa.quality.grade || 'fail'}) — auto-rebid when pass`
-                    : 'CV parked for regenerate — auto-rebid when pass'
+                    ? `CV regenerating (${qa.quality.grade || 'fail'}) — filling form now, will rebid when pass`
+                    : 'CV regenerating — filling form now, will rebid when pass'
             );
-            const err = new Error('cv_regen_pending');
-            err.code = 'cv_regen_pending';
-            throw err;
+            await logCourseEvent(item.id, 'cv_regen_pending', {
+                continue_fill: true,
+                reasons: qa?.reasons || [],
+                hard_reasons: hard
+            }).catch(() => {});
         } else if (qa?.shouldRegenerate) {
             await logCourseEvent(item.id, 'cv_regenerate_deferred', {
                 ...qa,
@@ -7120,7 +7150,8 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 answers: [],
                 autoSubmit: false,
                 skipQuestions: true,
-                profileOnly: true
+                profileOnly: true,
+                skipFiles: false
             }
         }).catch(() => null);
         uploadScreenshot(item.id, 'mid_fill', tabId, shotOpts({ settleMs: 200 })).catch(() => {});
@@ -7193,9 +7224,37 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 autoSubmit: !!prefs.autoSubmit,
                 applicationId: item.id,
                 jobDescription: app.job_description || '',
-                bidDeadline
+                bidDeadline,
+                // Ensure Greenhouse gets the CV even if the profile-only pass missed it.
+                resume: resumeFile,
+                coverLetter: coverLetterFile,
+                skipCoverLetter: !coverLetterFile,
+                filename: resumeFile?.filename,
+                base64: resumeFile?.base64,
+                mimeType: resumeFile?.mimeType
             }
         });
+
+        // Explicit CV upload pass — Greenhouse engine does not attach files itself.
+        if (resumeFile?.base64) {
+            try {
+                await setAutofillPanelStatus(tabId, 'Uploading resume…', 78);
+                await sendTabMessage(tabId, {
+                    type: 'FILL_FORM',
+                    payload: {
+                        ...filePayload,
+                        profile: { ...profile, ...payload.profile },
+                        answers: [],
+                        autoSubmit: false,
+                        skipQuestions: true,
+                        profileOnly: true,
+                        skipFiles: false
+                    }
+                }).catch(() => null);
+            } catch (err) {
+                console.warn('[bidder] greenhouse resume upload', err);
+            }
+        }
 
         if (!run?.ok) throw new Error(run?.error || 'Bidder engine run failed');
         const result = run.result || {};
