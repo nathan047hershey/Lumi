@@ -58,10 +58,10 @@ async function bidderRequest(path, opts) {
 
 export const BIDDER_DEFAULTS = {
     maxTabs: 3,
-    openGapMs: 4000,
+    openGapMs: 500,
     /** Base form wait; ATS-specific bumps applied via formWaitMsForAts. */
-    formWaitMs: 15000,
-    autoSubmit: true,
+    formWaitMs: 6000,
+    autoSubmit: false,
     autoNext: false,
     soundEnabled: true,
     /** Pause opening more tabs until CAPTCHA/login is cleared (human handoff). */
@@ -99,7 +99,7 @@ export const BIDDER_DEFAULTS = {
     /** Optional cover letter upload — OFF by default (required CL slots still upload). */
     uploadCoverLetter: false,
     /** Seconds to wait after fill before after_fill screenshot (form paint). */
-    screenshotSettleSec: 2
+    screenshotSettleSec: 0
 };
 
 const QUEUE_LOCK_KEY = 'bidderQueueLock';
@@ -122,6 +122,9 @@ export async function getBidderPrefs() {
         'bidderUploadCoverLetter',
         'bidderStayInApp',
         'bidderScreenshotSettleSec',
+        'bidderFormWaitMs',
+        'bidderOpenGapMs',
+        'bidderMaxTabs',
         'bidderDisabledFillLessons'
         // Do NOT read Mode-1 `autoSubmit` — popup default historically false
         // and would override Auto Bidder's default-on submit behavior.
@@ -139,10 +142,8 @@ export async function getBidderPrefs() {
                 ? Math.min(600, Math.round(graceSec))
                 : Math.round(BIDDER_DEFAULTS.humanAssistWaitMs / 1000)));
     const humanAssistWaitMs = Math.round(resolvedAssistSec * 1000);
-    // Explicit false stays off; unset / null → default ON (BIDDER_DEFAULTS).
-    const autoSubmit = data.bidderAutoSubmit === false
-        ? false
-        : (data.bidderAutoSubmit === true ? true : BIDDER_DEFAULTS.autoSubmit);
+    // Explicit true stays on; unset / null → OFF (never submit unless user opts in).
+    const autoSubmit = data.bidderAutoSubmit === true;
     let disabledFillLessons = {};
     try {
         const raw = data.bidderDisabledFillLessons;
@@ -172,9 +173,25 @@ export async function getBidderPrefs() {
         stayInApp: data.bidderStayInApp != null ? !!data.bidderStayInApp : true,
         uploadCoverLetter: !!data.bidderUploadCoverLetter,
         disabledFillLessons,
-        screenshotSettleSec: Number(data.bidderScreenshotSettleSec) > 0
+        screenshotSettleSec: Number(data.bidderScreenshotSettleSec) >= 0
+            && data.bidderScreenshotSettleSec != null
             ? Number(data.bidderScreenshotSettleSec)
-            : BIDDER_DEFAULTS.screenshotSettleSec
+            : BIDDER_DEFAULTS.screenshotSettleSec,
+        formWaitMs: (() => {
+            const n = Number(data.bidderFormWaitMs);
+            if (Number.isFinite(n) && n >= 3000) return Math.min(30000, Math.round(n));
+            return BIDDER_DEFAULTS.formWaitMs;
+        })(),
+        openGapMs: (() => {
+            const n = Number(data.bidderOpenGapMs);
+            if (Number.isFinite(n) && n >= 0) return Math.min(10000, Math.round(n));
+            return BIDDER_DEFAULTS.openGapMs;
+        })(),
+        maxTabs: (() => {
+            const n = Number(data.bidderMaxTabs);
+            if (Number.isFinite(n) && n >= 1) return Math.min(5, Math.round(n));
+            return BIDDER_DEFAULTS.maxTabs;
+        })()
     };
 }
 
@@ -400,12 +417,16 @@ export async function logCourseEvent(applicationId, eventType, meta = {}) {
                     requiredOk: meta.requiredOk,
                     requiredTotal: meta.requiredTotal,
                     missing: Array.isArray(meta.missing)
-                        ? meta.missing.filter(Boolean).slice(0, 5)
+                        ? meta.missing.filter(Boolean).slice(0, 8)
                         : (Array.isArray(meta.missingRequired)
-                            ? meta.missingRequired.filter(Boolean).slice(0, 5)
+                            ? meta.missingRequired.filter(Boolean).slice(0, 8)
                             : undefined),
                     error: meta.error ? String(meta.error).slice(0, 200) : undefined,
                     reason: meta.reason ? String(meta.reason).slice(0, 120) : undefined,
+                    phase: meta.phase ? String(meta.phase).slice(0, 80) : undefined,
+                    url: meta.url ? String(meta.url).slice(0, 240) : undefined,
+                    tabId: meta.tabId != null ? Number(meta.tabId) || undefined : undefined,
+                    fieldCount: meta.fieldCount != null ? Number(meta.fieldCount) : undefined,
                     limitMs: meta.limitMs,
                     remainingMs: meta.remainingMs,
                     willRetry: typeof meta.willRetry === 'boolean' ? meta.willRetry : undefined
@@ -413,12 +434,27 @@ export async function logCourseEvent(applicationId, eventType, meta = {}) {
                 : null;
             try {
                 const cur = (await chrome.storage.local.get([QUEUE_STATE_KEY]))[QUEUE_STATE_KEY] || {};
+                const prevMeta = cur.lastStatusMeta && typeof cur.lastStatusMeta === 'object'
+                    ? cur.lastStatusMeta
+                    : {};
+                // Merge — never wipe prior missing list on tab_closed / thin events.
+                const mergedMeta = slimMeta
+                    ? {
+                        ...prevMeta,
+                        ...Object.fromEntries(
+                            Object.entries(slimMeta).filter(([, v]) => v !== undefined)
+                        ),
+                        missing: slimMeta.missing?.length
+                            ? slimMeta.missing
+                            : (prevMeta.missing || prevMeta.missingRequired || undefined)
+                    }
+                    : prevMeta;
                 await chrome.storage.local.set({
                     [QUEUE_STATE_KEY]: {
                         ...cur,
                         lastStatusEvent: String(eventType),
                         lastStatusAt: Date.now(),
-                        lastStatusMeta: slimMeta,
+                        lastStatusMeta: mergedMeta,
                         updatedAt: Date.now()
                     }
                 });

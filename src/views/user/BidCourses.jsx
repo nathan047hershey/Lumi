@@ -483,7 +483,7 @@ function BidCourses({ embedded = false }) {
                                         >
                                             #{c.id}
                                             {' · '}
-                                            {run.short === 'SUCCESS' ? 'Applied on site' : run.label}
+                                            {run.short === 'APPLIED' || run.short === 'SUCCESS' ? 'Applied on site' : run.label}
                                             {c.user_username ? ` · ${c.user_username}` : ''}
                                             {fail && failed ? ` · ${fail}` : ''}
                                         </div>

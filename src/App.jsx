@@ -25,6 +25,7 @@ import Applications from './views/user/Applications';
 import InterviewRequests from './views/user/InterviewRequests';
 import AccountSettings from './views/user/AccountSettings';
 import AutofillSettingsPage from './views/AutofillSettingsPage';
+import BidderSettingsPage from './views/BidderSettingsPage';
 import BidInsights from './views/user/BidInsights';
 import Analyze from './views/user/Analyze';
 import BidCourses from './views/user/BidCourses';
@@ -114,6 +115,7 @@ function App() {
                 <Route path="profiles/new" element={<ProfileForm />} />
                 <Route path="profiles/:id/edit" element={<ProfileForm />} />
                 <Route path="autofill-settings" element={<AutofillSettingsPage />} />
+                <Route path="bidder-settings" element={<BidderSettingsPage />} />
                 <Route path="assignments" element={<Assignments />} />
                 <Route path="settings" element={<AdminSettings />} />
                 <Route path="mailbox" element={<Inbox />} />
@@ -182,6 +184,7 @@ function App() {
                 <Route path="templates" element={<ResumeTemplateBuilder />} />
                 <Route path="templates/:templateId" element={<ResumeTemplateBuilder />} />
                 <Route path="autofill-settings" element={<AutofillSettingsPage />} />
+                <Route path="bidder-settings" element={<BidderSettingsPage />} />
                 <Route path="settings" element={<AccountSettings />} />
                 <Route path="inbox" element={<Inbox />} />
             </Route>
@@ -209,6 +212,7 @@ function App() {
                 <Route path="profiles/new" element={<ManagerProfileForm />} />
                 <Route path="profiles/:id/edit" element={<ManagerProfileForm />} />
                 <Route path="autofill-settings" element={<AutofillSettingsPage />} />
+                <Route path="bidder-settings" element={<BidderSettingsPage />} />
                 <Route path="users" element={<ManagerUsers />} />
                 <Route path="settings" element={<AccountSettings />} />
             </Route>

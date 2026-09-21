@@ -14,11 +14,11 @@ import { Separator } from '@/components/ui/separator';
 import { Skeleton } from '@/components/ui/skeleton';
 import LumiBidderSettings from '@/components/LumiBidderSettings';
 
-function autofillSettingsPath(role) {
+function bidderSettingsPath(role) {
     const r = String(role || 'user').toLowerCase();
-    if (r === 'admin') return '/admin/autofill-settings';
-    if (r === 'manager') return '/manager/autofill-settings';
-    return '/user/autofill-settings';
+    if (r === 'admin') return '/admin/bidder-settings';
+    if (r === 'manager') return '/manager/bidder-settings';
+    return '/user/bidder-settings';
 }
 
 function AccountSettings() {
@@ -229,12 +229,12 @@ function AccountSettings() {
                 {showLumiSettings ? (
                     <Card>
                         <CardHeader>
-                            <CardTitle>Lumi</CardTitle>
+                            <CardTitle>Auto Bidder</CardTitle>
                             <CardDescription>
-                                AFK, CAPTCHA solver keys, and auto-submit — synced to the Lumi extension.
+                                AFK, CAPTCHA helpers, fill timing — synced to the Lumi extension.
                                 Full page:{' '}
-                                <Link className="underline" to={autofillSettingsPath(user.role)}>
-                                    Autofill Settings
+                                <Link className="underline" to={bidderSettingsPath(user.role)}>
+                                    Auto Bidder settings
                                 </Link>
                             </CardDescription>
                         </CardHeader>

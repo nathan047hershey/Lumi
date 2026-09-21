@@ -137,6 +137,7 @@ async function refresh() {
         await loadProfiles(settings.selectedProfileId);
         renderLast(settings.lastResult);
         await refreshMonitor();
+        await refreshCapturedQuestions();
     } catch (err) {
         if (err.status === 401) {
             await saveSettings({
@@ -227,50 +228,168 @@ function renderLast(last) {
     }
 }
 
-async function refreshMonitor() {
+function formatElapsed(ms) {
+    const n = Math.max(0, Number(ms) || 0) / 1000;
+    if (n < 60) return `${n < 10 ? n.toFixed(1) : Math.round(n)}s`;
+    const m = Math.floor(n / 60);
+    const s = Math.round(n % 60);
+    return `${m}m ${s}s`;
+}
+
+function sendMessage(type, payload = {}) {
+    return new Promise((resolve) => {
+        try {
+            chrome.runtime.sendMessage({ type, ...payload }, (res) => {
+                if (chrome.runtime.lastError) {
+                    resolve({ ok: false, error: chrome.runtime.lastError.message });
+                    return;
+                }
+                resolve(res || { ok: false, error: 'No response' });
+            });
+        } catch (err) {
+            resolve({ ok: false, error: err?.message || String(err) });
+        }
+    });
+}
+
+let _monitorPoll = null;
+let _workTick = null;
+let _localWorkStart = null;
+let _localWorkLabel = '';
+
+function stopMonitorPoll() {
+    if (_monitorPoll) {
+        clearInterval(_monitorPoll);
+        _monitorPoll = null;
+    }
+}
+
+function stopWorkTick() {
+    if (_workTick) {
+        clearInterval(_workTick);
+        _workTick = null;
+    }
+    _localWorkStart = null;
+    _localWorkLabel = '';
+}
+
+function startWorkTick(label) {
+    stopWorkTick();
+    _localWorkStart = Date.now();
+    _localWorkLabel = label || 'Working…';
+    const phaseEl = $('monitorPhase');
+    const elapsedEl = $('monitorElapsed');
+    if (phaseEl) phaseEl.textContent = _localWorkLabel;
+    const tick = () => {
+        if (!_localWorkStart) return;
+        const elapsed = Date.now() - _localWorkStart;
+        if (elapsedEl) elapsedEl.textContent = `Elapsed ${formatElapsed(elapsed)}`;
+        if ($('mainOk') && _localWorkLabel) {
+            $('mainOk').textContent = `${_localWorkLabel} · ${formatElapsed(elapsed)}`;
+        }
+    };
+    tick();
+    _workTick = setInterval(tick, 250);
+}
+
+function renderMonitorSnapshot(snap) {
     const summary = $('monitorSummary');
     const list = $('readyList');
+    const phaseEl = $('monitorPhase');
+    const elapsedEl = $('monitorElapsed');
+    const logEl = $('monitorLog');
+    if (!summary || !list) return { active: false };
+
+    const status = snap?.status?.ok ? (snap.status.data || {}) : null;
+    const queue = snap?.queue?.ok ? (snap.queue.data || {}) : null;
+    const ready = snap?.ready?.ok ? (snap.ready.data || {}) : null;
+    const work = snap?.work || null;
+    const now = Date.now();
+
+    const caps = status?.caps || {};
+    const today = status?.today || {};
+    const readyAll = status?.ready_count ?? '—';
+    const readyItems = ready?.items || [];
+    const parts = [];
+    if (snap?.status?.ok) {
+        parts.push(
+            `Ready: ${readyItems.length} shown / ${readyAll} all`
+            + ` · Today: ${today.userTotal ?? '—'}`
+            + ` (caps ${caps.maxPerProfilePerDay || 100}/p, ${caps.maxTotalPerDay || 500}/d)`
+        );
+    } else if (snap?.status?.error) {
+        parts.push(snap.status.error);
+    }
+    if (queue?.status) {
+        let q = `Queue: ${queue.status}`;
+        if (queue.index) q += ` ${queue.index}/${queue.total || '?'}`;
+        if (queue.status === 'awaiting_captcha') {
+            q += queue.captchaKind === 'login'
+                ? ' — log in, then Resume'
+                : ' — solve CAPTCHA, then Resume';
+        }
+        if (queue.lastStatusEvent) q += ` · ${queue.lastStatusEvent}`;
+        parts.push(q);
+    }
+    summary.textContent = parts.join(' · ') || 'Monitor ready';
+
+    const queueActive = !!(
+        queue?.running
+        || /running|awaiting|form_wait|filling|answers/i.test(String(queue?.status || ''))
+    );
+    const workActive = !!(
+        work?.phase
+        && !/^(done|error|idle)$/i.test(String(work.phase))
+        && (now - Number(work.updatedAt || work.startedAt || 0)) < 120000
+    );
+
+    if (workActive || _localWorkStart) {
+        const label = work?.label || _localWorkLabel || work?.phase || 'Working…';
+        if (phaseEl) phaseEl.textContent = label;
+        const started = _localWorkStart || Number(work.startedAt || work.phaseStartedAt || now);
+        const phaseStart = Number(work?.phaseStartedAt || started);
+        const total = formatElapsed(now - started);
+        const phaseMs = formatElapsed(now - phaseStart);
+        if (elapsedEl) {
+            elapsedEl.textContent = `Total ${total}`
+                + (work?.phase ? ` · phase ${phaseMs}` : '')
+                + (work?.provider ? ` · ${work.provider}` : '');
+        }
+    } else if (queueActive) {
+        if (phaseEl) {
+            phaseEl.textContent = queue.captcha
+                ? 'Waiting — CAPTCHA / login'
+                : (queue.lastStatusEvent || queue.status || 'Queue running');
+        }
+        const qStart = Number(queue.jobStartedAt || queue.startedAt || queue.updatedAt || 0);
+        if (elapsedEl) {
+            elapsedEl.textContent = qStart
+                ? `Job ${formatElapsed(now - qStart)}`
+                : 'Queue active';
+        }
+    } else {
+        if (phaseEl && !_localWorkStart) phaseEl.textContent = 'Idle';
+        if (elapsedEl && !_localWorkStart) elapsedEl.textContent = '';
+    }
+
+    if (logEl) {
+        const lines = [];
+        const log = Array.isArray(queue?.uiMessageLog) ? queue.uiMessageLog : [];
+        for (const row of log.slice(-4).reverse()) {
+            const t = row?.short || row?.message || row?.title || '';
+            if (t) lines.push(t);
+        }
+        if (work?.error) lines.unshift(work.error);
+        logEl.textContent = lines.join('\n');
+    }
+
     list.innerHTML = '';
-    summary.textContent = 'Loading…';
-
-    chrome.runtime.sendMessage({ type: 'BIDDER_STATUS' }, (statusRes) => {
-        if (!statusRes?.ok) {
-            summary.textContent = statusRes?.error || 'Status unavailable';
-            return;
-        }
-        const s = statusRes.data || {};
-        const caps = s.caps || {};
-        const today = s.today || {};
-        summary.textContent =
-            `Ready: ${s.ready_count || 0} · Today: ${today.userTotal ?? '—'} ` +
-            `(caps ${caps.maxPerProfilePerDay || 100}/profile, ${caps.maxTotalPerDay || 500}/day)`;
-    });
-
-    chrome.runtime.sendMessage({ type: 'BIDDER_QUEUE_STATE' }, (qs) => {
-        if (qs?.ok && qs.data?.status) {
-            const st = qs.data;
-            let extra = ` · Queue: ${st.status}`
-                + (st.index ? ` ${st.index}/${st.total || '?'}` : '');
-            if (st.status === 'awaiting_captcha') {
-                extra += st.captchaKind === 'login'
-                    ? ' — log in on the apply tab, then Resume'
-                    : ' — solve CAPTCHA on the apply tab, then Resume';
-            }
-            summary.textContent += extra;
-        }
-    });
-
-    chrome.runtime.sendMessage({ type: 'LIST_READY' }, (readyRes) => {
-        if (!readyRes?.ok) {
-            list.innerHTML = `<div class="small muted">${readyRes?.error || 'Queue unavailable'}</div>`;
-            return;
-        }
-        const items = readyRes.data?.items || [];
-        if (!items.length) {
-            list.innerHTML = '<div class="small muted">No ready applications for this profile.</div>';
-            return;
-        }
-        for (const item of items.slice(0, 8)) {
+    if (!snap?.ready?.ok) {
+        list.innerHTML = `<div class="small muted">${snap?.ready?.error || 'Queue unavailable'}</div>`;
+    } else if (!readyItems.length) {
+        list.innerHTML = '<div class="small muted">No ready applications for this profile.</div>';
+    } else {
+        for (const item of readyItems.slice(0, 8)) {
             const row = document.createElement('div');
             row.className = 'ready-item';
             row.innerHTML = `
@@ -294,21 +413,68 @@ async function refreshMonitor() {
             row.appendChild(btn);
             list.appendChild(row);
         }
-    });
+    }
+
+    return { active: queueActive || workActive };
 }
+
+async function refreshMonitor() {
+    const summary = $('monitorSummary');
+    if (summary && summary.textContent === 'Loading…') {
+        /* keep Loading until first paint */
+    }
+    const snap = await sendMessage('GET_MONITOR_SNAPSHOT');
+    if (!snap?.ok) {
+        if (summary) summary.textContent = snap?.error || 'Monitor unavailable — reopen popup';
+        return { active: false };
+    }
+    return renderMonitorSnapshot(snap);
+}
+
+function ensureMonitorPoll() {
+    stopMonitorPoll();
+    _monitorPoll = setInterval(async () => {
+        const { active } = await refreshMonitor();
+        if (!active && !_localWorkStart) stopMonitorPoll();
+    }, 1000);
+}
+
+// Keep monitor fresh while popup is open.
+ensureMonitorPoll();
+setTimeout(() => {
+    // After first few seconds, only poll when active (refresh still runs on open).
+    stopMonitorPoll();
+    refreshMonitor().then(({ active }) => {
+        if (active) ensureMonitorPoll();
+    });
+}, 4000);
+
+try {
+    chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== 'local') return;
+        if (changes.lumiWorkProgress || changes.bidderQueueState || changes.lastUiMessage) {
+            refreshMonitor().then(({ active }) => {
+                if (active || _localWorkStart) ensureMonitorPoll();
+            });
+        }
+    });
+} catch { /* ignore */ }
 
 $('btnProcessQueue')?.addEventListener('click', () => {
     $('mainError').textContent = '';
-    $('mainOk').textContent = 'Starting bidder queue…';
+    startWorkTick('Starting bidder queue…');
+    ensureMonitorPoll();
     chrome.runtime.sendMessage({ type: 'PROCESS_READY_QUEUE' }, (res) => {
+        const elapsed = _localWorkStart ? formatElapsed(Date.now() - _localWorkStart) : '';
+        stopWorkTick();
         if (!res?.ok) {
             $('mainError').textContent = res?.error || 'Queue failed';
             $('mainOk').textContent = '';
         } else {
             $('mainOk').textContent = res.started
-                ? 'Queue started — watch Bid Courses / open tabs'
-                : `Queue done — processed ${res.result?.processed ?? 0}`;
-            refreshMonitor();
+                ? `Queue started — watch Monitor times below${elapsed ? ` · ${elapsed}` : ''}`
+                : `Queue done — processed ${res.result?.processed ?? 0}${elapsed ? ` · ${elapsed}` : ''}`;
+            refreshMonitor().then(({ active }) => { if (active) ensureMonitorPoll(); });
         }
     });
 });
@@ -351,11 +517,11 @@ $('btnOpenCourses')?.addEventListener('click', async () => {
 
 function settingsPathForRole(role) {
     const r = String(role || 'user').toLowerCase();
-    if (r === 'admin') return '/admin/autofill-settings';
-    if (r === 'manager') return '/manager/autofill-settings';
+    if (r === 'admin') return '/admin/bidder-settings';
+    if (r === 'manager') return '/manager/bidder-settings';
     if (r === 'caller') return '/caller/settings';
     if (r === 'developer') return '/developer/settings';
-    return '/user/autofill-settings';
+    return '/user/bidder-settings';
 }
 
 $('btnOpenLumiSettings')?.addEventListener('click', async () => {
@@ -510,8 +676,11 @@ $('btnFill').addEventListener('click', async () => {
     $('mainOk').textContent = '';
     if (!(await ensureProfileSaved())) return;
     $('btnFill').disabled = true;
-    $('mainOk').textContent = 'Autofill profile… (keep popup open a moment)';
+    startWorkTick('Autofill + Groq answers…');
+    ensureMonitorPoll();
     chrome.runtime.sendMessage({ type: 'RUN_PROFILE_AUTOFILL' }, async (response) => {
+        const elapsed = _localWorkStart ? formatElapsed(Date.now() - _localWorkStart) : '';
+        stopWorkTick();
         $('btnFill').disabled = false;
         if (chrome.runtime.lastError) {
             $('mainError').textContent = chrome.runtime.lastError.message;
@@ -525,13 +694,18 @@ $('btnFill').addEventListener('click', async () => {
         }
         $('mainOk').textContent =
             `Autofilled ${response.result?.filled || 0}`
+            + (response.result?.answers ? ` · AI ${response.result.answers}` : '')
             + (response.result?.uploaded ? `, uploaded resume` : '')
-            + (response.result?.questions ? ` · ${response.result.questions} need Answer questions` : '');
-        if ((response.result?.filled || 0) + (response.result?.uploaded || 0) === 0) {
+            + (response.result?.questions && !response.result?.answers
+                ? ` · ${response.result.questions} need Generate CV for AI`
+                : '')
+            + (elapsed ? ` · ${elapsed}` : '');
+        if ((response.result?.filled || 0) + (response.result?.uploaded || 0) + (response.result?.answers || 0) === 0) {
             $('mainError').textContent =
                 '0 fields filled — stay on the ATS apply tab, then click Autofill again.';
         }
         await refreshMonitor();
+        await refreshCapturedQuestions();
     });
 });
 
@@ -540,8 +714,11 @@ $('btnAnswerQs').addEventListener('click', async () => {
     $('mainOk').textContent = '';
     if (!(await ensureProfileSaved())) return;
     $('btnAnswerQs').disabled = true;
-    $('mainOk').textContent = 'Answer questions… (Generate CV first)';
+    startWorkTick('Groq answering questions…');
+    ensureMonitorPoll();
     chrome.runtime.sendMessage({ type: 'RUN_ANSWER_QUESTIONS' }, async (response) => {
+        const elapsed = _localWorkStart ? formatElapsed(Date.now() - _localWorkStart) : '';
+        stopWorkTick();
         $('btnAnswerQs').disabled = false;
         if (chrome.runtime.lastError) {
             $('mainError').textContent = chrome.runtime.lastError.message;
@@ -554,7 +731,8 @@ $('btnAnswerQs').addEventListener('click', async () => {
             return;
         }
         $('mainOk').textContent =
-            `AI answers filled: ${response.result?.answers || 0}`;
+            `AI answers filled: ${response.result?.answers || 0}`
+            + (elapsed ? ` · ${elapsed}` : '');
         await refreshMonitor();
     });
 });
@@ -578,7 +756,106 @@ $('btnMarkApplied').addEventListener('click', async () => {
     });
 });
 
-$('btnRefreshReady').addEventListener('click', () => refreshMonitor());
+$('btnRefreshReady').addEventListener('click', () => {
+    refreshMonitor().then(({ active }) => { if (active) ensureMonitorPoll(); });
+});
+
+async function refreshCapturedQuestions() {
+    const list = $('capturedList');
+    const meta = $('capturedMeta');
+    if (!list || !meta) return;
+    list.innerHTML = '';
+    meta.textContent = 'Loading…';
+    chrome.runtime.sendMessage({ type: 'GET_CAPTURED_QUESTIONS' }, (res) => {
+        if (chrome.runtime.lastError || !res?.ok) {
+            meta.textContent = res?.error || chrome.runtime.lastError?.message || 'Could not load';
+            return;
+        }
+        const pack = res.pack;
+        if (!pack?.items?.length) {
+            meta.textContent = 'None yet — run Autofill / Process queue on an apply form.';
+            return;
+        }
+        const when = pack.capturedAt ? new Date(pack.capturedAt).toLocaleString() : '';
+        meta.textContent = [
+            pack.company || pack.jobRole ? `${pack.company || ''} · ${pack.jobRole || ''}`.replace(/^ · | · $/g, '') : 'Latest capture',
+            pack.applicationId ? `#${pack.applicationId}` : '',
+            when
+        ].filter(Boolean).join(' · ');
+
+        pack.items.forEach((item, index) => {
+            const row = document.createElement('div');
+            row.className = 'captured-item';
+            const q = document.createElement('div');
+            q.className = 'captured-q';
+            q.textContent = item.label || item.id || `Question ${index + 1}`;
+            const ta = document.createElement('textarea');
+            ta.value = item.answer || '';
+            ta.placeholder = 'Answer…';
+            const actions = document.createElement('div');
+            actions.className = 'captured-actions';
+            const saveBtn = document.createElement('button');
+            saveBtn.type = 'button';
+            saveBtn.className = 'btn secondary';
+            saveBtn.textContent = 'Save & learn';
+            saveBtn.addEventListener('click', () => {
+                saveBtn.disabled = true;
+                saveBtn.textContent = 'Saving…';
+                chrome.runtime.sendMessage({
+                    type: 'SAVE_CAPTURED_ANSWER',
+                    applicationId: pack.applicationId,
+                    index,
+                    answer: ta.value
+                }, (saveRes) => {
+                    saveBtn.disabled = false;
+                    saveBtn.textContent = 'Save & learn';
+                    if (chrome.runtime.lastError || !saveRes?.ok) {
+                        $('mainError').textContent =
+                            saveRes?.error || chrome.runtime.lastError?.message || 'Save failed';
+                        return;
+                    }
+                    $('mainOk').textContent = 'Saved — Lumi will reuse this answer next time.';
+                    $('mainError').textContent = '';
+                });
+            });
+            actions.appendChild(saveBtn);
+            row.appendChild(q);
+            row.appendChild(ta);
+            row.appendChild(actions);
+            list.appendChild(row);
+        });
+    });
+}
+
+$('btnRefreshCaptured')?.addEventListener('click', () => refreshCapturedQuestions());
+
+$('btnAiFillCaptured')?.addEventListener('click', async () => {
+    $('mainError').textContent = '';
+    startWorkTick('Groq filling empties…');
+    ensureMonitorPoll();
+    $('btnAiFillCaptured').disabled = true;
+    chrome.runtime.sendMessage({ type: 'RUN_ANSWER_QUESTIONS' }, async (response) => {
+        const elapsed = _localWorkStart ? formatElapsed(Date.now() - _localWorkStart) : '';
+        stopWorkTick();
+        $('btnAiFillCaptured').disabled = false;
+        if (chrome.runtime.lastError) {
+            $('mainError').textContent = chrome.runtime.lastError.message;
+            $('mainOk').textContent = '';
+            return;
+        }
+        if (!response?.ok) {
+            $('mainError').textContent = response?.error || 'AI fill failed — Generate CV first';
+            $('mainOk').textContent = '';
+            return;
+        }
+        $('mainOk').textContent =
+            `AI filled ${response.result?.answers || 0} answer(s)`
+            + (response.result?.filled ? ` · total fields ${response.result.filled}` : '')
+            + (elapsed ? ` · ${elapsed}` : '');
+        await refreshCapturedQuestions();
+        await refreshMonitor();
+    });
+});
 
 $('btnConnectJobLinks')?.addEventListener('click', () => {
     $('mainError').textContent = '';

@@ -29,8 +29,9 @@ export const DEFAULT_LUMI_BIDDER_PREFS = {
     stayInApp: true,
     unattended: true,
     captchaHelper: true,
-    autoSubmit: true,
-    autoNext: true,
+    /** Off by default — fill + park for review; enable explicitly for hands-free. */
+    autoSubmit: false,
+    autoNext: false,
     captchaFocus: false,
     uploadCoverLetter: false,
     soundEnabled: true,
@@ -38,6 +39,14 @@ export const DEFAULT_LUMI_BIDDER_PREFS = {
     reviewOnlyMode: false,
     /** Notify → wait this long for Resume / CAPTCHA solve → then skip job. */
     humanAssistWaitSec: 90,
+    /** Max seconds to wait for apply form fields before skip. */
+    formWaitSec: 6,
+    /** Gap between opening jobs (ms). */
+    openGapMs: 500,
+    /** Seconds after fill before after_fill screenshot. */
+    screenshotSettleSec: 0,
+    /** Parallel apply tabs. */
+    maxTabs: 3,
     capsolverApiKey: '',
     twocaptchaApiKey: ''
 };
@@ -47,6 +56,30 @@ export function clampHumanAssistWaitSec(value, fallback = DEFAULT_LUMI_BIDDER_PR
     const n = Number(value);
     if (!Number.isFinite(n)) return fallback;
     return Math.max(0, Math.min(600, Math.round(n)));
+}
+
+export function clampFormWaitSec(value, fallback = DEFAULT_LUMI_BIDDER_PREFS.formWaitSec) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(3, Math.min(30, Math.round(n)));
+}
+
+export function clampOpenGapMs(value, fallback = DEFAULT_LUMI_BIDDER_PREFS.openGapMs) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(10000, Math.round(n)));
+}
+
+export function clampScreenshotSettleSec(value, fallback = DEFAULT_LUMI_BIDDER_PREFS.screenshotSettleSec) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(0, Math.min(8, Math.round(n)));
+}
+
+export function clampMaxTabs(value, fallback = DEFAULT_LUMI_BIDDER_PREFS.maxTabs) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(1, Math.min(5, Math.round(n)));
 }
 
 /** One-click Jobright-style hands-free preset. */
@@ -120,7 +153,14 @@ export function loadLumiBidderPrefs() {
         humanAssistWaitSec: clampHumanAssistWaitSec(
             stored.humanAssistWaitSec,
             DEFAULT_LUMI_BIDDER_PREFS.humanAssistWaitSec
-        )
+        ),
+        formWaitSec: clampFormWaitSec(stored.formWaitSec, DEFAULT_LUMI_BIDDER_PREFS.formWaitSec),
+        openGapMs: clampOpenGapMs(stored.openGapMs, DEFAULT_LUMI_BIDDER_PREFS.openGapMs),
+        screenshotSettleSec: clampScreenshotSettleSec(
+            stored.screenshotSettleSec,
+            DEFAULT_LUMI_BIDDER_PREFS.screenshotSettleSec
+        ),
+        maxTabs: clampMaxTabs(stored.maxTabs, DEFAULT_LUMI_BIDDER_PREFS.maxTabs)
     };
 }
 
@@ -159,6 +199,10 @@ export function persistLumiBidderPrefs(prefs) {
                 : DEFAULT_LUMI_BIDDER_PREFS.requirePacketBeforeProcess,
             reviewOnlyMode: !!next.reviewOnlyMode,
             humanAssistWaitSec: clampHumanAssistWaitSec(next.humanAssistWaitSec),
+            formWaitSec: clampFormWaitSec(next.formWaitSec),
+            openGapMs: clampOpenGapMs(next.openGapMs),
+            screenshotSettleSec: clampScreenshotSettleSec(next.screenshotSettleSec),
+            maxTabs: clampMaxTabs(next.maxTabs),
             capsolverApiKey: String(next.capsolverApiKey || ''),
             twocaptchaApiKey: String(next.twocaptchaApiKey || '')
         }));
@@ -185,6 +229,10 @@ export function prefsToExtensionPatch(prefs) {
         bidderCaptchaFocus: p.unattended ? false : !!p.captchaFocus,
         bidderUploadCoverLetter: !!p.uploadCoverLetter,
         bidderSoundEnabled: !!p.soundEnabled,
+        bidderFormWaitMs: clampFormWaitSec(p.formWaitSec) * 1000,
+        bidderOpenGapMs: clampOpenGapMs(p.openGapMs),
+        bidderScreenshotSettleSec: clampScreenshotSettleSec(p.screenshotSettleSec),
+        bidderMaxTabs: clampMaxTabs(p.maxTabs),
         // Clear paid solver keys — free NopeCHA/Buster path only.
         bidderCapsolverApiKey: '',
         bidderTwocaptchaApiKey: '',
@@ -242,6 +290,10 @@ export function processQueuePrefsPayload(prefs = loadLumiBidderPrefs()) {
         captchaHelperWaitSec: clampHumanAssistWaitSec(p.humanAssistWaitSec),
         // Paid CapSolver / 2Captcha APIs disabled — free helpers only.
         uploadCoverLetter: !!p.uploadCoverLetter,
+        formWaitMs: clampFormWaitSec(p.formWaitSec) * 1000,
+        openGapMs: clampOpenGapMs(p.openGapMs),
+        screenshotSettleSec: clampScreenshotSettleSec(p.screenshotSettleSec),
+        maxTabs: clampMaxTabs(p.maxTabs),
         disabledFillLessons
     };
 }

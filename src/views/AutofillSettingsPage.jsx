@@ -201,6 +201,21 @@ export default function AutofillSettingsPage() {
                         </div>
                     </div>
                     <LumiBidderSettings showTitle={false} showProfileAutofillHint={false} />
+                    <p className="mt-3 text-xs text-muted-foreground">
+                        Full Auto Bidder page:{' '}
+                        <Link
+                            className="underline"
+                            to={
+                                role === 'admin'
+                                    ? '/admin/bidder-settings'
+                                    : role === 'manager'
+                                        ? '/manager/bidder-settings'
+                                        : '/user/bidder-settings'
+                            }
+                        >
+                            Open Auto Bidder settings
+                        </Link>
+                    </p>
                 </section>
 
                 <section

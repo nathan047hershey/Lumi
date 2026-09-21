@@ -321,6 +321,28 @@
             && !/\b(sponsor|visa|disabilit|veteran|felony|convict)\b/.test(hay)) {
             return 'skill_experience';
         }
+        // "Are you experienced working with Python, Typescript, and React?"
+        if (
+            /\b(are you experienced|experienced\s+working\s+with)\b/i.test(hay)
+            && SKILL_STACK_RE.test(hay)
+            && !/\b(describe|tell us|explain)\b/i.test(hay)
+        ) {
+            return 'skill_experience';
+        }
+        if (
+            /\bif\s+yes\b/.test(hay)
+            && /\b(describe|briefly|project)\b/.test(hay)
+            && !/\b(why|interest|motivat|cover letter)\b/.test(hay)
+        ) {
+            return 'skill_project_brief';
+        }
+        if (
+            /\b(background\s*check|drug\s*(?:test|screen)|pre[\s_-]*employment\s*screen)\b/.test(hay)
+            && /\b(willing|agree|consent|complete|authorize|authorise|undergo)\b/.test(hay)
+        ) {
+            return 'background_check_yes';
+        }
+        if (/\bpronouns?\b/.test(hay)) return 'pronouns';
         // Education date parts (Greenhouse / Ashby style).
         // Names often look like educations[][start_date][month] — underscore is a word char,
         // so avoid \b around start/month alone.
@@ -948,10 +970,17 @@
 
     function setNativeValue(el, value) {
         const str = value == null ? '' : String(value);
+        if (window.__lumiPageFill?.setTextValue) {
+            try {
+                const r = window.__lumiPageFill.setTextValue(el, str, { blur: true });
+                if (r?.ok) return;
+            } catch (_) { /* fall through */ }
+        }
         const proto = el.tagName === 'TEXTAREA'
             ? window.HTMLTextAreaElement.prototype
             : window.HTMLInputElement.prototype;
         const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+        try { el.focus(); } catch (_) { /* ignore */ }
         try {
             const tracker = el._valueTracker;
             if (tracker && typeof tracker.setValue === 'function') {
@@ -961,7 +990,12 @@
         if (desc?.set) desc.set.call(el, str);
         else el.value = str;
         try {
-            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: str }));
+            el.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: str
+            }));
         } catch (_) {
             el.dispatchEvent(new Event('input', { bubbles: true }));
         }
@@ -974,6 +1008,10 @@
                     props.onChange({ target: el, currentTarget: el, type: 'change' });
                 }
             }
+        } catch (_) { /* ignore */ }
+        try {
+            el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+            el.blur();
         } catch (_) { /* ignore */ }
     }
 
@@ -2486,8 +2524,8 @@
             case 'full_name': return `${p.first_name || ''} ${p.last_name || ''}`.trim();
             case 'email': return p.email || '';
             case 'phone': return p.phone || p.mobile || p.telephone || p.phone_number || '';
-            case 'linkedin': return p.linkedin_url || '';
-            case 'github': return p.github_url || p.portfolio_url || '';
+            case 'linkedin': return p.linkedin_url || p.linkedin || p.linkedIn || '';
+            case 'github': return p.github_url || p.github || p.website_url || p.portfolio_url || p.website || '';
             case 'state': return stateFull || stRaw;
             case 'city': {
                 if (
@@ -2548,7 +2586,23 @@
             case 'onsite_hub_yes':
             case 'us_person_yes':
             case 'us_citizen_yes':
+            case 'background_check_yes':
                 return 'Yes';
+            case 'pronouns': {
+                if (p.pronouns) return p.pronouns;
+                const g = String(p.gender || '').toLowerCase();
+                if (/^(man|male|m)\b/.test(g)) return 'he/him';
+                if (/^(woman|female|f)\b/.test(g)) return 'she/her';
+                return 'he/him';
+            }
+            case 'skill_project_brief': {
+                const skills = String(p.skills || p.techstacks || 'Python, TypeScript, React')
+                    .split(/[,;|]/).filter(Boolean).slice(0, 4).join(', ');
+                return (
+                    `Built and shipped production features using ${skills || 'our core stack'}, `
+                    + 'including API design, UI implementation, and deployment — details on my resume.'
+                );
+            }
             case 'export_control_us_citizen':
                 return 'U.S. Citizen';
             case 'veteran_status': return p.veteran_status || 'I am not a protected veteran';

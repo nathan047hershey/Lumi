@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lumi Auto Bidder",
-  "version": "2.0.0",
+    "version": "2.1.19",
   "description": "Connect to Lumi to autofill job applications, sync Outlook mail OTPs, and run guided auto-bid fills.",
   "permissions": [
     "storage",
@@ -94,7 +94,8 @@
         "https://*.vercel.app/*",
         "https://*.vercel.sh/*"
       ],
-      "js": ["content/controlMatch.js", "content/scrape.js", "content/fillShared.js", "content/fill.js", "content/bidderFill.js"],
+      "js": ["content/controlMatch.js", "content/scrape.js", "content/fillShared.js", "content/atsPacks.js", "content/fill.js", "content/bidderFill.js"],
+      "all_frames": true,
       "run_at": "document_idle"
     },
     {

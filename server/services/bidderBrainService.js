@@ -413,7 +413,8 @@ async function generateBidderAnswers(opts = {}) {
         jobRole,
         userId,
         bidderMode: true,
-        promptExtras: extras.extrasBlock
+        promptExtras: extras.extrasBlock,
+        preferProvider: 'groq'
     });
 
     const hardenedNew = hardenAnswers(result.answers, extras.allowedEmployers);

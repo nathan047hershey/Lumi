@@ -2697,6 +2697,9 @@ router.post('/generate-answers', async (req, res) => {
 
         const { generateApplicationAnswers } = require('../services/applicationAnswersService');
         const { withUsageContext } = require('../services/aiUsageService');
+        const preferProvider = String(
+            req.body?.answers_provider || req.body?.prefer_provider || 'groq'
+        ).trim().toLowerCase() || 'groq';
         const result = await withUsageContext(
             { userId: req.user.id, profileId: profile.id, kind: 'answers' },
             () => generateApplicationAnswers({
@@ -2706,7 +2709,8 @@ router.post('/generate-answers', async (req, res) => {
                 questions,
                 companyName,
                 jobRole,
-                userId: req.user.id
+                userId: req.user.id,
+                preferProvider
             })
         );
 

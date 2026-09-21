@@ -1,5 +1,5 @@
 /**
- * Lumi runtime settings (AFK, CAPTCHA helpers, auto-submit).
+ * Lumi runtime settings (AFK, CAPTCHA helpers, auto-submit, fill timing).
  * CAPTCHA uses free Chrome helpers (NopeCHA + Buster) — no CapSolver/2Captcha API keys.
  */
 import { useCallback, useEffect, useState } from 'react';
@@ -14,6 +14,10 @@ import {
     persistLumiBidderPrefs,
     saveLumiBidderPrefs,
     clampHumanAssistWaitSec,
+    clampFormWaitSec,
+    clampOpenGapMs,
+    clampScreenshotSettleSec,
+    clampMaxTabs,
     HANDS_FREE_LUMI_PREFS,
     FREE_HELPERS_LUMI_PREFS
 } from '@/lib/lumiBidderPrefs';
@@ -21,10 +25,17 @@ import { useAuth } from '@/context/AuthContext';
 
 function settingsPathForRole(role) {
     const r = String(role || 'user').toLowerCase();
-    if (r === 'admin') return '/admin/autofill-settings';
-    if (r === 'manager') return '/manager/autofill-settings';
+    if (r === 'admin') return '/admin/bidder-settings';
+    if (r === 'manager') return '/manager/bidder-settings';
     if (r === 'caller') return '/caller/settings';
     if (r === 'developer') return '/developer/settings';
+    return '/user/bidder-settings';
+}
+
+function autofillPathForRole(role) {
+    const r = String(role || 'user').toLowerCase();
+    if (r === 'admin') return '/admin/autofill-settings';
+    if (r === 'manager') return '/manager/autofill-settings';
     return '/user/autofill-settings';
 }
 
@@ -44,6 +55,8 @@ export default function LumiBidderSettings({
     onChange = null,
     showTitle = true,
     showProfileAutofillHint = true,
+    showRuntime = true,
+    showTiming = true,
     className = ''
 }) {
     const { user } = useAuth();
@@ -65,6 +78,16 @@ export default function LumiBidderSettings({
             if (partial.captchaFocus === true) next = { ...next, unattended: false };
             next = persistLumiBidderPrefs(next);
             onChange?.(next);
+            // Push submit/review toggles to the extension immediately — do not wait for Save & sync.
+            if (
+                partial.autoSubmit != null
+                || partial.reviewOnlyMode != null
+            ) {
+                saveLumiBidderPrefs(next).then((r) => {
+                    if (r.synced) setMsg('Auto-submit synced to Lumi');
+                    else if (r.error) setErr(r.error);
+                }).catch(() => {});
+            }
             return next;
         });
         setMsg('');
@@ -79,7 +102,7 @@ export default function LumiBidderSettings({
             const toSave = withoutPaidCaptchaKeys(prefs);
             const { synced, error, prefs: savedPrefs } = await saveLumiBidderPrefs(toSave);
             setPrefs(savedPrefs || toSave);
-            if (synced) setMsg('Saved and synced to Lumi — free CAPTCHA helpers only');
+            if (synced) setMsg('Saved and synced to Lumi');
             else setMsg(`Saved in app${error ? ` — ${error}` : ' (reload Lumi / Check Lumi to sync)'}`);
             onChange?.(savedPrefs || toSave);
         } catch (e) {
@@ -101,35 +124,58 @@ export default function LumiBidderSettings({
         </label>
     );
 
-    const settingsHref = `${settingsPathForRole(user?.role)}#lumi-bidder-settings`;
+    const numField = (id, label, value, onChangeVal, hint, { min, max, step } = {}) => (
+        <div key={id} className={`space-y-1 ${compact ? 'pt-1' : 'pt-1.5'}`}>
+            <Label
+                htmlFor={id}
+                className={compact ? 'text-[11px] text-muted-foreground' : 'text-xs text-muted-foreground'}
+            >
+                {label}
+            </Label>
+            <div className="flex flex-wrap items-center gap-2">
+                <Input
+                    id={id}
+                    type="number"
+                    min={min}
+                    max={max}
+                    step={step ?? 1}
+                    value={value}
+                    onChange={(e) => onChangeVal(e.target.value)}
+                    className={compact ? 'h-7 w-24 text-[11px]' : 'h-8 w-28 text-sm'}
+                />
+                {hint ? (
+                    <span className={compact ? 'text-[10px] text-muted-foreground' : 'text-xs text-muted-foreground'}>
+                        {hint}
+                    </span>
+                ) : null}
+            </div>
+        </div>
+    );
+
+    const settingsHref = settingsPathForRole(user?.role);
+    const autofillHref = `${autofillPathForRole(user?.role)}#bidder-autofill-settings`;
 
     return (
         <div
-            id={compact ? undefined : 'lumi-bidder-settings'}
+            id={compact || !showRuntime ? undefined : 'lumi-bidder-settings'}
             className={`space-y-3 ${className}`}
         >
             {!compact && showTitle ? (
                 <div className="space-y-1">
                     <div className="flex items-center gap-2 text-base font-semibold">
                         <Zap className="h-4 w-4 text-primary" />
-                        Lumi
+                        Auto Bidder
                     </div>
                     <p className="text-xs text-muted-foreground">
                         Hands-free apply: AFK + auto-next, Chrome open with Lumi + NopeCHA + Buster.
-                        No CapSolver / 2Captcha API keys.
                     </p>
                 </div>
             ) : null}
             {!compact && showProfileAutofillHint ? (
                 <p className="text-xs text-muted-foreground">
-                    Fixed answers (sponsorship, EEO, start date) are on this page under{' '}
-                    <a className="underline" href="#bidder-autofill-settings">Profile autofill defaults</a>
-                    {user?.role === 'admin' || user?.role === 'manager' ? (
-                        <>
-                            {' '}or the{' '}
-                            <Link className="underline" to="/admin/profiles">candidate profile</Link>.
-                        </>
-                    ) : null}
+                    Fixed answers (sponsorship, EEO, start date) are on{' '}
+                    <Link className="underline" to={autofillHref}>Autofill Settings</Link>
+                    .
                 </p>
             ) : null}
             {compact ? (
@@ -146,6 +192,7 @@ export default function LumiBidderSettings({
                 </div>
             ) : null}
 
+            {showRuntime ? (
             <div className="space-y-2">
                 <div className={`flex flex-wrap gap-2 ${compact ? '' : ''}`}>
                     <Button
@@ -196,7 +243,7 @@ export default function LumiBidderSettings({
                     'Wait for free helpers (NopeCHA / Buster) — required'
                 )}
                 <p className={compact ? 'text-[10px] text-muted-foreground' : 'text-xs text-muted-foreground'}>
-                    Install NopeCHA + Buster in this Chrome profile (same as Lumi). Optional Buster desktop client helps AFK reCAPTCHA. No CapSolver API keys.
+                    Install NopeCHA + Buster in this Chrome profile (same as Lumi).
                 </p>
                 {row(
                     'lumi-packet',
@@ -222,33 +269,77 @@ export default function LumiBidderSettings({
                     : null}
                 {row('lumi-cover', prefs.uploadCoverLetter, (v) => patch({ uploadCoverLetter: v }), 'Upload cover letter')}
                 {row('lumi-sound', prefs.soundEnabled, (v) => patch({ soundEnabled: v }), 'Alert sound')}
-                <div className={`space-y-1 ${compact ? 'pt-1' : 'pt-1.5'}`}>
-                    <Label
-                        htmlFor="lumi-human-wait"
-                        className={compact ? 'text-[11px] text-muted-foreground' : 'text-xs text-muted-foreground'}
-                    >
-                        Human help wait (seconds)
-                    </Label>
-                    <div className="flex flex-wrap items-center gap-2">
-                        <Input
-                            id="lumi-human-wait"
-                            type="number"
-                            min={0}
-                            max={600}
-                            step={15}
-                            value={clampHumanAssistWaitSec(prefs.humanAssistWaitSec)}
-                            onChange={(e) => patch({
-                                humanAssistWaitSec: clampHumanAssistWaitSec(e.target.value)
-                            })}
-                            className={compact ? 'h-7 w-24 text-[11px]' : 'h-8 w-28 text-sm'}
-                        />
-                        <span className={compact ? 'text-[10px] text-muted-foreground' : 'text-xs text-muted-foreground'}>
-                            Notify → wait → if no Resume, skip (0 = skip immediately)
-                        </span>
-                    </div>
-                </div>
+                {numField(
+                    'lumi-human-wait',
+                    'Human help wait (seconds)',
+                    clampHumanAssistWaitSec(prefs.humanAssistWaitSec),
+                    (v) => patch({ humanAssistWaitSec: clampHumanAssistWaitSec(v) }),
+                    'Notify → wait → if no Resume, skip (0 = skip immediately)',
+                    { min: 0, max: 600, step: 15 }
+                )}
             </div>
+            ) : null}
 
+            {showTiming ? (
+            <div className={`space-y-2 ${showRuntime ? 'border-t border-white/10 pt-3' : ''}`}>
+                {!showRuntime && !compact ? null : showRuntime ? (
+                    <div className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+                        Fill timing
+                    </div>
+                ) : (
+                    <div className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+                        Fill timing
+                    </div>
+                )}
+                {numField(
+                    'lumi-form-wait',
+                    'Form wait (seconds)',
+                    clampFormWaitSec(prefs.formWaitSec),
+                    (v) => patch({ formWaitSec: clampFormWaitSec(v) }),
+                    compact ? 'before skip' : 'Max wait for apply fields before skip',
+                    { min: 3, max: 30, step: 1 }
+                )}
+                {numField(
+                    'lumi-open-gap',
+                    'Open gap (ms)',
+                    clampOpenGapMs(prefs.openGapMs),
+                    (v) => patch({ openGapMs: clampOpenGapMs(v) }),
+                    compact ? 'between jobs' : 'Pause between opening jobs (0 = immediate)',
+                    { min: 0, max: 10000, step: 100 }
+                )}
+                {!compact ? (
+                    <>
+                        {numField(
+                            'lumi-shot-settle',
+                            'Screenshot settle (seconds)',
+                            clampScreenshotSettleSec(prefs.screenshotSettleSec),
+                            (v) => patch({ screenshotSettleSec: clampScreenshotSettleSec(v) }),
+                            'Wait after fill before capture',
+                            { min: 0, max: 8, step: 1 }
+                        )}
+                        {numField(
+                            'lumi-max-tabs',
+                            'Max open tabs',
+                            clampMaxTabs(prefs.maxTabs),
+                            (v) => patch({ maxTabs: clampMaxTabs(v) }),
+                            'Parallel apply tabs (1–5)',
+                            { min: 1, max: 5, step: 1 }
+                        )}
+                    </>
+                ) : (
+                    numField(
+                        'lumi-max-tabs',
+                        'Max tabs',
+                        clampMaxTabs(prefs.maxTabs),
+                        (v) => patch({ maxTabs: clampMaxTabs(v) }),
+                        '1–5',
+                        { min: 1, max: 5, step: 1 }
+                    )
+                )}
+            </div>
+            ) : null}
+
+            {showRuntime ? (
             <div className={`space-y-1.5 rounded-md border border-emerald-500/30 bg-emerald-500/5 ${compact ? 'px-2.5 py-2' : 'px-3 py-2.5'}`}>
                 <div className={`font-semibold text-emerald-200/90 ${compact ? 'text-[11px]' : 'text-xs'}`}>
                     CAPTCHA — free helpers only
@@ -272,9 +363,10 @@ export default function LumiBidderSettings({
                     >
                         Buster
                     </a>
-                    {' '}in the same Chrome profile as Lumi. CapSolver / 2Captcha API keys are not used.
+                    {' '}in the same Chrome profile as Lumi.
                 </p>
             </div>
+            ) : null}
 
             <div className="flex flex-wrap items-center gap-2">
                 <Button

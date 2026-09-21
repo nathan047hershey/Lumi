@@ -202,7 +202,8 @@ export async function generateAnswers({
     questions,
     company_name,
     job_role,
-    application_id
+    application_id,
+    answers_provider = 'groq'
 }) {
     return request('/user/generate-answers', {
         method: 'POST',
@@ -213,9 +214,11 @@ export async function generateAnswers({
             questions: Array.isArray(questions) ? questions : [],
             company_name: company_name || '',
             job_role: job_role || '',
-            application_id: application_id || null
+            application_id: application_id || null,
+            // Autofill leftovers / Answer questions → Groq only (CV stays MiniMax).
+            answers_provider: answers_provider || 'groq'
         },
-        timeout: 60000
+        timeout: 45000
     });
 }
 

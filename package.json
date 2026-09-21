@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -H 0.0.0.0 -p 3000",
+    "dev": "node --max-old-space-size=12288 ./node_modules/next/dist/bin/next dev --webpack -H 0.0.0.0 -p 3000",
     "build": "next build",
     "start": "next start -H 0.0.0.0 -p 3000",
     "server": "node server/index.js",
@@ -57,7 +57,6 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@tailwindcss/postcss": "^4",
     "@types/bcryptjs": "2.4.6",
     "@types/node": "^20",
     "@types/react": "^19",

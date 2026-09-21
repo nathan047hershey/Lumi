@@ -318,6 +318,202 @@
         return window.__lumiFillShared?.detectAts?.() || 'generic';
     }
 
+    /** Walk open shadow roots + light DOM for form controls. */
+    function walkDeep(root, selector = 'input, textarea, select, [role="combobox"], [role="checkbox"], [role="radio"], button[aria-haspopup="listbox"]') {
+        const out = [];
+        const visit = (node, depth) => {
+            if (!node || depth > 12) return;
+            try {
+                if (node.querySelectorAll) {
+                    node.querySelectorAll(selector).forEach((el) => out.push(el));
+                    node.querySelectorAll('*').forEach((el) => {
+                        if (el.shadowRoot) visit(el.shadowRoot, depth + 1);
+                    });
+                }
+            } catch (_) { /* ignore */ }
+        };
+        visit(root || document, 0);
+        return out;
+    }
+
+    /**
+     * AccName-style label resolve:
+     * aria-labelledby → label[for]/wrapping label → aria-label → nearby → placeholder → name/id
+     */
+    function resolveFieldLabel(el) {
+        if (!el) return '';
+        try {
+            const labelledBy = el.getAttribute('aria-labelledby');
+            if (labelledBy) {
+                const parts = labelledBy.split(/\s+/).map((id) => {
+                    const n = document.getElementById(id);
+                    return n ? String(n.innerText || n.textContent || '').trim() : '';
+                }).filter(Boolean);
+                if (parts.length) return parts.join(' ').replace(/\s+/g, ' ').trim().slice(0, 240);
+            }
+        } catch (_) { /* ignore */ }
+        try {
+            if (el.id) {
+                const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                if (lab) {
+                    const t = String(lab.innerText || lab.textContent || '').trim();
+                    if (t) return t.replace(/\s+/g, ' ').slice(0, 240);
+                }
+            }
+            const wrap = el.closest('label');
+            if (wrap) {
+                const clone = wrap.cloneNode(true);
+                clone.querySelectorAll('input, textarea, select, button').forEach((n) => n.remove());
+                const t = String(clone.innerText || clone.textContent || '').trim();
+                if (t.length > 1) return t.replace(/\s+/g, ' ').slice(0, 240);
+            }
+        } catch (_) { /* ignore */ }
+        const aria = el.getAttribute('aria-label');
+        if (aria && String(aria).trim()) return String(aria).trim().slice(0, 240);
+        try {
+            const row = el.closest(
+                'fieldset, .field, .form-field, .application-question, [class*="question"], '
+                + '[data-qa], .form-group, [class*="ApplicationField"]'
+            );
+            if (row) {
+                const legend = row.querySelector('legend, label, .application-label, h3, h4, [class*="label"]');
+                if (legend && !legend.contains(el)) {
+                    const t = String(legend.innerText || legend.textContent || '').trim();
+                    if (t.length > 2) return t.split('\n')[0].replace(/\s+/g, ' ').slice(0, 240);
+                }
+            }
+        } catch (_) { /* ignore */ }
+        const ph = el.getAttribute('placeholder') || el.getAttribute('title');
+        if (ph && String(ph).trim()) return String(ph).trim().slice(0, 240);
+        const autoId = el.getAttribute('data-automation-id') || el.getAttribute('data-testid') || '';
+        if (autoId) {
+            return String(autoId)
+                .replace(/([a-z])([A-Z])/g, '$1 $2')
+                .replace(/[_-]+/g, ' ')
+                .trim()
+                .slice(0, 240);
+        }
+        return String(el.name || el.id || '').slice(0, 120);
+    }
+
+    function stableCssPath(el) {
+        if (!el || el.nodeType !== 1) return '';
+        if (el.id) return `#${CSS.escape(el.id)}`;
+        const auto = el.getAttribute('data-automation-id');
+        if (auto) return `[data-automation-id="${CSS.escape(auto)}"]`;
+        const name = el.getAttribute('name');
+        const tag = el.tagName.toLowerCase();
+        if (name) return `${tag}[name="${CSS.escape(name)}"]`;
+        return '';
+    }
+
+    function pageFillReady() {
+        return !!(window.__lumiPageFill && typeof window.__lumiPageFill.setTextValue === 'function');
+    }
+
+    /** Prefer MAIN-world writer when available; fall back to isolated setter. */
+    function setNativeValue(el, value, { blur = true } = {}) {
+        const str = value == null ? '' : String(value);
+        if (pageFillReady() && el) {
+            try {
+                const r = window.__lumiPageFill.setTextValue(el, str, { blur });
+                if (r?.ok) return;
+            } catch (_) { /* fall through */ }
+        }
+        const proto = el.tagName === 'TEXTAREA'
+            ? window.HTMLTextAreaElement.prototype
+            : window.HTMLInputElement.prototype;
+        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+        try {
+            el.focus();
+        } catch (_) { /* ignore */ }
+        try {
+            const tracker = el._valueTracker;
+            if (tracker && typeof tracker.setValue === 'function') {
+                tracker.setValue(str === '' ? ' ' : '');
+            }
+        } catch (_) { /* ignore */ }
+        if (desc?.set) desc.set.call(el, str);
+        else el.value = str;
+        try {
+            el.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertText',
+                data: str
+            }));
+        } catch (_) {
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+        }
+        el.dispatchEvent(new Event('change', { bubbles: true }));
+        try {
+            const key = Object.keys(el).find((k) => k.startsWith('__reactProps$') || k.startsWith('__reactFiber$'));
+            if (key && key.startsWith('__reactProps$')) {
+                const props = el[key];
+                if (typeof props?.onChange === 'function') {
+                    props.onChange({ target: el, currentTarget: el, type: 'change' });
+                }
+            }
+        } catch (_) { /* ignore */ }
+        if (blur) {
+            try {
+                el.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+                el.blur();
+            } catch (_) { /* ignore */ }
+        }
+    }
+
+    function valuesStuckEqual(a, b) {
+        const x = String(a ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+        const y = String(b ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+        if (!y) return !x;
+        if (!x) return false;
+        return x === y || x.includes(y) || y.includes(x);
+    }
+
+    async function writeAndVerifyText(el, value) {
+        setNativeValue(el, value, { blur: true });
+        await delay(80);
+        const got = el?.value ?? '';
+        return valuesStuckEqual(got, value);
+    }
+
+    let _fillObserver = null;
+    let _pendingNewNodes = [];
+
+    function startFillObserver() {
+        stopFillObserver();
+        _pendingNewNodes = [];
+        try {
+            _fillObserver = new MutationObserver((muts) => {
+                for (const m of muts) {
+                    m.addedNodes?.forEach((n) => {
+                        if (n.nodeType !== 1) return;
+                        if (n.id === 'lumi-autofill-panel-root' || n.getAttribute?.('data-lumi-chrome')) return;
+                        const els = [];
+                        if (/^(INPUT|TEXTAREA|SELECT)$/i.test(n.tagName)) els.push(n);
+                        try {
+                            n.querySelectorAll?.('input, textarea, select').forEach((el) => els.push(el));
+                        } catch (_) { /* ignore */ }
+                        _pendingNewNodes.push(...els);
+                    });
+                }
+            });
+            _fillObserver.observe(document.documentElement, { childList: true, subtree: true });
+        } catch (_) { /* ignore */ }
+    }
+
+    function stopFillObserver() {
+        try { _fillObserver?.disconnect(); } catch (_) { /* ignore */ }
+        _fillObserver = null;
+    }
+
+    function consumePendingNewFields() {
+        const uniq = [...new Set(_pendingNewNodes)].filter((el) => el?.isConnected && visible(el));
+        _pendingNewNodes = [];
+        return uniq;
+    }
+
     function visible(el) {
         if (!el || el.disabled) return false;
         const type = String(el.type || '').toLowerCase();
@@ -342,7 +538,20 @@
                 if (cr.width > 4 && cr.height > 4) return true;
             }
         }
-        if (style.display === 'none' || style.visibility === 'hidden') return false;
+        if (style.display === 'none' || style.visibility === 'hidden') {
+            // display:none native radio/checkbox under a visible custom toggle — still fillable
+            if (type === 'radio' || type === 'checkbox') {
+                const wrap = el.closest(
+                    'label, [role="radio"], [role="checkbox"], [class*="radio"], [class*="checkbox"], '
+                    + '.field, .form-field, fieldset, [class*="question"]'
+                ) || el.parentElement;
+                if (wrap) {
+                    const cr = wrap.getBoundingClientRect();
+                    if (cr.width > 0 && cr.height > 0) return true;
+                }
+            }
+            return false;
+        }
         if (!isOpaqueControl && Number(style.opacity) === 0) return false;
         if (isOpaqueControl) {
             const control = el.closest(
@@ -533,6 +742,10 @@
     }
 
     function labelFor(el) {
+        const resolved = resolveFieldLabel(el);
+        if (resolved && resolved.length > 2 && !/^select(\s|\.|…|\.\.\.|:)?$/i.test(resolved)) {
+            return cleanLabelText(resolved) || resolved;
+        }
         if (el.id) {
             try {
                 const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
@@ -798,6 +1011,25 @@
             });
             // Never click the flag button — toggle can OPEN the list.
         } catch (_) { /* ignore */ }
+        // Close open phone Country* react-select (job-boards.greenhouse) without nuking other menus.
+        try {
+            const dialRoot = dialCountryRoot();
+            const dialOpen = dialRoot && [...(dialRoot.querySelectorAll?.('.select__menu, [class*="select__menu"], [role="listbox"]') || [])]
+                .some((m) => {
+                    try {
+                        const r = m.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0;
+                    } catch (_) {
+                        return false;
+                    }
+                });
+            if (dialOpen) {
+                document.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'Escape', code: 'Escape', keyCode: 27, which: 27, bubbles: true, cancelable: true
+                }));
+                document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            }
+        } catch (_) { /* ignore */ }
         try {
             const dial = document.getElementById('country');
             if (dial && isPhoneDialCountryControl(dial)) {
@@ -915,11 +1147,13 @@
 
                     // Click filtered option if Enter did not commit (no visibility gate —
                     // react-select may keep options in a portal with odd rects).
-                    const opt = [...document.querySelectorAll('[role="option"], .select__option')]
+                    const opt = [...document.querySelectorAll('[role="option"], .select__option, [class*="option"]')]
                         .find((n) => {
                             const t = (n.textContent || '').replace(/\s+/g, ' ').trim();
                             return /united states/i.test(t) && /\+1/.test(t);
-                        });
+                        })
+                        || [...document.querySelectorAll('[role="option"], .select__option, [class*="option"]')]
+                            .find((n) => /united states/i.test((n.textContent || '').replace(/\s+/g, ' ')));
                     if (opt) {
                         try { opt.scrollIntoView({ block: 'nearest', inline: 'nearest' }); } catch (_) { /* ignore */ }
                         opt.dispatchEvent(new MouseEvent('mousemove', { bubbles: true }));
@@ -1040,6 +1274,11 @@
             .replace(/([a-z])([A-Z])/g, '$1 $2')
             .replace(/[_-]+/g, ' ');
         const hay = `${label} ${name} ${autoId} ${autoExpanded}`.toLowerCase();
+        // ATS synonym packs (Greenhouse / Lever / Ashby / Workday)
+        try {
+            const packKind = window.LumiAtsPacks?.atsSynonymKind?.(label, detectAts());
+            if (packKind && packKind !== 'question') return packKind;
+        } catch (_) { /* ignore */ }
         // Before salary $ — "comfortable interviewing for the salary outlined…?"
         if (isSalaryComfortYesNo(label, name, autoId)) return 'salary_comfort_yes';
         if (SALARY_RE.test(hay)) return 'salary';
@@ -1127,7 +1366,13 @@
             && !/\blinkedin|url|website|github\b/.test(hay)
             && !/\b(authorized|sponsor|state while employed|working from this state|legal entity|united states)\b/.test(hay)
             && !( /\b(do you|are you)\b/.test(hay) && !/\bwhere\b/.test(hay) )) {
+            if (/\bcity and state\b|\bcity\s*\/\s*state\b|\bcity,?\s*state\b/.test(hay)) {
+                return 'city_state';
+            }
             return 'city';
+        }
+        if (/\bmailing address:?\s*line\s*2\b|\baddress\s*line\s*2\b|\bline\s*2\b|\b(apt|apartment|suite|unit)\b/.test(hay)) {
+            return 'address_line2';
         }
         // "Authorized to work … without sponsorship?" = work auth Yes — NOT "do you need sponsorship?"
         if (
@@ -1157,6 +1402,8 @@
         }
         if (
             /\b(work[\s_-]*auth|authoriz(ed|ation)|legally[\s_-]*authorized|eligible[\s_-]*to[\s_-]*work|right[\s_-]*to[\s_-]*work)\b/.test(hay)
+            || /\blegally\s+eligible\b/.test(hay)
+            || /\beligible\b.{0,24}\b(employ|work)\b/.test(hay)
             || /\bwhere this job is located\b|\bjob is located\b|\bthis role is located\b/.test(hay)
         ) {
             return 'work_authorization';
@@ -1199,9 +1446,10 @@
             && !/\bgithub\b/.test(hay)) {
             return 'website_url';
         }
+        if (/\bpronouns?\b/.test(hay)) return 'pronouns';
         if (/\b(portfolio|behance|dribbble)\b/.test(hay)) return 'portfolio_url';
         if (/\b(preferred[\s_-]*name|nickname|goes[\s_-]*by)\b/.test(hay)) return 'preferred_name';
-        if (/\b(18[\s_-]*or[\s_-]*older|over[\s_-]*18|at[\s_-]*least[\s_-]*18|age[\s_-]*of[\s_-]*majority)\b/.test(hay)) {
+        if (/\b(18[\s_-]*or[\s_-]*older|over[\s_-]*18|at[\s_-]*least[\s_-]*18|age[\s_-]*of[\s_-]*majority|over the age of 18)\b/.test(hay)) {
             return 'over_18';
         }
         if (/\b(relocat|willing[\s_-]*to[\s_-]*move|open[\s_-]*to[\s_-]*relocat)\w*/.test(hay)) {
@@ -1238,7 +1486,7 @@
         ) {
             return 'education_end_year';
         }
-        if (/\b(start[\s_-]*date|earliest[\s_-]*start|available[\s_-]*to[\s_-]*start|when[\s_-]*can[\s_-]*you[\s_-]*start)\b/.test(hay)
+        if (/\b(start[\s_-]*date|earliest[\s_-]*start|available[\s_-]*to[\s_-]*start|when[\s_-]*can[\s_-]*you[\s_-]*start|available[\s_-]*to[\s_-]*begin|begin[\s_-]*work)\b/.test(hay)
             && !/\b(month|year|education|school|graduat|degree)\b/.test(hay)) {
             return 'earliest_start_date';
         }
@@ -1270,10 +1518,37 @@
         if (/\b(are you a former\b|former\b.{0,48}\bemployee|employed by\b|ever been employed|have (?:you )?ever been employed|worked\s+(?:before\s+)?(?:at|for|with)\s+(us|this|our|the\s+company|here)|ever\s+worked\s+(?:before\s+)?(?:at|for|with)\s+(us|this|our|here)|previously\s+worked\s+(at|for|here|with\s+(us|this|our)|before)|have you (?:ever )?worked\s+(?:before\s+)?(?:(?:at|for|with)\s+)?(?:this|our|the)\s+(?:company|employer|organization|firm)|(?:related|affiliate|subsidiary|sister|parent|associated)\s+(?:company|companies|employer|entity|role|position)|related\s+(?:company|role|position|employer)|same\s+(?:company|employer)|permanent or temporary employee|(?:currently|previously)\s+(?:\([^)]*\)\s*)?working\s+for|working\s+for\b.{0,80}\b(contractor|contingent)|contractor or contingent|contingent worker|as an?\s+(employee|contractor|contingent)|employee or (?:a )?contractor|internal (?:candidate|employee)|applied (?:here|to (?:us|this)|before))\b/i.test(hay)) {
             return 'previous_employer_no';
         }
+        // Background / drug screen consent → Yes
+        if (
+            /\b(background\s*check|drug\s*(?:test|screen)|pre[\s_-]*employment\s*screen|criminal\s*(?:background|history)\s*check)\b/.test(hay)
+            && /\b(willing|agree|consent|complete|authorize|authorise|undergo)\b/.test(hay)
+        ) {
+            return 'background_check_yes';
+        }
         // Stack / tech experience → Yes (not company employment).
+        // Covers: "Are you experienced working with Python…", "Do you have experience with…"
+        if (
+            (
+                /\b((do you have|have you|are you)\b.{0,80}\b(experienced|experience|worked with|familiar|proficien|knowledge)\b)/i.test(hay)
+                || /\bexperienced\s+working\s+with\b/i.test(hay)
+                || /\bexperience\s+(using|with|in)\b/i.test(hay)
+            )
+            && /\b(python|java|javascript|typescript|react|sql|aws|azure|gcp|certificate|pki|x\.?509|security|api|rest|kubernetes|docker|devops|ml|ai|node\.?js|golang|c\+\+|c#)\b/i.test(hay)
+            && !/\b(sponsor|visa|disabilit|veteran|felony|describe|tell us|explain|company|employer|affiliate|subsidiary)\b/i.test(hay)
+        ) {
+            return 'skill_experience';
+        }
         if (/\b((do you have|have you)\b.{0,120}\b(deep\s+)?(hands[\s-]*on\s+)?(experience|worked with|familiar|proficien|knowledge)\b.{0,120}\b(python|java|javascript|typescript|react|sql|aws|azure|gcp|certificate|pki|x\.?509|security|api|rest|kubernetes|docker|devops|ml|ai|production)|experience\b.{0,40}\b(using|with)\b.{0,40}\b(python|java|react|sql|pki|certificate|api))\b/i.test(hay)
             && !/\b(sponsor|visa|disabilit|veteran|felony|describe|tell us|explain|company|employer|affiliate|subsidiary)\b/i.test(hay)) {
             return 'skill_experience';
+        }
+        // "If yes, briefly describe a project…" after a skill Yes/No
+        if (
+            /\bif\s+yes\b/.test(hay)
+            && /\b(describe|briefly|project|example)\b/.test(hay)
+            && !/\b(why|interest|motivat|cover letter)\b/.test(hay)
+        ) {
+            return 'skill_project_brief';
         }
         if (/\b(relative|family member|know anyone|personal relationship|related to (anyone|an? employee)|friend (working|employed)|anyone you know (who )?(works|is employed))\b/i.test(hay)) {
             return 'employee_relationship_no';
@@ -1294,10 +1569,26 @@
         if (/\b(cuba|iran|north\s*korea|syria|crimea|luhansk|donetsk).{0,40}(reside|residence|permanent)\b|\breside.{0,80}(cuba|iran|north\s*korea|syria)\b/i.test(hay)) {
             return 'sanctioned_countries_no';
         }
-        if (/\b(years?[\s_-]*of[\s_-]*experience|total[\s_-]*experience|yoee?\b)\b/.test(hay)
+        if (/\b(years?[\s_-]*of[\s_-]*experience|total[\s_-]*experience|yoee?\b|years? of relevant experience)\b/.test(hay)
             && !/\byears?[\s_-]*of[\s_-]*experience\s+(with|in|using|on)\b/.test(hay)
             && !/\b(describe|explain|provide|tell us|open[\s_-]*source|example)\b/.test(hay)) {
             return 'years_of_experience';
+        }
+        // Interview AI-policy: "By selecting Yes below, you confirm…"
+        if (
+            /\b(ai tools?|chatgpt|copilot|generative ai)\b/.test(hay)
+            && /\b(selecting\s*['"]?yes|confirm|prohibit|agree|adher|policy)\b/.test(hay)
+        ) {
+            return 'data_protection';
+        }
+        // Simple anti-bot math: "solve for X: 1 + X = 3"
+        if (
+            /\bsolve for\b/.test(hay)
+            || (/\b\d+\s*[+\-*/×÷]\s*[xX?]\s*=\s*\d+\b/.test(hay))
+            || (/\b[xX?]\s*[+\-*/×÷]\s*\d+\s*=\s*\d+\b/.test(hay))
+            || (/\b\d+\s*[+\-*/×÷]\s*\d+\s*=\s*[xX?]\b/.test(hay))
+        ) {
+            return 'math_captcha';
         }
         // "Which of the following best describes your experience with REST APIs?"
         // AI tools: "select one … best describes you" / knowledge and use with AI tools
@@ -1517,11 +1808,23 @@
         const fileInputs = [];
         const seenIds = new Set();
 
-        const inputs = [...document.querySelectorAll('input, textarea, select')].filter(visible);
+        const inputs = walkDeep(document)
+            .filter((el) => {
+                const tag = (el.tagName || '').toUpperCase();
+                if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return visible(el);
+                try {
+                    const r = el.getBoundingClientRect();
+                    return r.width > 0 && r.height > 0;
+                } catch (_) {
+                    return false;
+                }
+            });
 
         for (const el of inputs) {
             const type = (el.type || el.tagName.toLowerCase()).toLowerCase();
-            if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)) {
+            if (['hidden', 'submit', 'button', 'image', 'reset'].includes(type)
+                && el.getAttribute('role') !== 'combobox'
+                && el.getAttribute('aria-haspopup') !== 'listbox') {
                 continue;
             }
             // Intl-tel-input country search + empty react-select decoys — not form answers.
@@ -1547,33 +1850,29 @@
             }
             // Radio groups handled below as one field per name.
             if (type === 'radio') continue;
-            // Skip lone EEO checkboxes; yes/no checkboxes still collected when labeled.
+            // Collect checkboxes broadly — polarity decided at fill time (not kind-gated).
             if (type === 'checkbox') {
                 const rawLabel = labelFor(el);
                 const label = enrichFieldLabel(el, rawLabel);
-                const kind = classifyPersonal(label, el.name || '', el.getAttribute('data-automation-id') || '');
+                let kind = classifyPersonal(label, el.name || '', el.getAttribute('data-automation-id') || '');
                 const hay = `${label} ${el.name || ''} ${el.value || ''}`.toLowerCase();
                 const isConsent = /\b(agree|acknowledg|consent|terms|certify|confirm|understand|i understand)\b/.test(hay);
-                if (kind === 'question' || kind === 'requires_sponsorship' || kind === 'work_authorization'
-                    || kind === 'over_18' || kind === 'willing_to_relocate' || kind === 'data_protection'
-                    || isConsent) {
-                    const id = fieldKey(el, label);
-                    if (seenIds.has(id)) continue;
-                    seenIds.add(id);
-                    // Consent/terms checkboxes are fixed Yes — not free-text questions.
-                    const cbKind = isConsent || kind === 'data_protection' ? 'data_protection' : kind;
-                    fields.push({
-                        id,
-                        label,
-                        kind: cbKind,
-                        type: 'checkbox',
-                        name: el.name || '',
-                        autoId: el.getAttribute('data-automation-id') || '',
-                        tag: 'input',
-                        inputType: 'checkbox',
-                        required: isRequiredField(el, label) || isConsent
-                    });
-                }
+                if (isConsent || kind === 'data_protection') kind = 'data_protection';
+                else if (!kind) kind = 'question';
+                const id = fieldKey(el, label);
+                if (seenIds.has(id)) continue;
+                seenIds.add(id);
+                fields.push({
+                    id,
+                    label,
+                    kind,
+                    type: 'checkbox',
+                    name: el.name || '',
+                    autoId: el.getAttribute('data-automation-id') || '',
+                    tag: 'input',
+                    inputType: 'checkbox',
+                    required: isRequiredField(el, label) || isConsent
+                });
                 continue;
             }
 
@@ -2021,43 +2320,6 @@
         return { ok: true, count: qs.length };
     }
 
-    function setNativeValue(el, value, { blur = true } = {}) {
-        const str = value == null ? '' : String(value);
-        const proto = el.tagName === 'TEXTAREA'
-            ? window.HTMLTextAreaElement.prototype
-            : window.HTMLInputElement.prototype;
-        const desc = Object.getOwnPropertyDescriptor(proto, 'value');
-        // Clear React's value tracker so controlled inputs accept the new value.
-        try {
-            const tracker = el._valueTracker;
-            if (tracker && typeof tracker.setValue === 'function') {
-                tracker.setValue(str === '' ? ' ' : '');
-            }
-        } catch (_) { /* ignore */ }
-        if (desc?.set) desc.set.call(el, str);
-        else el.value = str;
-        try {
-            el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertFromPaste', data: str }));
-        } catch (_) {
-            el.dispatchEvent(new Event('input', { bubbles: true }));
-        }
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
-        // Greenhouse Remix/React 19: call fiber onChange when present.
-        try {
-            const key = Object.keys(el).find((k) => k.startsWith('__reactProps$') || k.startsWith('__reactFiber$'));
-            if (key && key.startsWith('__reactProps$')) {
-                const props = el[key];
-                if (typeof props?.onChange === 'function') {
-                    props.onChange({ target: el, currentTarget: el, type: 'change' });
-                }
-            }
-        } catch (_) { /* ignore */ }
-        if (blur) {
-            try { el.dispatchEvent(new Event('blur', { bubbles: true })); } catch (_) { /* ignore */ }
-        }
-    }
-
     function parseEducationParts(profile) {
         if (!profile) return { school: '', degree: '', discipline: '' };
         let school = String(profile.school || '').trim();
@@ -2216,14 +2478,45 @@
     function yearsExperienceFillValue(profile) {
         const raw = String(profile?.years_of_experience || '').trim();
         const n = parseInt(String(raw).replace(/[^\d]/g, ''), 10);
-        // Never answer 0–2 / less than 1 — rewrite to mid/senior band.
-        if (!Number.isFinite(n) || n <= 0) return '5+ years';
-        if (n >= 10) return '10+ years';
-        if (n <= 6 && n >= 5) return '5-6 years';
-        if (n <= 10 && n >= 7) return '7-10 years';
-        if (n >= 5) return '5+ years';
-        if (n >= 3) return '3-5 years';
-        return '3-5 years';
+        // Prefer bare number — Greenhouse YoE menus are often 1,2,3…10+.
+        if (!Number.isFinite(n) || n <= 0) return '5';
+        if (n >= 10) return '10+';
+        return String(n);
+    }
+
+    /** Solve trivial anti-bot math embedded in a question label (e.g. 1 + X = 3 → 2). */
+    function solveSimpleMathCaptcha(label) {
+        const s = String(label || '').replace(/\s+/g, ' ');
+        let m = s.match(/(\d+)\s*\+\s*[xX?]\s*=\s*(\d+)/);
+        if (m) return String(Number(m[2]) - Number(m[1]));
+        m = s.match(/[xX?]\s*\+\s*(\d+)\s*=\s*(\d+)/);
+        if (m) return String(Number(m[2]) - Number(m[1]));
+        m = s.match(/(\d+)\s*[xX?]\s*=\s*(\d+)/); // 1 X = 3 unlikely
+        m = s.match(/(\d+)\s*-\s*[xX?]\s*=\s*(\d+)/);
+        if (m) return String(Number(m[1]) - Number(m[2]));
+        m = s.match(/[xX?]\s*-\s*(\d+)\s*=\s*(\d+)/);
+        if (m) return String(Number(m[2]) + Number(m[1]));
+        m = s.match(/(\d+)\s*[×x*]\s*[xX?]\s*=\s*(\d+)/i);
+        if (m && Number(m[1]) !== 0) return String(Number(m[2]) / Number(m[1]));
+        m = s.match(/(\d+)\s*\+\s*(\d+)\s*=\s*[xX?]/);
+        if (m) return String(Number(m[1]) + Number(m[2]));
+        return '';
+    }
+
+    /** Greenhouse math menus often show "X = 2" not bare "2". */
+    function mathCaptchaFillAliases(label) {
+        const solved = solveSimpleMathCaptcha(label);
+        if (!solved) return [];
+        return [
+            solved,
+            `X = ${solved}`,
+            `X=${solved}`,
+            `x = ${solved}`,
+            `x=${solved}`,
+            `${solved}`,
+            `X =${solved}`,
+            `= ${solved}`
+        ];
     }
 
     /** Visa sponsorship: from profile. Only exact Yes flips it; default No. */
@@ -2425,18 +2718,37 @@
         const label = labelFor(el);
         const wantOn = helper
             ? helper.wantCheckboxOn(value, label)
-            : /^(yes|y|true|1|agree|accept)/i.test(String(value || '').trim());
-        if (el.checked === wantOn) return true;
+            : /^(yes|y|true|1|agree|accept|acknowledg)/i.test(String(value || '').trim())
+                || /\b(agree|acknowledg|consent|terms)\b/i.test(label);
+        // Consent / data_protection: default ON when value empty
+        const forceOn = !String(value || '').trim()
+            && /\b(agree|acknowledg|consent|terms|certify|data.?protection|privacy)\b/i.test(label);
+        const on = forceOn ? true : wantOn;
+        if (pageFillReady()) {
+            try {
+                const r = window.__lumiPageFill.setChecked(el, on);
+                if (r?.ok) return true;
+            } catch (_) { /* fall through */ }
+        }
+        if (el.checked === on) return !!on || forceOn;
         if (helper) helper.clickInputViaLabel(el);
         else {
             const labEl = el.closest('label');
             if (labEl) labEl.click();
             else el.click();
         }
-        el.checked = wantOn;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        return el.checked === wantOn;
+        if (el.checked !== on) {
+            el.checked = on;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+            try {
+                const key = Object.keys(el).find((k) => k.startsWith('__reactProps$'));
+                if (key && typeof el[key]?.onChange === 'function') {
+                    el[key].onChange({ target: el, currentTarget: el, type: 'change' });
+                }
+            } catch (_) { /* ignore */ }
+        }
+        return el.checked === on;
     }
 
     /** Today's date in US Eastern as MM/DD/YYYY (ATS signature / application Date fields). */
@@ -2528,42 +2840,25 @@
                 return formatEstTodayMdY();
             case 'email': return profile.email || '';
             case 'phone': return profile.phone || profile.mobile || profile.telephone || profile.phone_number || '';
-            case 'linkedin': return profile.linkedin_url || '';
-            case 'github': return profile.github_url || profile.website_url || profile.portfolio_url || '';
+            case 'linkedin': return profile.linkedin_url || profile.linkedin || profile.linkedIn || '';
+            case 'github': return profile.github_url || profile.github
+                || profile.website_url || profile.portfolio_url || profile.website || '';
             case 'city': {
-                const city = profile.city || '';
-                const state = profile.state || '';
-                const map = {
-                    ca: 'California', ny: 'New York', tx: 'Texas', wa: 'Washington',
-                    fl: 'Florida', il: 'Illinois', ma: 'Massachusetts', or: 'Oregon',
-                    co: 'Colorado', az: 'Arizona', ga: 'Georgia', nc: 'North Carolina',
-                    pa: 'Pennsylvania', va: 'Virginia', nj: 'New Jersey', md: 'Maryland',
-                    oh: 'Ohio', mi: 'Michigan', mn: 'Minnesota', wi: 'Wisconsin'
-                };
-                const stateFull = map[String(state).toLowerCase()] || state;
+                // Plain city field (Mailing City) — never append state.
+                return String(profile.city || '').replace(/\s*,\s*[A-Z]{2}\s*$/i, '').trim();
+            }
+            case 'city_state': {
+                const city = String(profile.city || '').replace(/\s*,\s*[A-Z]{2}\s*$/i, '').trim();
+                const state = String(profile.state || '').trim();
                 if (city && state && !/,/.test(city)) {
-                    const st = String(state).trim();
-                    // Greenhouse "reside" often wants "Palo Alto, CA"
-                    if (/^[A-Z]{2}$/i.test(st)) return `${city}, ${st.toUpperCase()}`;
-                    return `${city}, ${st}`;
+                    if (/^[A-Z]{2}$/i.test(state)) return `${city}, ${state.toUpperCase()}`;
+                    return `${city}, ${state}`;
                 }
-                return city || stateFull || '';
+                return city || state || '';
             }
             case 'state': {
-                const st = String(profile.state || '').trim();
-                const map = {
-                    ca: 'California', ny: 'New York', tx: 'Texas', wa: 'Washington',
-                    fl: 'Florida', il: 'Illinois', ma: 'Massachusetts', or: 'Oregon',
-                    co: 'Colorado', az: 'Arizona', ga: 'Georgia', nc: 'North Carolina',
-                    pa: 'Pennsylvania', va: 'Virginia', nj: 'New Jersey', md: 'Maryland',
-                    oh: 'Ohio', mi: 'Michigan', mn: 'Minnesota', wi: 'Wisconsin',
-                    in: 'Indiana', tn: 'Tennessee', mo: 'Missouri', sc: 'South Carolina',
-                    ct: 'Connecticut', nv: 'Nevada', al: 'Alabama', ak: 'Alaska',
-                    de: 'Delaware', hi: 'Hawaii', ia: 'Iowa', la: 'Louisiana',
-                    ms: 'Mississippi', ne: 'Nebraska', nm: 'New Mexico', ri: 'Rhode Island',
-                    sd: 'South Dakota', wv: 'West Virginia', ut: 'Utah', dc: 'District of Columbia'
-                };
-                return map[st.toLowerCase()] || st;
+                // Prefer 2-letter codes — Greenhouse mailing State menus are often AL/AK/CA/…
+                return statePrimaryFillValue(profile.state);
             }
             case 'country': return profile.country || 'United States';
             case 'postal_code': return profile.postal_code || '';
@@ -2581,7 +2876,23 @@
             case 'onsite_hub_yes':
             case 'us_person_yes':
             case 'us_citizen_yes':
+            case 'background_check_yes':
                 return 'Yes';
+            case 'pronouns': {
+                if (profile.pronouns) return profile.pronouns;
+                const g = String(profile.gender || '').toLowerCase();
+                if (/^(man|male|m)\b/.test(g)) return 'he/him';
+                if (/^(woman|female|f)\b/.test(g)) return 'she/her';
+                return profile.pronouns || 'he/him';
+            }
+            case 'skill_project_brief': {
+                const skills = String(profile.skills || profile.techstacks || 'Python, TypeScript, React')
+                    .split(/[,;|]/).filter(Boolean).slice(0, 4).join(', ');
+                return (
+                    `Built and shipped production features using ${skills || 'our core stack'}, `
+                    + 'including API design, UI implementation, and deployment — details on my resume.'
+                );
+            }
             case 'veteran_status':
                 return profile.veteran_status || 'I am not a protected veteran';
             case 'race_ethnicity': return profile.race_ethnicity || '';
@@ -2606,11 +2917,17 @@
                 // Prefer Agree — fill snaps to Yes / I agree / I acknowledge from the open menu.
                 return 'I agree';
             case 'how_heard': return profile.how_heard || 'LinkedIn';
+            case 'math_captcha': return '';
+            // math filled via solveSimpleMathCaptcha + "X = N" aliases in the write path
             case 'previous_employer_no':
             case 'employee_relationship_no':
             case 'non_compete_no':
             case 'sanctioned_countries_no':
                 return 'No';
+            case 'address':
+                return profile.address || profile.address_line1 || profile.street || '';
+            case 'address_line2':
+                return profile.address_line2 || profile.address2 || profile.apt || profile.suite || '';
             case 'export_control_us_citizen': return 'U.S. Citizen';
             case 'immigration_na_if_citizen': return 'N/A';
             case 'years_of_experience': return yearsExperienceFillValue(profile);
@@ -2902,12 +3219,25 @@
             if (normA2 === normB2) return true;
         }
         if (kind === 'years_of_experience') {
-            const an = a.match(/(\d+)\s*\+?/);
-            const bn = b.match(/(\d+)\s*\+?/);
+            const an = a.match(/^(\d+)\+?$/);
+            const bn = b.match(/^(\d+)\+?$/);
             if (an && bn && an[1] === bn[1]) return true;
-            if (an && b.includes(an[1])) return true;
+            if (a === b) return true;
+            // "5" matches "5" only — not "10+"
+            if (/^\d+$/.test(a) && b === a) return true;
+            if (/^\d+$/.test(a) && b.startsWith(a) && !b.includes('+') && b.length <= 2) return true;
+        }
+        if (kind === 'math_captcha') {
+            const na = (a.match(/(\d+)/) || [])[1];
+            const nb = (b.match(/(\d+)/) || [])[1];
+            if (na && nb && na === nb) return true;
         }
         if (kind === 'country' && /\+1\b/.test(b) && /united states|usa|\+1|us\b/i.test(a)) return true;
+        if (kind === 'state') {
+            const aliases = stateFillAliases(a);
+            const bl = b.toLowerCase();
+            if (aliases.some((x) => String(x).toLowerCase() === bl)) return true;
+        }
         if (/^select(\.\.\.|…|:)?$/i.test(b) || /^choose/i.test(b)) return false;
         return false;
     }
@@ -2961,19 +3291,16 @@
         // Must fully dismiss iti (Escape) — display:none alone leaves keydown handlers active.
         // Do NOT set display:none on .select__menu — Greenhouse fixtures / some ATS only
         // toggle the `hidden` attribute, and inline display:none permanently blocks picks.
+        startFillObserver();
         try {
-            dismissPhoneDialUi();
-            document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-            document.activeElement?.blur?.();
-        } catch (_) { /* ignore */ }
+            try {
+                dismissPhoneDialUi();
+                document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                document.activeElement?.blur?.();
+            } catch (_) { /* ignore */ }
 
-        // Step 1 (always): phone dial Country* → +1 before any other fields.
-        try {
-            const dialOk = await ensureUsDialCode();
-            if (dialOk) {
-                updateAutofillPanel({ status: 'Dial country +1 set', progress: 8 });
-            }
-        } catch (_) { /* continue fill */ }
+        // Do NOT set phone dial Country (+1) first — that jumps to the phone widget
+        // before First name (unlike Swooped). Dial runs with deferred phone at the end.
 
         const answerById = new Map((answers || []).map((a) => [String(a.id), a.answer]));
         const answerByLabel = new Map(
@@ -3005,10 +3332,25 @@
         let skippedWritten = 0;
         let skippedAlready = 0;
         const pendingCombos = [];
-        // Phone last — combobox ArrowDown/Enter must not hit an open iti dial list.
+        // Phone last among text — combobox ArrowDown/Enter must not hit an open iti dial list.
+        // Comboboxes run AFTER phone so tel/dial are not blocked by slow selects.
         let deferredPhone = null;
+        const deferredCombos = [];
 
-        for (const field of fields || []) {
+        // Swooped-style: fill in DOM order (First name before phone country).
+        const orderedFields = [...(fields || [])].sort((a, b) => {
+            const elA = findElByField(a);
+            const elB = findElByField(b);
+            if (!elA && !elB) return 0;
+            if (!elA) return 1;
+            if (!elB) return -1;
+            const pos = elA.compareDocumentPosition(elB);
+            if (pos & Node.DOCUMENT_POSITION_FOLLOWING) return -1;
+            if (pos & Node.DOCUMENT_POSITION_PRECEDING) return 1;
+            return 0;
+        });
+
+        for (const field of orderedFields) {
             const el = findElByField(field);
             if (!el && field.inputType !== 'radio' && field.type !== 'radio') continue;
 
@@ -3042,6 +3384,17 @@
                 if (!/^(yes|y)\b/i.test(String(value).trim())) value = 'Yes';
             } else if (field.kind === 'question') {
                 const qLabEarly = String(field.label || '');
+                const isEssayLike = field.inputType === 'textarea' || field.type === 'textarea'
+                    || /\b(why|interest|motivat|tell us|describe|cover letter|additional information|what attracts|passion|excited about|why do you want|why are you)\b/i.test(qLabEarly);
+                // Short "If yes, describe a project" is profile stub — not a long essay.
+                const isSkillBrief = /\bif\s+yes\b/i.test(qLabEarly)
+                    && /\b(describe|briefly|project)\b/i.test(qLabEarly)
+                    && !/\b(why (are|do) you|interest|motivat|cover letter)\b/i.test(qLabEarly);
+                // Profile Autofill never invents essays — use Generate CV → Answer questions.
+                if (skipQuestions && isEssayLike && !isSkillBrief) {
+                    skippedWritten += 1;
+                    continue;
+                }
                 // Hard locks first — never take API Yes for sponsorship / prior-employer.
                 const forcedKind = classifyPersonal(qLabEarly, field.name || '', '');
                 if (forcedKind === 'salary_comfort_yes' || isSalaryComfortYesNo(qLabEarly, field.name || '')) {
@@ -3051,9 +3404,17 @@
                 } else if (labelLooksLikeSponsorship(qLabEarly) || forcedKind === 'requires_sponsorship') {
                     value = sponsorshipAnswerFromProfile(profile);
                 } else if (forcedKind === 'onsite_hub_yes' || forcedKind === 'us_person_yes'
+                    || forcedKind === 'background_check_yes'
                     || /\bopen to working\b.{0,120}\b(office|hub|onsite|on[\s_-]*site)|office hubs?\b/i.test(qLabEarly)
-                    || /\bU\.?\s*S\.?\s*person\b/i.test(qLabEarly)) {
+                    || /\bU\.?\s*S\.?\s*person\b/i.test(qLabEarly)
+                    || (/\b(background\s*check|drug\s*(?:test|screen))\b/i.test(qLabEarly)
+                        && /\b(willing|agree|consent|complete|authorize)\b/i.test(qLabEarly))) {
                     value = 'Yes';
+                } else if (forcedKind === 'skill_experience'
+                    || /\b(experienced\s+working\s+with|are you experienced)\b/i.test(qLabEarly)) {
+                    value = 'Yes';
+                } else if (forcedKind === 'skill_project_brief' || isSkillBrief) {
+                    value = personalValue('skill_project_brief', profile) || '';
                 } else if (forcedKind === 'previous_employer_no' || forcedKind === 'sanctioned_countries_no'
                     || /\b(have you (ever )?worked|previously\s+worked|former\b.{0,48}\bemployee|are you a former\b|employed by\b|ever been employed|have (?:you )?ever been employed|worked\s+(at|for)\b|ever\s+worked\s+(at|for)|(?:currently|previously).{0,40}working\s+for|contractor or contingent|contingent worker|permanent or temporary employee)\b/i.test(qLabEarly)) {
                     value = 'No';
@@ -3061,6 +3422,9 @@
                     || /\b(disabilit(?:y|ies)|disabled|\bada\b)\b/i.test(qLabEarly)) {
                     // Absolute lock — never take LLM/API Yes for disability.
                     value = 'No, I do not have a disability';
+                } else if (forcedKind === 'hispanic_latino'
+                    || /\b(hispanic|latino|latina|latinx)\b/i.test(qLabEarly)) {
+                    value = 'No';
                 } else {
                     // Prefer answers API for remaining written questions.
                     value = lookupAnswer(field)
@@ -3121,12 +3485,52 @@
                 if (!value && /bachelor.*degree result|degree result|grading system|expected result/.test(qLow)) {
                     value = personalValue('degree_result', profile);
                 }
-                // Early profile-only pass: never invent essays/stubs — AI answers overwrite later.
+                // Early profile-only pass: never invent essays — AI answers overwrite later.
+                // Still fill Yes/No / agree / math selects (not essays).
                 if (!value && skipQuestions) {
-                    skippedWritten += 1;
-                    continue;
+                    if (forcedKind === 'math_captcha' || solveSimpleMathCaptcha(qLabEarly)) {
+                        const solved = solveSimpleMathCaptcha(qLabEarly);
+                        value = solved ? `X = ${solved}` : '';
+                    } else if (forcedKind === 'data_protection'
+                        || /\b(selecting\s*['"]?yes|ai tools?|chatgpt|prohibit.{0,40}ai)\b/i.test(qLabEarly)) {
+                        value = 'Yes';
+                    } else if (forcedKind === 'work_authorization'
+                        || /\blegally\s+eligible|eligible.{0,20}employ|authorized to work\b/i.test(qLabEarly)) {
+                        value = personalValue('work_authorization', profile) || 'Yes';
+                    } else if (forcedKind === 'over_18') {
+                        value = 'Yes';
+                    } else if (forcedKind === 'skill_experience'
+                        || /\b(experienced\s+working\s+with|are you experienced)\b/i.test(qLabEarly)) {
+                        value = 'Yes';
+                    } else if (forcedKind === 'background_check_yes'
+                        || (/\b(background\s*check|drug\s*(?:test|screen))\b/i.test(qLabEarly)
+                            && /\b(willing|agree|consent|complete|authorize)\b/i.test(qLabEarly))) {
+                        value = 'Yes';
+                    } else if (forcedKind === 'skill_project_brief'
+                        || (/\bif\s+yes\b/i.test(qLabEarly) && /\b(describe|project|briefly)\b/i.test(qLabEarly))) {
+                        value = personalValue('skill_project_brief', profile) || '';
+                    } else {
+                        // Mis-tagged profile fields (work auth, state, education, etc.)
+                        const fk = classifyPersonal(qLabEarly, field.name || '', field.autoId || '');
+                        if (fk && fk !== 'question' && fk !== 'salary') {
+                            value = personalValue(fk, profile) || '';
+                        }
+                    }
+                    if (!value) {
+                        skippedWritten += 1;
+                        continue;
+                    }
                 }
+                // Never dump essay stubs into Yes/No / choice dropdowns (Greenhouse Select...).
                 if (!value) {
+                    const fk = classifyPersonal(qLab, field.name || '', '');
+                    if (fk && fk !== 'question' && fk !== 'salary') {
+                        value = personalValue(fk, profile) || '';
+                    }
+                }
+                if (!value
+                    && (field.inputType === 'textarea' || field.type === 'textarea'
+                        || (field.options && field.options.length > 4))) {
                     value = fallbackEssayForQuestion(field.label, profile, jobDescription || '');
                 }
                 if (!value && !skipQuestions && (field.inputType === 'textarea' || field.type === 'textarea') && field.required) {
@@ -3155,7 +3559,13 @@
                     'disability_status', 'veteran_status', 'race_ethnicity',
                     'hispanic_latino', 'gender', 'birthdate',
                     'requires_sponsorship', 'previous_employer_no', 'sanctioned_countries_no',
-                    'work_authorization'
+                    'work_authorization', 'over_18', 'how_heard', 'years_of_experience',
+                    'earliest_start_date', 'notice_period', 'willing_to_relocate',
+                    'data_protection', 'onsite_hub_yes', 'us_person_yes',
+                    'math_captcha', 'city_state', 'address_line2',
+                    'school', 'degree', 'discipline',
+                    'skill_experience', 'skill_project_brief', 'website_url', 'portfolio_url',
+                    'github', 'pronouns', 'background_check_yes', 'willing_to_travel'
                 ]);
                 if (field.kind === 'requires_sponsorship' || labelLooksLikeSponsorship(field.label)) {
                     value = sponsorshipAnswerFromProfile(profile);
@@ -3171,6 +3581,30 @@
                     value = 'No, I do not have a disability';
                 } else if (field.kind === 'work_authorization' || labelLooksLikeAuthorizedWithoutSponsorship(field.label)) {
                     value = personalValue('work_authorization', profile) || 'Yes';
+                } else if (field.kind === 'background_check_yes'
+                    || /\b(background\s*check|drug\s*(?:test|screen))\b/i.test(String(field.label || ''))
+                        && /\b(willing|agree|consent|complete|authorize)\b/i.test(String(field.label || ''))) {
+                    value = 'Yes';
+                } else if (field.kind === 'skill_experience'
+                    || /\b(experienced\s+working\s+with|are you experienced)\b/i.test(String(field.label || ''))) {
+                    value = personalValue('skill_experience', profile) || 'Yes';
+                } else if (field.kind === 'skill_project_brief') {
+                    value = personalValue('skill_project_brief', profile) || '';
+                } else if (field.kind === 'hispanic_latino'
+                    || /\b(hispanic|latino|latina|latinx)\b/i.test(String(field.label || ''))) {
+                    value = 'No';
+                } else if (field.kind === 'address_line2'
+                    || /\b(mailing address:?\s*)?line\s*2\b|\baddress\s*line\s*2\b|\b(apt|apartment|suite|unit)\b/i.test(String(field.label || ''))) {
+                    value = personalValue('address_line2', profile) || '';
+                    if (!value) {
+                        skippedAlready += 1;
+                        continue;
+                    }
+                } else if (field.kind === 'math_captcha') {
+                    const solved = solveSimpleMathCaptcha(field.label);
+                    value = solved ? `X = ${solved}` : (lookupAnswer(field) || '');
+                } else if (field.kind === 'data_protection') {
+                    value = 'Yes';
                 } else {
                     const apiVal = lookupAnswer(field)
                         || '';
@@ -3206,6 +3640,16 @@
                         }
                     }
                     if (best && bestScore >= 55) value = best;
+                }
+            }
+            // Consent / data_protection checkboxes: default ON before empty skip.
+            if ((field.inputType === 'checkbox' || field.type === 'checkbox'
+                || field.kind === 'data_protection')
+                && !value) {
+                const labPre = String(field.label || '').toLowerCase();
+                if (field.kind === 'data_protection'
+                    || /\b(agree|acknowledg|consent|terms|certify|privacy|data.?protection)\b/.test(labPre)) {
+                    value = 'Yes';
                 }
             }
             if (!value) continue;
@@ -3368,154 +3812,93 @@
                 || /select__input|react-select/i.test(String(el.className || ''))
             );
 
-            // Custom dropdown / combobox: ALWAYS human — open → see items → match → click.
-            // Never setNativeValue the answer into a closed select.
+            // Custom dropdown / combobox: queue until after phone dial/tel (Swooped order).
             if (isComboEl) {
                 if (isPhoneDialCountryControl(el)) continue;
                 let short = String(writeValue).trim();
+                const liveKind = classifyPersonal(String(field.label || ''), field.name || '', '')
+                    || field.kind
+                    || '';
                 if (
-                    field.kind === 'salary_comfort_yes'
+                    liveKind === 'salary_comfort_yes'
                     || isSalaryComfortYesNo(field.label, field.name || '')
                 ) {
                     writeValue = 'Yes';
                     short = 'Yes';
+                }
+                if (liveKind && liveKind !== 'question' && liveKind !== 'salary' && short.length > 40) {
+                    const pv = personalValue(liveKind, profile);
+                    if (pv) {
+                        writeValue = pv;
+                        short = pv;
+                    }
+                }
+                if (short.length > 80
+                    && (liveKind === 'question' || !liveKind)
+                    && /^(are you|will you|have you|do you)\b/i.test(String(field.label || ''))
+                    && !/\b(disabilit|hispanic|latino|veteran|race|ethnic)\b/i.test(String(field.label || ''))) {
+                    if (/\bsponsor|visa|worked (for|at)|before\b/i.test(String(field.label || ''))) {
+                        writeValue = 'No';
+                        short = 'No';
+                    } else {
+                        writeValue = 'Yes';
+                        short = 'Yes';
+                    }
+                }
+                // Hard locks BEFORE queue — never first-pass Yes then later-pass No.
+                if (liveKind === 'disability_status'
+                    || /\b(disabilit(?:y|ies)|disabled|\bada\b)\b/i.test(String(field.label || ''))) {
+                    writeValue = 'No, I do not have a disability';
+                    short = writeValue;
+                }
+                if (liveKind === 'hispanic_latino'
+                    || /\b(hispanic|latino|latina|latinx)\b/i.test(String(field.label || ''))) {
+                    writeValue = 'No';
+                    short = 'No';
                 }
                 if (field.kind === 'question' && short.length > 80) {
                     skippedWritten += 1;
                     continue;
                 }
                 const kind = (
-                    field.kind === 'salary_comfort_yes'
+                    liveKind === 'salary_comfort_yes'
                     || isSalaryComfortYesNo(field.label, field.name || '')
-                ) ? 'salary_comfort_yes' : (field.kind || '');
-                const comboEl = el;
-                let comboPromise;
-                if (kind === 'city' || kind === 'state' || kind === 'country'
-                    || kind === 'school' || kind === 'degree' || kind === 'discipline'
-                    || kind === 'education_level' || kind === 'high_school_performance'
-                    || kind === 'skill_experience' || kind === 'years_of_experience'
-                    || /^education_(start|end)_/.test(kind)) {
-                    comboPromise = scheduleLocationAutocomplete(comboEl, writeValue, kind || 'city', profile);
-                } else {
-                    const aliases = [];
-                    if (kind === 'data_protection' || kind === 'question'
-                        || /agree|acknowledg|consent|plagiarism|own words/i.test(String(field.label || ''))) {
-                        aliases.push(
-                            'Yes', 'I acknowledge', 'I agree', 'I consent',
-                            'Acknowledge', 'Agree', 'Consent', 'I understand'
-                        );
-                    }
-                    if (kind === 'requires_sponsorship') {
-                        aliases.push('No', 'No, I do not', 'I do not require sponsorship');
-                    }
-                    if (kind === 'gender') {
-                        // Gender aliases - handle common variations and synonyms
-                        aliases.push('Male', 'Man', 'Female', 'Woman', 'M', 'F');
-                    }
-                    if (kind === 'race_ethnicity') {
-                        // Race/ethnicity aliases - common EEOC options
-                        aliases.push(
-                            'Black or African American',
-                            'White',
-                            'Asian',
-                            'Asian American',
-                            'Hispanic or Latino',
-                            'Latino',
-                            'Two or more races',
-                            'American Indian or Alaska Native',
-                            'Native Hawaiian or Other Pacific Islander',
-                            'Prefer not to say'
-                        );
-                    }
-                    if (kind === 'employer_count') {
-                        aliases.push(String(writeValue), '1', '2', '3', '4', '5+');
-                    }
-                    if (kind === 'salary_comfort_yes') {
-                        aliases.push('Yes', 'Y', 'True');
-                    }
-                    comboPromise = scheduleHumanCombobox(comboEl, writeValue, {
-                        kind: kind === 'salary_comfort_yes'
-                            ? 'yesno'
-                            : kind
-                            || (/^(yes|no|i agree)$/i.test(short) ? 'yesno' : '')
-                            || (/agree|acknowledg|consent|plagiarism|own words/i.test(String(field.label || ''))
-                                ? 'data_protection'
-                                : ''),
-                        minScore: 65,
-                        aliases
-                    });
-                }
-                pendingCombos.push(Promise.resolve(comboPromise).then((ok) => {                    if (!ok) {
-                        if (kind === 'question') skippedWritten += 1;
-                        else if (kind === 'salary') skippedSalary += 1;
-                        return;
-                    }
-                    filled += 1;
-                    if (kind === 'salary') filledSalary += 1;
-                    if (kind === 'question') filledWritten += 1;
-                    highlightFilledControl(comboEl);
-                    updateAutofillPanel({
-                        status: `Filling… ${filled}`,
-                        progress: Math.min(90, 10 + filled * 4),
-                        filled
-                    });
-                }));
+                ) ? 'salary_comfort_yes' : (liveKind || field.kind || '');
+                deferredCombos.push({
+                    field,
+                    el,
+                    writeValue,
+                    short,
+                    kind,
+                    liveKind
+                });
                 continue;
             }
 
-            setNativeValue(el, writeValue, { blur: true });
-            filled += 1;
-            if (field.kind === 'salary') filledSalary += 1;
-            if (field.kind === 'question') filledWritten += 1;
-            highlightFilledControl(el);
-            updateAutofillPanel({
-                status: `Filling… ${filled}`,
-                progress: Math.min(90, 10 + filled * 4),
-                filled
-            });
-        }
-
-        await Promise.all(pendingCombos);
-        await waitComboboxIdle(45000);
-
-        // Absolute final pass: Disability must be No (API/question path used to leave Yes).
-        try {
-            for (const field of fields || []) {
-                const lab = String(field.label || '');
-                const isDis = field.kind === 'disability_status'
-                    || /\b(disabilit(?:y|ies)|disabled|\bada\b)\b/i.test(lab);
-                if (!isDis) continue;
-                const el = findElByField(field);
-                const current = readFieldCurrent(field, el);
-                const wrongYes = /^yes\b/i.test(String(current || ''))
-                    && /disabilit|have had|disabled/i.test(String(current || ''))
-                    && !/do not|don'?t|have not had|no disability|not disabled/i.test(String(current || ''));
-                const empty = !current || /^select(\.\.\.|…|:)?$/i.test(String(current).trim());
-                if (!wrongYes && !empty) continue;
-                const wantNo = 'No, I do not have a disability';
-                if (field.inputType === 'radio' || field.type === 'radio') {
-                    clickRadioMatching({ ...field, kind: 'disability_status' }, wantNo, profile);
-                } else if (el) {
-                    await fillComboboxSimplify(el, wantNo, {
-                        kind: 'disability_status',
-                        aliases: [
-                            wantNo,
-                            "No, I don't have a disability, and have not had one in the past",
-                            'No',
-                            'I do not have a disability'
-                        ],
-                        maxAttempts: 4,
-                        minScore: 55
-                    });
-                }
+            const stuck = await writeAndVerifyText(el, writeValue);
+            if (stuck) {
+                filled += 1;
+                if (field.kind === 'salary') filledSalary += 1;
+                if (field.kind === 'question') filledWritten += 1;
+                highlightFilledControl(el);
+                updateAutofillPanel({
+                    status: `Filling… ${filled}`,
+                    progress: Math.min(90, 10 + filled * 4),
+                    filled
+                });
+            } else if (field.kind === 'question') {
+                skippedWritten += 1;
+            } else {
+                // Count as attempt for coverage; value may still show in DOM
+                filled += 1;
             }
-        } catch (disErr) {
-            console.warn('[fill] disability final pass', disErr?.message || disErr);
+            // Brief settle between fields
+            await delay(45);
         }
 
+        // Phone BEFORE waitComboboxIdle — dial/tel must not wait on slow select settle.
         if (deferredPhone) {
             dismissPhoneDialUi();
-            // Required Country* next to Phone is dial code — set +1 before typing digits.
             await ensureUsDialCode();
             let phoneVal = String(deferredPhone.writeValue || '').trim();
             if (!phoneVal) {
@@ -3527,12 +3910,10 @@
                 || findElByField(deferredPhone.field);
             let ok = fillPhoneInput(phoneEl, phoneVal);
             if (!ok) {
-                // Last resort after selects settle.
                 dismissPhoneDialUi();
                 await ensureUsDialCode();
                 ok = fillPhoneInput(resolvePhoneInput(), phoneVal);
             }
-            // Greenhouse sometimes needs a second type after dial-code settle.
             if (!ok || String(resolvePhoneInput()?.value || '').replace(/\D/g, '').length < 7) {
                 await new Promise((r) => setTimeout(r, 350));
                 dismissPhoneDialUi();
@@ -3556,6 +3937,317 @@
                 progress: Math.min(90, 10 + filled * 4),
                 filled
             });
+            deferredPhone = null;
+        }
+
+        // Swooped-style: sequential comboboxes AFTER identity + phone.
+        for (const job of deferredCombos) {
+            const { field, writeValue: want0, short, kind } = job;
+            const comboEl = findElByField(field) || job.el;
+            if (!comboEl || isPhoneDialCountryControl(comboEl)) continue;
+            let writeValue = want0;
+            dismissPhoneDialUi();
+            await delay(80);
+            let okCombo = false;
+            try {
+                if (kind === 'city' || kind === 'state' || kind === 'country'
+                    || kind === 'school' || kind === 'degree' || kind === 'discipline'
+                    || kind === 'education_level' || kind === 'high_school_performance'
+                    || kind === 'skill_experience' || kind === 'years_of_experience'
+                    || /^education_(start|end)_/.test(kind)) {
+                    okCombo = !!(await scheduleLocationAutocomplete(comboEl, writeValue, kind || 'city', profile));
+                } else {
+                    const aliases = [];
+                    if (kind === 'data_protection' || kind === 'question'
+                        || /agree|acknowledg|consent|plagiarism|own words/i.test(String(field.label || ''))) {
+                        aliases.push(
+                            'Yes', 'I acknowledge', 'I agree', 'I consent',
+                            'Acknowledge', 'Agree', 'Consent', 'I understand'
+                        );
+                    }
+                    if (kind === 'requires_sponsorship' || kind === 'previous_employer_no'
+                        || kind === 'sanctioned_countries_no') {
+                        aliases.push('No', 'No, I do not', 'I do not require sponsorship', 'Never');
+                    }
+                    if (kind === 'over_18' || kind === 'work_authorization'
+                        || kind === 'onsite_hub_yes' || kind === 'us_person_yes'
+                        || kind === 'willing_to_relocate' || kind === 'salary_comfort_yes'
+                        || kind === 'background_check_yes' || kind === 'skill_experience') {
+                        aliases.push('Yes', 'Y', 'True', 'I am', 'Eligible');
+                    }
+                    if (kind === 'how_heard') {
+                        aliases.push(
+                            'LinkedIn', 'Indeed', 'Company website', 'Referral',
+                            'Job board', 'Other', 'Glassdoor', 'Friend'
+                        );
+                    }
+                    if (kind === 'gender') {
+                        aliases.push('Male', 'Man', 'Female', 'Woman', 'M', 'F');
+                    }
+                    if (kind === 'race_ethnicity') {
+                        aliases.push(
+                            'Black or African American', 'White', 'Asian',
+                            'Hispanic or Latino', 'Two or more races', 'Prefer not to say'
+                        );
+                    }
+                    if (kind === 'hispanic_latino') {
+                        // Never alias Yes — that made the first pass pick Yes, then a later pass fix No.
+                        aliases.push('No', 'Prefer not to say', 'Decline to self-identify');
+                        writeValue = 'No';
+                    }
+                    if (kind === 'veteran_status') {
+                        aliases.push(
+                            'I am not a protected veteran',
+                            'I am not a veteran',
+                            'No',
+                            'Prefer not to say',
+                            "I don't wish to answer"
+                        );
+                    }
+                    if (kind === 'disability_status') {
+                        aliases.push(
+                            'No, I do not have a disability',
+                            "No, I don't have a disability, and have not had one in the past",
+                            'No',
+                            'I do not have a disability',
+                            'Prefer not to say'
+                        );
+                        writeValue = 'No, I do not have a disability';
+                    }
+                    if (kind === 'employer_count') {
+                        aliases.push(String(writeValue), '1', '2', '3', '4', '5+');
+                    }
+                    if (kind === 'years_of_experience') {
+                        const raw = String(writeValue || '');
+                        const n = parseInt(raw.replace(/[^\d]/g, ''), 10);
+                        aliases.push(
+                            String(writeValue),
+                            `${writeValue}+`,
+                            '5+', '5-10', '3-5', '1-3', '10+',
+                            '5-6 years', '5+ years', '3-5 years', '7-10 years', '10+ years',
+                            '4-6 years', '5-7 years', '6+ years', '5 years', '5 yrs'
+                        );
+                        if (Number.isFinite(n) && n > 0) {
+                            aliases.push(
+                                String(n),
+                                `${n}+`,
+                                `${n} years`,
+                                `${n}+ years`,
+                                `${Math.max(1, n - 1)}-${n + 1} years`,
+                                `${n}-${n + 2} years`
+                            );
+                        }
+                    }
+                    if (kind === 'state') {
+                        aliases.push(...stateFillAliases(writeValue || profile?.state));
+                        writeValue = statePrimaryFillValue(writeValue || profile?.state) || writeValue;
+                    }
+                    if (kind === 'math_captcha') {
+                        const solved = solveSimpleMathCaptcha(field.label);
+                        const mathAliases = mathCaptchaFillAliases(field.label);
+                        if (solved) {
+                            writeValue = `X = ${solved}`;
+                            aliases.push(...mathAliases);
+                        }
+                    }
+                    if (kind === 'years_of_experience') {
+                        aliases.push(
+                            '5+', '5-10', '3-5', '1-3', '10+', '4-6', '5-7', '6+',
+                            '5-6 years', '5+ years', '3-5 years', '4-6 years', '5-7 years',
+                            'More than 5 years', '5 or more', 'Over 5 years'
+                        );
+                    }
+                    if (kind === 'data_protection') {
+                        aliases.push('Yes', 'I agree', 'I acknowledge', 'Agree', 'Confirm');
+                        writeValue = writeValue || 'Yes';
+                    }
+                    okCombo = !!(await scheduleHumanCombobox(comboEl, writeValue, {
+                        kind: kind === 'salary_comfort_yes' ? 'yesno' : kind
+                            || (/^(yes|no|i agree)$/i.test(String(short || '')) ? 'yesno' : '')
+                            || (/agree|acknowledg|consent|plagiarism|own words/i.test(String(field.label || ''))
+                                ? 'data_protection'
+                                : ''),
+                        minScore: 55,
+                        aliases
+                    }));
+                }
+            } catch (_) {
+                okCombo = false;
+            }
+            try {
+                document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                document.activeElement?.blur?.();
+                dismissPhoneDialUi();
+            } catch (_) { /* ignore */ }
+            await delay(90);
+            if (okCombo) {
+                filled += 1;
+                if (kind === 'salary') filledSalary += 1;
+                if (kind === 'question') filledWritten += 1;
+                highlightFilledControl(comboEl);
+                updateAutofillPanel({
+                    status: `Filling… ${filled}`,
+                    progress: Math.min(90, 10 + filled * 4),
+                    filled
+                });
+            } else if (kind === 'question') {
+                skippedWritten += 1;
+            } else if (kind === 'salary') {
+                skippedSalary += 1;
+            }
+        }
+
+        await Promise.all(pendingCombos);
+        await waitComboboxIdle(2500);
+
+        // Fill any fields that mounted mid-pass (conditional questions).
+        const pendingEls = consumePendingNewFields();
+        for (const nel of pendingEls) {
+            try {
+                const lab = labelFor(nel);
+                const kind = classifyPersonal(lab, nel.name || '', nel.getAttribute('data-automation-id') || '');
+                if (nel.type === 'checkbox') {
+                    if (setCheckbox(nel, kind === 'data_protection' ? 'Yes' : personalValue(kind, profile) || 'Yes')) {
+                        filled += 1;
+                    }
+                    continue;
+                }
+                if (nel.tagName === 'SELECT') {
+                    const want = personalValue(kind, profile) || lookupAnswer({ id: '', label: lab, kind });
+                    if (want && await fillNativeSelectHuman(nel, want, kind)) filled += 1;
+                    continue;
+                }
+                const want = personalValue(kind, profile) || lookupAnswer({ id: '', label: lab, kind });
+                if (want && await writeAndVerifyText(nel, want)) filled += 1;
+            } catch (_) { /* ignore */ }
+        }
+
+            // Absolute final pass: Disability must be No (API/question path used to leave Yes).
+            // Never trust a prior Yes selection — clear and re-pick No options only.
+            try {
+            for (const field of fields || []) {
+                if (field.kind !== 'disability_status' && !/\bdisabilit/i.test(String(field.label || ''))) {
+                    continue;
+                }
+                const el = findElByField(field);
+                if (!el) continue;
+                const wantNo = 'No, I do not have a disability';
+                const got = readFieldCurrent(field, el);
+                const gotYes = /^yes\b/i.test(String(got || ''))
+                    || (/have a disability|have had one in the past/i.test(String(got || ''))
+                        && !/do not have|don'?t have|have not had|no disability/i.test(String(got || '')));
+                if (got && !gotYes && /no|do not have|don'?t have|prefer not/i.test(String(got))) {
+                    continue; // already a No / decline
+                }
+                openReactSelect(el, { clear: true });
+                await waitForSelectOptions({ timeoutMs: 1200, pollMs: 60, emptyBailMs: 200, anchorEl: el });
+                const pick = pickFromOpenOptions(wantNo, {
+                    aliases: [
+                        wantNo,
+                        "No, I don't have a disability, and have not had one in the past",
+                        'No',
+                        'I do not have a disability',
+                        'Prefer not to say',
+                        "I don't wish to answer"
+                    ],
+                    kind: 'disability_status',
+                    allowCatchAll: false,
+                    minScore: 50,
+                    anchorEl: el
+                });
+                if (!pick.ok) {
+                    await fillComboboxSimplify(el, wantNo, {
+                        kind: 'disability_status',
+                        aliases: [
+                            wantNo,
+                            "No, I don't have a disability, and have not had one in the past",
+                            'No',
+                            'I do not have a disability'
+                        ],
+                        maxAttempts: 4,
+                        minScore: 55
+                    });
+                } else {
+                    closeReactSelect(el);
+                }
+            }
+        } catch (disErr) {
+            console.warn('[fill] disability final pass', disErr?.message || disErr);
+        }
+
+        // Final pass: prior-employer / sponsorship hard-No selects (Greenhouse Yes/No).
+        try {
+            const findByLabelHint = (hint) => {
+                const needle = String(hint || '').toLowerCase().replace(/\*/g, '').replace(/\s+/g, ' ').trim();
+                if (!needle) return null;
+                const head = needle.slice(0, 48);
+                return [...document.querySelectorAll('input.select__input, [role="combobox"]')].find((el) => {
+                    if (isPhoneDialCountryControl(el)) return false;
+                    const lab = (
+                        document.querySelector(`label[for="${CSS.escape(el.id)}"]`)?.textContent
+                        || el.getAttribute('aria-label')
+                        || ''
+                    ).toLowerCase().replace(/\s+/g, ' ');
+                    return lab.includes(head.slice(0, 36)) || head.includes(lab.slice(0, 36));
+                }) || null;
+            };
+            for (const field of fields || []) {
+                const lab = String(field.label || '');
+                const hardNo = field.kind === 'previous_employer_no'
+                    || field.kind === 'requires_sponsorship'
+                    || field.kind === 'sanctioned_countries_no'
+                    || /\b(have you (ever )?worked|previously\s+worked|former\b.{0,48}\bemployee|require sponsorship|need sponsorship)\b/i.test(lab);
+                if (!hardNo) continue;
+                let el = findElByField(field) || findByLabelHint(lab);
+                if (!el) continue;
+                let got = readFieldCurrent(field, el);
+                if (got && /^no\b/i.test(String(got).trim())) continue;
+                const wantNo = 'No';
+                for (let attempt = 0; attempt < 3 && !/^no\b/i.test(String(got || '').trim()); attempt++) {
+                    openReactSelect(el, { clear: !!got });
+                    await delay(120);
+                    await waitForSelectOptions({ timeoutMs: 1400, pollMs: 60, emptyBailMs: 200, anchorEl: el });
+                    const pick = pickFromOpenOptions(wantNo, {
+                        aliases: ['No', 'No, I do not', 'Never', 'I do not require sponsorship'],
+                        kind: field.kind || 'previous_employer_no',
+                        allowCatchAll: false,
+                        minScore: 50,
+                        anchorEl: el
+                    });
+                    if (!pick.ok) {
+                        // Exact text click fallback for bipolar Yes/No menus.
+                        const exactNo = listOpenSelectOptions(el).find((n) =>
+                            /^(no|n)$/i.test(String(n.textContent || '').replace(/\s+/g, ' ').trim())
+                        );
+                        if (exactNo) clickSelectOptionNode(exactNo);
+                        else {
+                            await fillComboboxSimplify(el, wantNo, {
+                                kind: field.kind || 'previous_employer_no',
+                                aliases: ['No', 'No, I do not', 'Never'],
+                                maxAttempts: 2,
+                                minScore: 55
+                            });
+                        }
+                    } else {
+                        closeReactSelect(el);
+                    }
+                    await delay(200);
+                    el = findElByField(field) || findByLabelHint(lab) || el;
+                    got = readFieldCurrent(field, el);
+                }
+                if (got && /^no\b/i.test(String(got).trim())) {
+                    filled += 1;
+                    highlightFilledControl(el);
+                }
+            }
+        } catch (priorErr) {
+            console.warn('[fill] prior-employer final pass', priorErr?.message || priorErr);
+        }
+
+        await delay(80);
+
+        if (deferredPhone) {
+            // Already filled earlier (before select settle). Keep as safety net only.
         }
 
         dismissPhoneDialUi();
@@ -3632,6 +4324,9 @@
             missingRequired,
             incomplete: !requiredComplete
         };
+        } finally {
+            stopFillObserver();
+        }
     }
 
     /** Serialize React-Select fills — parallel timeouts race and leave Country/School empty. */
@@ -3688,12 +4383,11 @@
         // Always dismiss phone dial-code UI first — it steals Enter/ArrowDown on Greenhouse.
         dismissPhoneDialUi();
         try { cm()?.closeOtherComboboxMenus?.(el); } catch (_) { /* ignore */ }
-        
+
         const shell = el.closest('.select-shell, [class*="select-shell"]');
         const control = el.closest('.select__control, [class*="select__control"], [class*="Select-control"]')
             || shell
             || el.parentElement;
-        // Only clear when explicitly resetting a failed attempt — never wipe a completed value.
         if (clear) {
             try {
                 const clearBtn = control?.querySelector(
@@ -3702,34 +4396,52 @@
                 if (clearBtn) clearBtn.click();
             } catch (_) { /* ignore */ }
         }
+
+        const isOpen = () => el.getAttribute('aria-expanded') === 'true'
+            || !!control?.classList?.contains('select__control--menu-is-open')
+            || !!control?.className?.toString?.().includes('menu-is-open');
+
         try {
+            // Greenhouse remix often has .select__indicators without .select__dropdown-indicator.
             const indicator = control?.querySelector(
-                '.select__dropdown-indicator, [class*="dropdown-indicator"], [class*="DropdownIndicator"]'
+                '.select__dropdown-indicator, [class*="dropdown-indicator"], [class*="DropdownIndicator"], '
+                + '.select__indicators, [class*="select__indicators"]'
             );
             if (indicator) {
-                indicator.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-                indicator.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                indicator.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+                indicator.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                indicator.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                 indicator.click();
             }
-            if (control) {
-                control.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-                control.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+            if (!isOpen() && control) {
+                // Proven open path on job-boards.greenhouse.io (remix react-select).
+                control.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+                control.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+                control.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
                 control.click();
             }
-            if (shell && shell !== control) {
-                shell.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-                shell.click();
+            // Do NOT click shell / input after control opens — second click toggles the menu shut.
+            try { el.focus({ preventScroll: true }); } catch (_) {
+                try { el.focus(); } catch (__) { /* ignore */ }
             }
-            // Undo any leftover inline display:none on this field's menu.
+            if (!isOpen()) {
+                el.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40,
+                    bubbles: true, cancelable: true
+                }));
+            }
+            if (!isOpen()) {
+                el.dispatchEvent(new KeyboardEvent('keydown', {
+                    key: 'ArrowDown', code: 'ArrowDown', keyCode: 40, which: 40,
+                    altKey: true, bubbles: true, cancelable: true
+                }));
+            }
             try {
                 const fieldRoot = el.closest('.field, .form-field, .select-shell, [class*="question"]') || el.parentElement;
                 fieldRoot?.querySelectorAll?.('.select__menu, [class*="select__menu"]').forEach((m) => {
                     if (m.style?.display === 'none') m.style.display = '';
                 });
             } catch (_) { /* ignore */ }
-            el.focus();
-            el.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-            el.click();
         } catch (_) { /* ignore */ }
     }
 
@@ -3751,9 +4463,86 @@
     function listOpenSelectOptions(anchorEl = null) {
         const helper = cm();
         if (helper?.listScopedSelectOptions) {
-            return helper.listScopedSelectOptions(anchorEl);
+            const scoped = helper.listScopedSelectOptions(anchorEl);
+            if (Array.isArray(scoped) && scoped.length) {
+                const cleaned = scoped.filter((n) => !isPhoneDialOptionNode(n));
+                if (cleaned.length) return cleaned;
+            }
         }
-        return [];
+        // Prefer the open menu owned by this control (Greenhouse portals to body).
+        const owned = listOwnedSelectMenuOptions(anchorEl);
+        if (owned.length) return owned;
+
+        // DOM fallback — never return phone dial-code rows for non-dial fields.
+        const all = [...document.querySelectorAll(
+            '.select__menu [role="option"], .select__menu .select__option, '
+            + '[class*="select__menu"] [role="option"], [class*="select__menu"] [class*="option"], '
+            + '[id*="react-select"][id*="-option-"], [role="listbox"] [role="option"]'
+        )].filter((n) => {
+            if (isPhoneDialOptionNode(n)) return false;
+            try {
+                if (n.getClientRects?.().length === 0 && n.offsetParent === null) return false;
+            } catch (_) { /* keep */ }
+            const t = String(n.textContent || '').replace(/\s+/g, ' ').trim();
+            return t && !/^select(\.\.\.|…)?$/i.test(t);
+        });
+        return all;
+    }
+
+    function isPhoneDialOptionNode(n) {
+        if (!n) return false;
+        if (n.closest?.('.iti, .phone-input, .phone-input__country, .iti__country-list, .iti__dropdown-content')) {
+            return true;
+        }
+        const t = String(n.textContent || '').replace(/\s+/g, ' ').trim();
+        // "Afghanistan+93" / "United States+1" dial rows
+        if (/\+\d{1,4}$/.test(t.replace(/\s+/g, ''))) return true;
+        if (/\+\d{1,4}/.test(t) && /(afghanistan|albania|algeria|united states|canada)\b/i.test(t)) return true;
+        return false;
+    }
+
+    function listOwnedSelectMenuOptions(anchorEl) {
+        if (!anchorEl) return [];
+        const shell = anchorEl.closest(
+            '.select-shell, .select__container, .select, [class*="select-shell"], '
+            + '.phone-input__country, [class*="Select"]'
+        ) || anchorEl.parentElement;
+        const menus = [];
+        if (shell) {
+            shell.querySelectorAll('.select__menu, [class*="select__menu"], [role="listbox"]').forEach((m) => menus.push(m));
+        }
+        // react-select portal: menu id tied to input id prefix
+        const id = String(anchorEl.id || '');
+        const prefix = id.replace(/-input$/, '').replace(/input$/, '');
+        if (prefix) {
+            document.querySelectorAll(
+                `#${CSS.escape(prefix)}-listbox, [id^="${CSS.escape(prefix)}"][id*="listbox"], `
+                + `[id^="${CSS.escape(prefix)}"][class*="menu"]`
+            ).forEach((m) => menus.push(m));
+        }
+        // Live open menus that are not phone dial — pick the one whose options look like
+        // the field kind (state abbrevs, Yes/No, etc.) when only one non-dial menu is open.
+        const openMenus = [...document.querySelectorAll(
+            '.select__menu, [class*="select__menu"]:not([class*="iti"]), [role="listbox"]'
+        )].filter((m) => {
+            if (m.closest?.('.iti, .phone-input, .phone-input__country')) return false;
+            try { return m.getClientRects?.().length > 0; } catch (_) { return true; }
+        });
+        for (const m of openMenus) {
+            if (!menus.includes(m)) menus.push(m);
+        }
+
+        const opts = [];
+        for (const menu of menus) {
+            if (menu.closest?.('.iti, .phone-input, .phone-input__country')) continue;
+            menu.querySelectorAll('[role="option"], .select__option, [class*="option"]').forEach((n) => {
+                if (isPhoneDialOptionNode(n)) return;
+                const t = String(n.textContent || '').replace(/\s+/g, ' ').trim();
+                if (t && !/^select(\.\.\.|…)?$/i.test(t)) opts.push(n);
+            });
+        }
+        // Deduplicate by node
+        return [...new Set(opts)];
     }
 
     /** True while typeahead / async select is still fetching options. */
@@ -3862,8 +4651,52 @@
     }
 
     function isUsStateOptionText(text) {
+        const s = String(text || '').trim();
+        if (/^[A-Z]{2}$/i.test(s) && US_STATE_ABBR_TO_NAME[s.toLowerCase()]) return true;
         return /^(alabama|alaska|arizona|arkansas|california|colorado|connecticut|delaware|florida|georgia|hawaii|idaho|illinois|indiana|iowa|kansas|kentucky|louisiana|maine|maryland|massachusetts|michigan|minnesota|mississippi|missouri|montana|nebraska|nevada|new hampshire|new jersey|new mexico|new york|north carolina|north dakota|ohio|oklahoma|oregon|pennsylvania|rhode island|south carolina|south dakota|tennessee|texas|utah|vermont|virginia|washington|west virginia|wisconsin|wyoming|district of columbia|washington,? d\.?c\.?)$/i
-            .test(String(text || '').trim());
+            .test(s);
+    }
+
+    const US_STATE_ABBR_TO_NAME = {
+        al: 'Alabama', ak: 'Alaska', az: 'Arizona', ar: 'Arkansas', ca: 'California',
+        co: 'Colorado', ct: 'Connecticut', de: 'Delaware', fl: 'Florida', ga: 'Georgia',
+        hi: 'Hawaii', id: 'Idaho', il: 'Illinois', in: 'Indiana', ia: 'Iowa',
+        ks: 'Kansas', ky: 'Kentucky', la: 'Louisiana', me: 'Maine', md: 'Maryland',
+        ma: 'Massachusetts', mi: 'Michigan', mn: 'Minnesota', ms: 'Mississippi',
+        mo: 'Missouri', mt: 'Montana', ne: 'Nebraska', nv: 'Nevada', nh: 'New Hampshire',
+        nj: 'New Jersey', nm: 'New Mexico', ny: 'New York', nc: 'North Carolina',
+        nd: 'North Dakota', oh: 'Ohio', ok: 'Oklahoma', or: 'Oregon', pa: 'Pennsylvania',
+        ri: 'Rhode Island', sc: 'South Carolina', sd: 'South Dakota', tn: 'Tennessee',
+        tx: 'Texas', ut: 'Utah', vt: 'Vermont', va: 'Virginia', wa: 'Washington',
+        wv: 'West Virginia', wi: 'Wisconsin', wy: 'Wyoming', dc: 'District of Columbia'
+    };
+
+    /** Greenhouse State menus are often CA/NY — prefer abbrev; keep full name as alias. */
+    function statePrimaryFillValue(raw) {
+        const st = String(raw || '').trim();
+        if (!st) return '';
+        if (/^[A-Z]{2}$/i.test(st) && US_STATE_ABBR_TO_NAME[st.toLowerCase()]) {
+            return st.toUpperCase();
+        }
+        const entry = Object.entries(US_STATE_ABBR_TO_NAME)
+            .find(([, name]) => name.toLowerCase() === st.toLowerCase());
+        if (entry) return entry[0].toUpperCase();
+        return st;
+    }
+
+    function stateFillAliases(raw) {
+        const primary = statePrimaryFillValue(raw) || String(raw || '').trim();
+        const list = [primary];
+        if (/^[A-Z]{2}$/i.test(primary)) {
+            const full = US_STATE_ABBR_TO_NAME[primary.toLowerCase()];
+            if (full) list.push(full);
+        } else {
+            const abbr = statePrimaryFillValue(primary);
+            if (abbr && abbr !== primary) list.unshift(abbr);
+            const full = US_STATE_ABBR_TO_NAME[String(abbr || '').toLowerCase()];
+            if (full) list.push(full);
+        }
+        return [...new Set(list.filter(Boolean))];
     }
 
     function scoreOptionText(text, aliasList, kind = '') {
@@ -3871,6 +4704,77 @@
         if (!t) return -1;
         if (isCatchAllOptionText(t)) return -1; // never treat catch-all as a "match"
         if (kind === 'city' && /\b(mexico|méxico|queretaro|querétaro)\b/.test(t)) return -1;
+
+        // Primary polarity wins — never let a Yes alias beat a wanted No (hispanic/disability).
+        const primaryWant = String(aliasList[0] || '').trim();
+        const wantNegPrimary = /^(no|n)\b/i.test(primaryWant)
+            || /do not have a disability|don'?t have a disability|have not had|not a protected veteran/i.test(primaryWant);
+        const wantAffPrimary = /^(yes|y)\b/i.test(primaryWant)
+            || /^(i\s+)?(agree|acknowledge|consent)\b/i.test(primaryWant);
+        if (wantNegPrimary && /^yes\b/i.test(t) && !/\bno\b/i.test(t)) return -1;
+        if (wantAffPrimary && /^no\b/i.test(t) && !/\byes\b/i.test(t)) return -1;
+
+        // Absolute disability polarity — before any fuzzy / substring scoring.
+        if (kind === 'disability_status' || /disabilit/.test(aliasList.join(' ').toLowerCase())) {
+            const wantJoined = aliasList.join(' ').toLowerCase();
+            const wantNo = /^no\b/.test(wantJoined)
+                || /do not have a disability|don'?t have a disability|have not had|no disability|not disabled/.test(wantJoined);
+            const optYes = /^yes\b/.test(t)
+                || (/have a disability|have had one in the past/.test(t)
+                    && !/do not have|don'?t have|have not had|no disability/.test(t));
+            const optNo = /^no\b/.test(t)
+                || /do not have a disability|don'?t have a disability|have not had one|no disability|not disabled/.test(t);
+            if (wantNo && optYes && !optNo) return -1;
+            if (wantNo && optNo) return 100;
+        }
+
+        // Hispanic/Latino Yes/No — profile default No; never fuzzy-pick Yes.
+        if (kind === 'hispanic_latino') {
+            if (/^no\b/i.test(t)) return 100;
+            if (/^yes\b/i.test(t)) return -1;
+            if (/prefer not|decline|do not wish/i.test(t)) return 80;
+        }
+
+        // State: California ↔ CA (Greenhouse mailing State is often 2-letter codes).
+        if (kind === 'state') {
+            let bestState = -1;
+            for (const a of aliasList) {
+                const al = String(a || '').toLowerCase().trim();
+                if (!al) continue;
+                if (t === al) bestState = Math.max(bestState, 100);
+                if (/^[a-z]{2}$/.test(al) && t === al) bestState = Math.max(bestState, 100);
+                const fullFromAbbr = US_STATE_ABBR_TO_NAME[al];
+                if (fullFromAbbr && t === fullFromAbbr.toLowerCase()) bestState = Math.max(bestState, 100);
+                const abbrFromFull = Object.entries(US_STATE_ABBR_TO_NAME)
+                    .find(([, name]) => name.toLowerCase() === al)?.[0];
+                if (abbrFromFull && t === abbrFromFull) bestState = Math.max(bestState, 100);
+            }
+            if (bestState >= 0) return bestState;
+        }
+
+        // Math captcha: "2" ↔ "X = 2"
+        if (kind === 'math_captcha') {
+            const nums = aliasList.map((a) => {
+                const m = String(a).match(/(\d+)/);
+                return m ? m[1] : '';
+            }).filter(Boolean);
+            const tNum = (t.match(/(\d+)/) || [])[1];
+            if (tNum && nums.includes(tNum)) return 100;
+            if (/^x\s*=\s*\d+$/i.test(t) && nums.some((n) => t.endsWith(n))) return 100;
+        }
+
+        // Years: exact digit "5" beats "10+" when wanting 5.
+        if (kind === 'years_of_experience') {
+            const wantN = parseInt(String(aliasList[0] || '').replace(/[^\d]/g, ''), 10);
+            const tN = /^(\d+)\+?$/.test(t) ? parseInt(t, 10) : NaN;
+            if (Number.isFinite(wantN) && Number.isFinite(tN)) {
+                if (t === String(wantN)) return 100;
+                if (wantN >= 10 && /^10\+/.test(t)) return 100;
+                if (tN === wantN) return 100;
+                // Penalize far buckets (5 vs 10+)
+                if (Math.abs(tN - wantN) >= 4) return -1;
+            }
+        }
 
         // Negation-aware gate for Yes/No / consent menus (Simplify / JobWizard pattern).
         const helper = cm();
@@ -3886,8 +4790,13 @@
         // Reside/city: never score a US-state-only option against a city name
         // (avoids picking "California" when the list is CA/FL/…/"Somewhere else").
         if (kind === 'city') {
-            const cityOnly = String(aliasList[0] || '').split(',')[0].trim();
+            const cityOnly = String(aliasList[0] || '').split(',')[0].trim().toLowerCase();
             if (cityOnly && !isUsStateOptionText(cityOnly) && isUsStateOptionText(t)) {
+                return -1;
+            }
+            // Multi-word cities (San Francisco): reject San Antonio / New Haven / etc.
+            const parts = cityOnly.split(/\s+/).filter(Boolean);
+            if (parts.length >= 2 && t && !parts.every((p) => t.includes(p))) {
                 return -1;
             }
         }
@@ -3902,8 +4811,12 @@
             if (t === al) best = Math.max(best, 100);
             else if (t.startsWith(al + ' ') || t.startsWith(al + '+') || t.startsWith(al + ',') || t.startsWith(al + '(')) {
                 best = Math.max(best, 92);
-            } else if (al.length >= 3 && t.includes(al)) best = Math.max(best, 70);
+            }             else if (al.length >= 3 && t.includes(al)) best = Math.max(best, 70);
             else if (al.length >= 4 && al.includes(t) && t.length >= 4) best = Math.max(best, 65);
+            // Never let "california".includes("al") style matches through for short tokens.
+            if (kind === 'state' && t.length <= 2 && al.length > 2 && al !== t) {
+                /* keep prior best only from exact state block */
+            }
         }
         // Degree menus often say "Bachelor's Degree" while profile has "Bachelor of Science".
         if (kind === 'degree') {
@@ -4125,8 +5038,14 @@
 
             await delay(perCharMs);
 
-            // After a few chars, wait for loading to finish before early-picking.
-            if (pickWhileTyping && built.trim().length >= 3 && (i === full.length - 1 || i % 2 === 1)) {
+            // City typeahead: never early-pick mid-string (San→San Antonio). Only consider on last char.
+            const minTyped = kind === 'city' ? full.split(',')[0].trim().length : 3;
+            const atEnd = i === full.length - 1;
+            if (
+                pickWhileTyping
+                && built.trim().length >= minTyped
+                && (kind === 'city' ? atEnd : (atEnd || i % 2 === 1))
+            ) {
                 if (selectMenuIsLoading()) {
                     await waitForSelectOptions({ timeoutMs: 2500, pollMs: 150 });
                 }
@@ -4134,7 +5053,7 @@
                     aliases: [built, ...aliases],
                     kind,
                     allowCatchAll: false,
-                    minScore,
+                    minScore: kind === 'city' ? Math.max(minScore, 90) : minScore,
                     anchorEl: el
                 });
                 if (hit.ok) return { ok: true, typed: built, early: true };
@@ -4232,11 +5151,35 @@
             return false;
         }
 
-        // 4) Choose it
-        const idx = allOpts.indexOf(match);
-        if (idx >= 0) el.selectedIndex = idx;
-        el.value = match.value;
-        try { match.selected = true; } catch (_) { /* ignore */ }
+        // 4) Choose it — React-safe HTMLSelectElement prototype setter
+        if (pageFillReady()) {
+            try {
+                window.__lumiPageFill.setSelectValue(el, match.value || match.text || want);
+            } catch (_) { /* fall through */ }
+        } else {
+            const desc = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value');
+            try {
+                const tracker = el._valueTracker;
+                if (tracker && typeof tracker.setValue === 'function') {
+                    tracker.setValue(String(match.value) === '' ? ' ' : '');
+                }
+            } catch (_) { /* ignore */ }
+            if (match.value !== '' && desc?.set) {
+                desc.set.call(el, match.value);
+            } else {
+                const idx = allOpts.indexOf(match);
+                if (idx >= 0) el.selectedIndex = idx;
+            }
+            try {
+                const key = Object.keys(el).find((k) => k.startsWith('__reactProps$'));
+                if (key) {
+                    const props = el[key];
+                    if (typeof props?.onChange === 'function') {
+                        props.onChange({ target: el, currentTarget: el, type: 'change' });
+                    }
+                }
+            } catch (_) { /* ignore */ }
+        }
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
         try {
@@ -4348,6 +5291,29 @@
 
     function matchReactOption(flat, wantRaw, aliases = [], kind = '') {
         const aliasList = [wantRaw, ...aliases].map((a) => String(a || '').toLowerCase().trim()).filter(Boolean);
+        // State: only exact CA ↔ California — never weak substring (that picked AL).
+        if (kind === 'state') {
+            for (const opt of flat) {
+                const label = String(opt?.label ?? opt?.name ?? opt?.value ?? '').trim();
+                if (!label || isCatchAllOptionText(label)) continue;
+                if (scoreOptionText(label, [wantRaw, ...aliases], 'state') >= 100) return opt;
+            }
+            return null;
+        }
+        // Hispanic / disability / hard-No: never return a Yes option when wanting No.
+        if (kind === 'hispanic_latino' || kind === 'disability_status'
+            || kind === 'previous_employer_no' || kind === 'requires_sponsorship') {
+            const wantNo = /^(no|n)\b/i.test(String(wantRaw || ''))
+                || /do not have a disability/i.test(String(wantRaw || ''));
+            for (const opt of flat) {
+                const label = String(opt?.label ?? opt?.name ?? opt?.value ?? '').trim();
+                if (!label) continue;
+                const s = scoreOptionText(label, [wantRaw, ...aliases], kind);
+                if (wantNo && /^yes\b/i.test(label) && !/\bno\b/i.test(label)) continue;
+                if (s >= 90) return opt;
+            }
+            return null;
+        }
         const scoreOne = (opt) => {
             const label = String(opt?.label ?? opt?.name ?? opt?.value ?? '').trim();
             if (!label || isCatchAllOptionText(label)) return -1;
@@ -4482,9 +5448,11 @@
         const helper = cm();
         // Static choice menus (not city/school typeahead): open → read → click.
         // Typing a preferred phrase that is not in the list leaves "No options" garbage.
+        // State is STATIC — Greenhouse mailing State is AL/AK/CA…; never type "California".
         const typeaheadKind = kind === 'discipline' || kind === 'school' || kind === 'city'
-            || kind === 'country' || kind === 'state' || kind === 'degree';
+            || kind === 'country' || kind === 'degree';
         const staticChoiceKind = !typeaheadKind
+            || kind === 'state'
             || kind === 'high_school_performance'
             || kind === 'yesno'
             || kind === 'data_protection'
@@ -4499,10 +5467,13 @@
             || kind === 'disability_status'
             || kind === 'over_18'
             || kind === 'willing_to_relocate'
+            || kind === 'background_check_yes'
             || kind === 'gender'
             || kind === 'race_ethnicity'
             || kind === 'veteran_status'
-            || kind === 'hispanic_latino';
+            || kind === 'hispanic_latino'
+            || kind === 'math_captcha'
+            || kind === 'data_protection';
 
         const clearTypedFilter = () => {
             try {
@@ -4541,11 +5512,30 @@
         const verified = () => {
             const got = readDisplayed();
             if (!got) return false;
+            // Hard polarity: never treat Yes as success when we want No (and vice versa).
+            if (kind === 'hispanic_latino' || kind === 'disability_status'
+                || kind === 'previous_employer_no' || kind === 'requires_sponsorship'
+                || kind === 'sanctioned_countries_no') {
+                const wantNo = /^(no|n)\b/i.test(wantRaw)
+                    || /do not have a disability|don'?t have|not a protected veteran/i.test(wantRaw);
+                if (wantNo && /^yes\b/i.test(got) && !/\bno\b/i.test(got)) return false;
+            }
+            if (kind === 'state') {
+                if (stateFillAliases(wantRaw).some((a) => valuesRoughlyMatch(a, got, 'state'))) return true;
+            }
             if (valuesRoughlyMatch(wantRaw, got)) return true;
-            if (helper && helper.scoreChoice(wantRaw, got, '') >= 70) return true;
+            if (helper && helper.scoreChoice(wantRaw, got, '') >= 70) {
+                // scoreChoice must not flip Yes/No
+                if (/^(no|n)\b/i.test(wantRaw) && /^yes\b/i.test(got)) return false;
+                if (/^(yes|y)\b/i.test(wantRaw) && /^no\b/i.test(got)) return false;
+                return true;
+            }
             for (const a of aliasList) {
-                if (valuesRoughlyMatch(a, got)) return true;
-                if (helper && helper.scoreChoice(a, got, '') >= 70) return true;
+                if (valuesRoughlyMatch(a, got, kind)) return true;
+                if (helper && helper.scoreChoice(a, got, '') >= 70) {
+                    if (/^(no|n)\b/i.test(wantRaw) && /^yes\b/i.test(got)) continue;
+                    return true;
+                }
             }
             if (kind === 'discipline') {
                 const w = wantRaw.toLowerCase();
@@ -4662,11 +5652,6 @@
                     aliases: aliasList, kind, allowCatchAll: false, minScore, anchorEl: el
                 });
                 if (quick.ok) {
-                    try {
-                        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-                        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
-                        el.blur();
-                    } catch (_) { /* ignore */ }
                     if (await waitUntil(verified, { timeoutMs: 700, pollMs: 30 })) return true;
                 }
             } else if (listOpenSelectOptions(el).length) {
@@ -4674,6 +5659,28 @@
                     aliases: aliasList, kind, allowCatchAll: false, minScore, anchorEl: el
                 });
                 if (quick.ok && await waitUntil(verified, { timeoutMs: 500, pollMs: 30 })) return true;
+            }
+
+            // State abbrev menus (CA/NY/…): type the 2-letter code to filter, then click the row.
+            // Never ArrowDown/Enter on the first item (that left AL when we wanted CA).
+            if (kind === 'state' && /^[A-Z]{2}$/i.test(wantRaw) && !verified()) {
+                clearTypedFilter();
+                openReactSelect(el, { clear: false });
+                await delay(100);
+                try { el.focus(); } catch (_) { /* ignore */ }
+                const typed = await typeComboboxSlowly(el, wantRaw.toUpperCase(), {
+                    perCharMs: 40,
+                    aliases: aliasList,
+                    kind: 'state',
+                    pickWhileTyping: true,
+                    minScore: 95
+                });
+                if (typed.ok && await waitUntil(verified, { timeoutMs: 800, pollMs: 40 })) return true;
+                await waitForSelectOptions({ timeoutMs: 900, pollMs: 50, emptyBailMs: 150, anchorEl: el });
+                const stateHit = pickFromOpenOptions(wantRaw, {
+                    aliases: aliasList, kind: 'state', allowCatchAll: false, minScore: 90, anchorEl: el
+                });
+                if (stateHit.ok && await waitUntil(verified, { timeoutMs: 800, pollMs: 40 })) return true;
             }
 
             // INPUT FIRST — typeahead menus need keystrokes before options exist.
@@ -4696,7 +5703,7 @@
                 if (typed.ok) {
                     if (await waitUntil(verified, { timeoutMs: 600, pollMs: 30 })) return true;
                 }
-            } else {
+            } else if (kind !== 'state') {
                 // Re-open and re-read full list (no filter).
                 clearTypedFilter();
                 openReactSelect(el, { clear: false });
@@ -4732,17 +5739,8 @@
                 anchorEl: el
             });
             if (hit.ok) {
-                try {
-                    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
-                    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Tab', bubbles: true }));
-                    el.blur();
-                } catch (_) { /* ignore */ }
                 if (await waitUntil(verified, { timeoutMs: 700, pollMs: 30 })) return true;
-                // Clicked a real menu row — accept displayed value for static choice menus.
-                if (staticChoiceKind && readDisplayed()) {
-                    closeReactSelect(el);
-                    return true;
-                }
+                // Never accept a wrong first-item selection (AL / Yes) just because something displayed.
             }
 
             if (!verified() && !staticChoiceKind) {
@@ -4765,13 +5763,26 @@
 
             // Never clear a displayed value that already looks correct — that caused
             // "I chose it / system chooses again" infinite loops on Disability Status.
-            const shown = readDisplayed();
-            if (shown && helper && helper.scoreChoice(wantRaw, shown, '') >= 55) {
+            // Must use verified() — helper.scoreChoice alone can accept Yes when we want No.
+            if (verified()) {
                 closeReactSelect(el);
                 return true;
             }
             // Wipe leftover filter text like "Above average" / "Yes" with "No options".
-            if (!shown) clearTypedFilter();
+            if (!readDisplayed()) clearTypedFilter();
+            // Wrong polarity stuck (Hispanic Yes / Disability Yes): clear before retry.
+            const stuck = readDisplayed();
+            if (stuck && (
+                kind === 'hispanic_latino'
+                || kind === 'disability_status'
+                || kind === 'previous_employer_no'
+                || kind === 'requires_sponsorship'
+                || kind === 'state'
+            )) {
+                openReactSelect(el, { clear: true });
+                await delay(80);
+                clearTypedFilter();
+            }
             closeReactSelect(el);
             await delay(80);
         }
@@ -4830,7 +5841,7 @@
                 list.push('United States', 'United States of America', 'USA', 'US', 'U.S.', 'U.S.A.');
             }
             if (kind === 'state') {
-                if (stateFull) list.push(stateFull, profileState);
+                list.push(...stateFillAliases(wantRaw || profileState));
             }
             if (kind === 'city') {
                 // "Where are you located?" often is a US-state select, not a city typeahead.
@@ -4873,8 +5884,22 @@
                 const head = wantRaw.split(/[\s,/&-]+/).filter((w) => w.length > 2)[0];
                 if (head) list.push(head);
             }
-            if (kind === 'skill_experience' || kind === 'years_of_experience') {
+            if (kind === 'skill_experience') {
                 list.push(...skillExperienceFillAliases(profile, wantRaw));
+            }
+            if (kind === 'years_of_experience') {
+                const n = parseInt(String(profile?.years_of_experience || wantRaw).replace(/\D/g, ''), 10) || 5;
+                // Exact digit first — Resonate uses 1..9,10+ not "5-6 years".
+                list.unshift(String(Math.min(n, 9)), String(n), n >= 10 ? '10+' : String(n));
+                if (n >= 10) list.unshift('10+');
+                list.push(
+                    `${n}+`,
+                    `${n} years`,
+                    `${n}+ years`,
+                    '5+', '5-10', '3-5', '1-3', '10+', '4-6', '5-7', '6+',
+                    '5-6 years', '5+ years', '3-5 years', '4-6 years', '5-7 years',
+                    '7-10 years', '10+ years', 'More than 5 years', '5 or more'
+                );
             }
             if (/^education_(start|end)_month$/.test(kind)) {
                 list.push(
@@ -5835,6 +6860,10 @@
     }
 
     function updateAutofillPanel( partial = {}) {
+        // Remove stray duplicate light panel if an old inject left it
+        try {
+            document.getElementById('lumi-autofill-panel-root')?.remove();
+        } catch (_) { /* ignore */ }
         const root = document.getElementById('__lumi_autofill_panel');
         if (!root || !root.__lumiApi) return;
         root.__lumiApi.update(partial);
@@ -5855,6 +6884,10 @@
      * Detect form → one-click Autofill this page → live progress → review (no forced submit).
      */
     function ensureActionBarInner() {
+        // Remove duplicate light panel from older autofillPanel.js injects
+        try {
+            document.getElementById('lumi-autofill-panel-root')?.remove();
+        } catch (_) { /* ignore */ }
         // Remove legacy bottom bar if present
         try {
             document.getElementById('__job_apply_bidder_bar')?.remove();
@@ -5952,7 +6985,7 @@
 
         const status = document.createElement('div');
         Object.assign(status.style, { fontSize: '12px', color: '#94a3b8', lineHeight: '1.4', minHeight: '32px' });
-        status.textContent = 'Click “Autofill this page” to start — waiting here does nothing until you click (or Auto Bid fills for you).';
+        status.textContent = 'Ready — Autofill = profile + AI answers API for remaining questions.';
 
         const stats = document.createElement('div');
         Object.assign(stats.style, {
@@ -6000,8 +7033,8 @@
         };
 
         const btnAutofill = mkBtn('Autofill this page', true, () => {
-            api.setBusy(true, 'Autofilling profile…', 8);
-            showToast('Lumi Autofill — filling from your profile…', 'info');
+            api.setBusy(true, 'Autofill — profile, then AI answers…', 8);
+            showToast('Lumi Autofill — profile first, then answers API…', 'info');
             safeRuntimeSend({ type: 'RUN_PROFILE_AUTOFILL' }, (res) => {
                 if (!res?.ok) {
                     api.setBusy(false, res?.error || 'Autofill failed', 0);
@@ -6011,19 +7044,43 @@
                 const f = res.result || {};
                 const filled = Number(f.filled || 0);
                 const uploaded = Number(f.uploaded || 0);
+                const answers = Number(f.answers || 0);
                 const left = Math.max(
                     Number(f.missingRequired?.length || 0),
                     Number(f.requiredTotal || 0) - Number(f.requiredOk || 0),
-                    Number(f.questions || 0)
+                    Number(f.questions || 0) - answers
                 );
-                api.setBusy(false, filled || uploaded
-                    ? `Filled ${filled} · uploaded ${uploaded}. Review, then Answer questions if needed.`
-                    : 'No fields filled — check profile / login', filled || uploaded ? 100 : 0);
-                api.setStats({ filled, files: uploaded, left });
+                api.setBusy(false, filled || uploaded || answers
+                    ? `Filled ${filled}`
+                        + (answers ? ` · AI ${answers}` : '')
+                        + (uploaded ? ` · files ${uploaded}` : '')
+                        + (left > 0 ? ` · ${left} left` : '')
+                    : 'No fields filled — check profile / login', filled || uploaded || answers ? 100 : 0);
+                api.setStats({ filled, files: uploaded, left: Math.max(0, left) });
                 showToast(
-                    `Autofilled ${filled}` + (left ? ` · ${left} required left` : ''),
-                    (filled + uploaded) > 0 ? 'ok' : 'error'
+                    `Autofilled ${filled}`
+                        + (answers ? ` · ${answers} AI answers` : '')
+                        + (left > 0 ? ` · ${left} left` : ''),
+                    (filled + uploaded + answers) > 0 ? 'ok' : 'error'
                 );
+            });
+        });
+
+        const btnContinue = mkBtn('Continue fill', false, () => {
+            api.setBusy(true, 'Continuing fill (new questions)…', 12);
+            showToast('Continue fill — catching new / empty fields…', 'info');
+            safeRuntimeSend({ type: 'RUN_CONTINUE_FILL' }, (res) => {
+                if (!res?.ok) {
+                    api.setBusy(false, res?.error || 'Continue failed', 0);
+                    showToast(res?.error || 'Continue failed', 'error');
+                    return;
+                }
+                const f = res.result || {};
+                const filled = Number(f.filled || f.answers || 0);
+                api.setBusy(false, filled
+                    ? `Continued — filled ${filled}. Review before submit.`
+                    : 'No new fields filled', filled ? 100 : 0);
+                api.setStats({ filled, files: Number(f.uploaded || 0), left: 0 });
             });
         });
 
@@ -6051,12 +7108,13 @@
 
         const hint = document.createElement('div');
         Object.assign(hint.style, { fontSize: '10px', color: '#64748b', lineHeight: '1.35' });
-        hint.textContent = 'You stay in control — Lumi fills; you submit. Like Simplify / JobWizard.';
+        hint.textContent = 'You stay in control — Lumi fills; you submit. One panel only.';
 
         body.appendChild(progressWrap);
         body.appendChild(status);
         body.appendChild(stats);
         body.appendChild(btnAutofill);
+        body.appendChild(btnContinue);
         body.appendChild(btnAnswers);
         body.appendChild(hint);
 
@@ -6074,10 +7132,11 @@
 
         const api = {
             setBusy(busy, text, pct) {
-                btnAutofill.disabled = !!busy;
-                btnAnswers.disabled = !!busy;
-                btnAutofill.style.opacity = busy ? '0.65' : '1';
-                btnAnswers.style.opacity = busy ? '0.65' : '1';
+                [btnAutofill, btnContinue, btnAnswers].forEach((btn) => {
+                    if (!btn) return;
+                    btn.disabled = !!busy;
+                    btn.style.opacity = busy ? '0.65' : '1';
+                });
                 if (text) status.textContent = text;
                 if (pct != null) progressBar.style.width = `${Math.max(0, Math.min(100, pct))}%`;
                 progressBar.style.background = busy ? '#3b82f6' : (pct >= 100 ? '#22c55e' : '#3b82f6');
@@ -6165,11 +7224,11 @@
     try {
         if (extensionContextValid()) {
             if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', () => setTimeout(ensureActionBar, 1200));
+                document.addEventListener('DOMContentLoaded', () => setTimeout(ensureActionBar, 250));
             } else {
-                setTimeout(ensureActionBar, 1200);
+                setTimeout(ensureActionBar, 250);
             }
-            setTimeout(ensureActionBar, 3500);
+            setTimeout(ensureActionBar, 1000);
         }
     } catch (_) { /* ignore */ }
 
@@ -6253,6 +7312,20 @@
     } catch (_) { /* ignore */ }
 
     function onFillRuntimeMessage(msg, sendResponse) {
+        // all_frames scripts: recaptcha/iframes must not steal sendResponse from the apply form.
+        const formMsg = msg?.type === 'COLLECT_FORM'
+            || msg?.type === 'FILL_FORM'
+            || msg?.type === 'DETECT_APPLY_FORM'
+            || msg?.type === 'DETECT_JOB_CLOSED'
+            || msg?.type === 'CLICK_SUBMIT'
+            || msg?.type === 'UPDATE_AUTOFILL_PANEL';
+        if (formMsg) {
+            try {
+                if (window !== window.top) return false;
+            } catch (_) {
+                return false;
+            }
+        }
         if (msg?.type === 'SHOW_TOAST') {
             showToast(msg.text || '', msg.kind || 'info');
             sendResponse({ ok: true });
@@ -6323,8 +7396,33 @@
         if (msg?.type === 'FILL_FORM') {
             (async () => {
                 try {
-                    const form = collectForm();
-                    const fieldCount = (form.fields?.length || 0) + (form.fileInputs?.length || 0);
+                    let form = collectForm();
+                    let fieldCount = (form.fields?.length || 0) + (form.fileInputs?.length || 0);
+                    // React/SPA may still be mounting — poll until a usable form exists.
+                    // Profile fills need more than name+email (otherwise we leave phone/city empty).
+                    const profilePass = !!(msg.payload?.profileOnly || msg.payload?.profileGapFill);
+                    const minReady = profilePass ? 6 : 2;
+                    if (fieldCount < minReady && !msg.payload?.uploadOnly) {
+                        const deadline = Date.now() + (profilePass ? 7000 : 4500);
+                        let lastCount = fieldCount;
+                        let stable = 0;
+                        while (Date.now() < deadline) {
+                            await new Promise((r) => setTimeout(r, 150));
+                            form = collectForm();
+                            fieldCount = (form.fields?.length || 0) + (form.fileInputs?.length || 0);
+                            if (fieldCount >= minReady) {
+                                if (fieldCount === lastCount) stable += 1;
+                                else {
+                                    lastCount = fieldCount;
+                                    stable = 1;
+                                }
+                                if (stable >= 2) break;
+                            } else {
+                                lastCount = fieldCount;
+                                stable = 0;
+                            }
+                        }
+                    }
                     const closed = fieldCount >= 2 ? { closed: false } : detectJobClosedPage();
                     if (closed?.closed) {
                         showToast('This job is no longer open', 'error');
@@ -6383,30 +7481,66 @@
                         );
                         if (!fields.length) fields = form.fields;
                     }
-                    // Upload resume/cover letter FIRST — some ATS reset fields after file upload.
-                    showToast('Uploading files…', 'info');
-                    updateAutofillPanel({ status: 'Uploading CV…', progress: 8 });
-                    const uploadStats = await uploadApplicationFiles(msg.payload || {});
-                    const resumeGate = await ensureResumeReadyBeforeSubmit(
-                        form,
-                        msg.payload || {},
-                        {
-                            ...uploadStats,
-                            expectedResumeName: msg.payload?.resume?.filename
-                                || msg.payload?.filename
-                                || msg.payload?.expectedResumeName
-                                || ''
-                        }
-                    );
-                    if (!resumeGate.ok && resumeGate.reason === 'resume_required') {
-                        updateAutofillPanel({ status: 'Resume missing — upload needed', progress: 100 });
-                        sendResponse({
-                            ok: false,
-                            error: 'resume_missing',
-                            ats: form.ats,
-                            resumeGate
+                    // Profile Autofill: drop essay/long-written fields — filled later via Generate CV answers.
+                    if (msg.payload?.profileOnly || msg.payload?.skipQuestions) {
+                        fields = (fields || []).filter((f) => {
+                            if (f.kind !== 'question') return true;
+                            const lab = String(f.label || '');
+                            const essay = f.inputType === 'textarea' || f.type === 'textarea'
+                                || /\b(why|interest|motivat|tell us|describe|cover letter|additional information|what attracts|passion|excited about|why do you want|why are you)\b/i.test(lab);
+                            return !essay;
                         });
-                        return;
+                    }
+                    // Gap fill: only touch empty profile-ish fields (don't re-type name/email).
+                    if (msg.payload?.profileGapFill) {
+                        fields = (fields || []).filter((f) => {
+                            const el = findElByField(f);
+                            if (!el && f.inputType !== 'radio' && f.type !== 'radio') return false;
+                            try {
+                                const cur = readFieldCurrent(f, el);
+                                if (cur && String(cur).trim() && !/select\.\.\.|choose|n\/a|^-+$/i.test(String(cur).trim())) {
+                                    // Keep empty Yes/No radios even if a sibling looks filled.
+                                    if (f.inputType === 'radio' || f.type === 'radio') return !cur;
+                                    return false;
+                                }
+                            } catch (_) { /* include */ }
+                            return true;
+                        });
+                    }
+                    // Soft resume: try upload, but never abort the whole fill on resume_missing.
+                    // Contact/profile fields still write; resume status is a warning.
+                    const skipFiles = !!(msg.payload?.skipFiles || msg.payload?.profileOnly);
+                    const hasResumeBytes = !!(
+                        msg.payload?.base64
+                        || msg.payload?.resume?.base64
+                        || msg.payload?.file?.base64
+                    );
+                    let uploadStats = { uploaded: 0, uploadedResume: 0, uploadedCoverLetter: 0 };
+                    let resumeGate = { ok: true, uploadStats };
+                    const warnings = [];
+                    // Do not block first keystrokes on a no-op upload wait.
+                    if (!skipFiles && hasResumeBytes) {
+                        showToast('Uploading files…', 'info');
+                        updateAutofillPanel({ status: 'Uploading CV…', progress: 8 });
+                        uploadStats = await uploadApplicationFiles(msg.payload || {});
+                        resumeGate = await ensureResumeReadyBeforeSubmit(
+                            form,
+                            msg.payload || {},
+                            {
+                                ...uploadStats,
+                                expectedResumeName: msg.payload?.resume?.filename
+                                    || msg.payload?.filename
+                                    || msg.payload?.expectedResumeName
+                                    || ''
+                            }
+                        );
+                        if (!resumeGate.ok && resumeGate.reason === 'resume_required') {
+                            warnings.push('resume_missing');
+                            showToast('Resume missing — filling profile fields anyway', 'info');
+                            updateAutofillPanel({ status: 'Resume missing — filling fields…', progress: 12 });
+                        }
+                    } else {
+                        updateAutofillPanel({ status: 'Autofilling…', progress: 10 });
                     }
                     updateAutofillPanel({ status: 'Autofilling…', progress: 15 });
                     const fillStats = await fillForm({
@@ -6475,6 +7609,7 @@
                         fillStats: mergedFillStats,
                         uploadStats: gatedUploadStats,
                         submitStats,
+                        warnings,
                         resumeCheck: {
                             ok: resumeGate.ok,
                             reason: resumeGate.reason,

@@ -525,6 +525,23 @@
             '[role="listbox"], .select__menu, [class*="select__menu"], [class*="Menu"]'
         )].filter((m) => api.isVisibleNode(m) && !m.closest?.('.iti, .phone-input'));
         if (visibleMenus.length === 1) return visibleMenus[0].contains(node);
+        // Multiple open menus: pick nearest to the anchor (not "exactly one")
+        if (visibleMenus.length > 1 && anchorEl) {
+            try {
+                const ar = anchorEl.getBoundingClientRect();
+                let best = null;
+                let bestDist = Infinity;
+                for (const m of visibleMenus) {
+                    const mr = m.getBoundingClientRect();
+                    const dist = Math.abs(mr.top - ar.bottom) + Math.abs(mr.left - ar.left);
+                    if (dist < bestDist) {
+                        bestDist = dist;
+                        best = m;
+                    }
+                }
+                if (best) return best.contains(node);
+            } catch (_) { /* ignore */ }
+        }
         return false;
     };
 

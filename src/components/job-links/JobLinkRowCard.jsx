@@ -127,13 +127,13 @@ function PipelineRail({ row }) {
 }
 
 function profileChipMeta(p) {
-    if (p.status === 'rejected' || p.state === 'rejected' || p.state === 'cancelled') {
-        return { label: 'Failed', className: 'text-red-300' };
+    if (p.status === 'rejected' || p.state === 'rejected' || p.state === 'cancelled' || p.bid_outcome === 'rejected') {
+        return { label: 'Rejected', className: 'text-red-300' };
     }
     if (p.status === 'applied' || p.bid_applied || p.bid_outcome === 'applied') {
         return { label: 'Applied', className: 'text-emerald-300' };
     }
-    if (p.status === 'interview') {
+    if (p.status === 'interview' || p.bid_outcome === 'interview') {
         return { label: 'Interview', className: 'text-sky-300' };
     }
     if (p.bid_filled && !p.bid_applied) {
@@ -160,7 +160,7 @@ function profileChipRank(p) {
     if (label === 'Interview') return 1;
     if (label === 'Filled') return 2;
     if (label === 'CV ready') return 3;
-    if (label === 'Failed' || label === 'CV failed') return 4;
+    if (label === 'Rejected' || label === 'CV failed') return 4;
     if (label === 'CV…' || label === 'Queued') return 5;
     return 6;
 }

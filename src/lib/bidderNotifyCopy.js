@@ -70,7 +70,8 @@ export function shortenNotifyText(raw) {
         [/apply answers/i, 'Applying answers…'],
         [/filled — form filled[^.]*not SUCCESS/i, 'Filled — waiting for thank-you'],
         [/FILLED — Form filled[^.]*not SUCCESS/i, 'Filled — waiting for thank-you'],
-        [/SUCCESS — Applied on site/i, 'SUCCESS — applied on site'],
+        [/APPLIED — Confirmed on site/i, 'APPLIED — confirmed on site'],
+        [/SUCCESS — Applied on site/i, 'APPLIED — confirmed on site'],
         [/incomplete fill[^.]*required/i, 'Incomplete — required fields empty'],
         [/fill done[^.]*tab closed/i, 'Fill done — tab closed'],
         [/form filled \(not SUCCESS yet\)/i, 'Filled — waiting for thank-you'],
@@ -123,7 +124,8 @@ export function shortenOutcomeLabel(label) {
     const s = String(label || '').trim();
     if (!s) return '';
     if (/^FILLED/i.test(s)) return 'Filled — waiting for thank-you';
-    if (/^SUCCESS/i.test(s)) return 'SUCCESS — applied on site';
+    if (/^APPLIED/i.test(s) || /^SUCCESS/i.test(s)) return 'APPLIED — confirmed on site';
+    if (/^REJECTED/i.test(s)) return 'REJECTED';
     if (/^FAILED/i.test(s)) return s.replace(/^FAILED\s*[—:-]\s*/i, 'Failed — ').slice(0, MAX_SHORT);
     if (/incomplete/i.test(s)) return 'Incomplete — required fields empty';
     if (/CAPTCHA|Paused/i.test(s)) return 'Paused — CAPTCHA / login';
@@ -145,7 +147,7 @@ export function shortEventNotify({ eventType = '', meta = null, queueStatus = ''
     if (/awaiting_email_otp/i.test(qs)) return 'Paused — email security code';
     if (/awaiting_captcha/i.test(qs)) return 'Paused — CAPTCHA / login';
     if (/awaiting_next/i.test(qs)) return 'Waiting — click Next';
-    if (/marked_applied|submit_success/i.test(t)) return 'SUCCESS — thank-you';
+    if (/marked_applied|submit_success/i.test(t)) return 'APPLIED — thank-you';
     if (/submit_clicked/i.test(t)) return 'Submit clicked';
     if (/submit_blocked_incomplete|fill_incomplete/i.test(t)) {
         const miss = Array.isArray(m.missing) ? m.missing[0] : (m.reason || '');

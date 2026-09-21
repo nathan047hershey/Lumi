@@ -15,7 +15,7 @@
 
 body {
   margin: 0;
-  width: 340px;
+  width: 360px;
   font: 13px/1.45 system-ui, Segoe UI, sans-serif;
   color: var(--text);
   background: linear-gradient(160deg, #10201c 0%, var(--bg) 50%, #0c1418 100%);
@@ -203,3 +203,78 @@ kbd {
 }
 
 code { font-size: 11px; color: #9fd9cc; }
+
+.captured-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 280px;
+  overflow: auto;
+  margin: 8px 0;
+}
+
+.captured-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  background: #121c1a;
+}
+
+.captured-q {
+  font-weight: 600;
+  font-size: 12px;
+  margin-bottom: 4px;
+  word-break: break-word;
+}
+
+.captured-item textarea {
+  width: 100%;
+  min-height: 48px;
+  border: 1px solid var(--border);
+  background: var(--input);
+  color: var(--text);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font: inherit;
+  resize: vertical;
+}
+
+.captured-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.captured-actions .btn {
+  padding: 6px 8px;
+  font-size: 11px;
+  flex: 1;
+}
+
+.monitor-phase {
+  font-weight: 700;
+  font-size: 13px;
+  color: #5ee0c5;
+  margin-top: 2px;
+}
+
+.monitor-elapsed {
+  font-variant-numeric: tabular-nums;
+  margin-bottom: 4px;
+}
+
+.monitor-log {
+  max-height: 72px;
+  overflow: auto;
+  margin: 4px 0 8px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #121c1a;
+  border: 1px solid var(--border);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.monitor-log:empty {
+  display: none;
+}

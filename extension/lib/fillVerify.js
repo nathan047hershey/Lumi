@@ -131,12 +131,13 @@ export function bidLimitMsForAts(ats, { pageCount = 0 } = {}) {
     return ms;
 }
 
-/** Longer SPA form waits for slow ATS. */
-export function formWaitMsForAts(ats, baseMs = 12000) {
+/** Longer SPA form waits for slow ATS — budget only; exits early when form is ready. */
+export function formWaitMsForAts(ats, baseMs = 6000) {
     const id = String(ats || '').toLowerCase();
-    const base = Math.max(8000, Number(baseMs) || 12000);
-    if (id === 'oracle' || id === 'workday') return Math.max(base, 18000);
-    if (id === 'icims' || id === 'ashby' || id === 'lever') return Math.max(base, 15000);
+    const base = Math.max(3000, Number(baseMs) || 6000);
+    if (id === 'oracle' || id === 'workday') return Math.max(base, 12000);
+    if (id === 'icims' || id === 'ashby' || id === 'lever') return Math.max(base, 9000);
+    // Greenhouse / generic: honor user base (no forced 8s floor).
     return base;
 }
 

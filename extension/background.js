@@ -18,6 +18,7 @@ import {
     clearFalseApplicationSuccess,
     getBidderApplication,
     getBidderApplicationByJobUrl,
+    getLatestBidderApplication,
     logBidCourseFill,
     generateBidderAnswers,
     checkoutApplicationCheck,
@@ -28,6 +29,16 @@ import {
     saveBidderFillLesson,
     upsertQuestionMemory
 } from './lib/api.js';
+import {
+    saveCapturedQuestionsPack,
+    getLatestCapturedPack,
+    updateCapturedItemAnswer
+} from './lib/capturedQuestions.js';
+import {
+    setWorkProgress,
+    clearWorkProgress,
+    getWorkProgress
+} from './lib/workProgress.js';
 import { startLiveLink } from './lib/liveLink.js';
 import {
     enqueuePendingCvRegen,
@@ -108,6 +119,10 @@ import {
     engineLabelForAts,
     formFingerprint,
     formFieldCount,
+    formHasUsableFields,
+    formHasIdentityFields,
+    formHasCoreIdentity,
+    formReadyForProfileFill,
     maxPagesForAts,
     mergeAnswers,
     lessonFillsToAnswers,
@@ -611,8 +626,15 @@ async function ensureScripts(tabId) {
         if (!tab) return false;
         try {
             await chrome.scripting.executeScript({
-                target: { tabId },
-                files: ['content/controlMatch.js', 'content/scrape.js', 'content/fillShared.js', 'content/fill.js', 'content/bidderFill.js']
+                target: { tabId, allFrames: true },
+                files: [
+                    'content/controlMatch.js',
+                    'content/scrape.js',
+                    'content/fillShared.js',
+                    'content/atsPacks.js',
+                    'content/fill.js',
+                    'content/bidderFill.js'
+                ]
             });
         } catch (injErr) {
             const inj = String(injErr?.message || injErr || '');
@@ -620,6 +642,14 @@ async function ensureScripts(tabId) {
             if (/No tab with id|Invalid tab/i.test(inj)) return false;
             // Already injected / CSP race — tab is still usable
         }
+        // Install MAIN-world page filler (React-safe writes).
+        try {
+            await chrome.scripting.executeScript({
+                target: { tabId, allFrames: true },
+                files: ['content/pageWorldFill.js'],
+                world: 'MAIN'
+            });
+        } catch (_) { /* ignore MAIN inject failures */ }
         return true;
     } catch (err) {
         const msg = String(err?.message || err || '');
@@ -795,14 +825,86 @@ async function collectForm(tabId) {
     return response.data;
 }
 
+/**
+ * Poll until the apply form has real mounted fields (not a React skeleton).
+ * Prefer identity fields when requireIdentity — avoids filling decoy inputs.
+ * Exits as soon as consecutive stable reads agree (no fixed long sleeps).
+ */
+async function waitForFormReady(tabId, {
+    minFields = 2,
+    requireIdentity = true,
+    /** Profile fills: wait for fuller form (not just name+email). */
+    profileFill = false,
+    stableReads = 2,
+    pollMs = 150,
+    maxMs = 7000
+} = {}) {
+    const deadline = Date.now() + Math.max(1500, Number(maxMs) || 7000);
+    const gap = Math.max(80, Number(pollMs) || 150);
+    let lastFp = '';
+    let streak = 0;
+    let lastForm = null;
+    const t0 = Date.now();
+    const minCount = profileFill
+        ? Math.max(6, Number(minFields) || 6)
+        : Math.max(2, Number(minFields) || 2);
+    while (Date.now() < deadline) {
+        let form = null;
+        try {
+            await ensureScripts(tabId);
+            form = await collectForm(tabId);
+        } catch (_) {
+            form = null;
+        }
+        lastForm = form;
+        if (form?.blocked) {
+            return { ok: false, form, reason: form.reason || 'blocked', waitedMs: Date.now() - t0 };
+        }
+        const count = formFieldCount(form);
+        let readyOk = false;
+        if (profileFill) {
+            readyOk = formReadyForProfileFill(form, { minFields: minCount });
+        } else {
+            const usable = formHasUsableFields(form, minCount);
+            const identityOk = !requireIdentity
+                || formHasCoreIdentity(form)
+                || (formHasIdentityFields(form) && count >= 5)
+                || count >= Math.max(minCount, 6);
+            readyOk = usable && identityOk;
+        }
+        if (readyOk) {
+            const fp = formFingerprint(form);
+            if (fp && fp === lastFp) streak += 1;
+            else {
+                lastFp = fp;
+                streak = 1;
+            }
+            if (streak >= Math.max(1, Number(stableReads) || 2)) {
+                return { ok: true, form, fieldCount: count, waitedMs: Date.now() - t0 };
+            }
+        } else {
+            streak = 0;
+            lastFp = '';
+        }
+        await new Promise((r) => setTimeout(r, gap));
+    }
+    const count = formFieldCount(lastForm);
+    const ok = profileFill
+        ? formReadyForProfileFill(lastForm, { minFields: Math.min(4, minCount) })
+        : formHasUsableFields(lastForm, Math.min(2, minCount));
+    return {
+        ok,
+        form: lastForm,
+        fieldCount: count,
+        reason: count > 0 ? 'timeout_partial' : 'timeout_empty',
+        waitedMs: Date.now() - t0
+    };
+}
+
 async function fillAndUpload(tabId, payload) {
     await ensureScripts(tabId);
-    // Dial Country* first (trusted CDP) — content-script clicks often leave it blank.
-    try {
-        await ensureUsDialCodeTrusted(tabId);
-    } catch (err) {
-        console.warn('[bidder] dial country pre-fill', err);
-    }
+    // Do NOT run dial-country CDP before fill — it delays first keystrokes and
+    // jumps to the phone widget (Swooped fills identity first; dial runs with phone).
     const response = await sendTabMessage(tabId, { type: 'FILL_FORM', payload });
     if (!response?.ok) throw new Error(response?.error || 'Failed to fill form');
     return response;
@@ -905,7 +1007,7 @@ async function answerQuestionsViaGenerateAssistant({
     }
 
     const requestId = `ans_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
-    const waitPromise = waitForAnswersReady(requestId, 60000);
+    const waitPromise = waitForAnswersReady(requestId, 45000);
 
     await chrome.tabs.sendMessage(generateTabId, {
         type: 'BIDDER_ANSWER_QUESTIONS',
@@ -939,14 +1041,42 @@ async function autofillAfterGenerate({
     job,
     result,
     phase = 'full',
-    answerMode = 'interactive'
+    answerMode = 'interactive',
+    softAnswers = false
 }) {
-    const form = await collectForm(tabId);
+    const t0 = Date.now();
+    await setWorkProgress({
+        phase: 'profile',
+        label: 'Waiting for form fields…',
+        tabId
+    }).catch(() => {});
+    const ready = await waitForFormReady(tabId, {
+        minFields: 6,
+        requireIdentity: true,
+        profileFill: true,
+        stableReads: 2,
+        pollMs: 150,
+        maxMs: 9000
+    });
+    let form = ready.form;
+    if (!form || form.blocked) {
+        form = await collectForm(tabId);
+    }
     if (form.blocked) {
         throw new Error(form.reason || 'This site is blocked for autofill');
     }
+    if (!formHasUsableFields(form, 2)) {
+        throw new Error('Apply form fields not ready yet — wait a second and click Autofill again');
+    }
+    await setWorkProgress({
+        phase: 'profile',
+        label: `Filling profile (${formFieldCount(form)} fields)…`,
+        tabId,
+        fieldCount: formFieldCount(form),
+        waitedMs: ready.waitedMs
+    }).catch(() => {});
 
-    const profileFields = {
+        const profileFields = {
         id: profile.id,
         first_name: profile.first_name,
         last_name: profile.last_name,
@@ -969,6 +1099,7 @@ async function autofillAfterGenerate({
         race_ethnicity: profile.race_ethnicity || '',
         website_url: profile.website_url || '',
         portfolio_url: profile.portfolio_url || '',
+        pronouns: profile.pronouns || '',
         preferred_name: profile.preferred_name || '',
         over_18: profile.over_18 || '',
         hispanic_latino: profile.hispanic_latino || '',
@@ -1012,36 +1143,26 @@ async function autofillAfterGenerate({
     const salaryQuestions = questions.filter(
         (q) => q.kind === 'salary' || q.answer_type === 'salary'
     );
+    // Also send choice / skill / custom selects the profile pass may leave empty → answers API.
+    const extraApiQuestions = questions.filter((q) => {
+        const k = String(q.kind || '');
+        if (k === 'question' || k === 'salary') return false;
+        return /^(skill_experience|skill_project_brief|how_heard|data_protection|math_captcha|background_check_yes)$/i.test(k)
+            || q.answer_type === 'choice'
+            || (Array.isArray(q.options) && q.options.length > 0);
+    });
     // Essays need AI; salary is resolved server-side from JD/profile (no LLM).
-    const writtenQuestions = [...essayQuestions, ...salaryQuestions];
-
-    let resumeFile = null;
-    const filename = result.resume_filename || result.resumeFilename;
-    if (filename && phase !== 'answers') {
-        try {
-            resumeFile = await fetchResumeBase64(settings.apiBaseUrl, filename, settings.token, {
-                profile,
-                uploadFilename: result.resume_upload_filename || result.upload_filename || null
-            });
-        } catch (err) {
-            console.warn('[bidder] resume download for upload failed', err);
+    const writtenQuestions = (() => {
+        const seen = new Set();
+        const out = [];
+        for (const q of [...essayQuestions, ...salaryQuestions, ...extraApiQuestions]) {
+            const key = String(q.id || q.label || '').toLowerCase();
+            if (!key || seen.has(key)) continue;
+            seen.add(key);
+            out.push(q);
         }
-    }
-
-    let coverLetterFile = null;
-    if (phase !== 'answers') {
-        // Autofill: only upload CL when the field is required (optional CL stays empty).
-        coverLetterFile = await maybePrepareCoverLetterFile({
-            form,
-            profileId: settings.selectedProfileId || result.profile_id,
-            jobDescription: job.description || job.job_description || '',
-            resumeHtml: result.resume_html || result.draft_html || '',
-            companyName: job.company || result.company_name || '',
-            jobRole: job.title || result.job_role || '',
-            settings,
-            uploadCoverLetter: false
-        });
-    }
+        return out;
+    })();
 
     let fillResult = {
         fillStats: { filled: 0 },
@@ -1050,32 +1171,131 @@ async function autofillAfterGenerate({
         ats: form.ats
     };
 
-    // Phase 1 — Simplify-style: saved profile only (no AI)
+    // Phase 1 — Simplify-style: saved profile only (no AI). Start typing once form is ready.
+    // Long essays ("why this role", etc.) stay empty → Answer questions after Generate CV.
+    let resumeFile = null;
+    let coverLetterFile = null;
     if (phase === 'full' || phase === 'profile') {
-        await notify('Lumi', 'Autofill — saved profile (no AI)…');
+        notify('Lumi', 'Autofill — saved profile (no AI)…').catch(() => {});
         fillResult = await fillAndUpload(tabId, {
             fields: form.fields || [],
             answers: [],
             profile: profileFields,
             jobDescription: job.description || job.job_description || '',
             fileInputs: form.fileInputs || [],
-            filename: resumeFile?.filename,
-            base64: resumeFile?.base64,
-            mimeType: resumeFile?.mimeType,
-            resume: resumeFile,
-            coverLetter: coverLetterFile,
-            autoSubmit: false
+            autoSubmit: false,
+            skipFiles: true,
+            skipQuestions: true,
+            profileOnly: true
         });
 
-        await toastActiveTab(
-            `Autofilled ${fillResult?.fillStats?.filled ?? 0} profile field(s)`
-                + (essayQuestions.length
-                    ? ` · ${essayQuestions.length} need Answer questions`
-                    : ''),
-            'success'
-        );
+        // Always gap-fill: first pass often hits a partial SPA mount (name+email only).
+        {
+            const filled1 = Number(fillResult?.fillStats?.filled || 0);
+            await setWorkProgress({
+                phase: 'profile',
+                label: 'Gap-filling remaining profile fields…',
+                tabId
+            }).catch(() => {});
+            const gapReady = await waitForFormReady(tabId, {
+                minFields: 6,
+                profileFill: true,
+                requireIdentity: true,
+                stableReads: 2,
+                pollMs: 150,
+                maxMs: 5000
+            });
+            if (gapReady.form && formHasUsableFields(gapReady.form, 2)) {
+                form = gapReady.form;
+            } else {
+                try { form = await collectForm(tabId); } catch (_) { /* keep */ }
+            }
+            const gapFill = await fillAndUpload(tabId, {
+                fields: form.fields || [],
+                answers: [],
+                profile: profileFields,
+                jobDescription: job.description || job.job_description || '',
+                fileInputs: form.fileInputs || [],
+                autoSubmit: false,
+                skipFiles: true,
+                skipQuestions: true,
+                profileOnly: true,
+                profileGapFill: true
+            });
+            const filled2 = Number(gapFill?.fillStats?.filled || 0);
+            if (filled2 > 0) {
+                fillResult = {
+                    ...fillResult,
+                    ...gapFill,
+                    fillStats: {
+                        ...(fillResult.fillStats || {}),
+                        ...(gapFill.fillStats || {}),
+                        filled: filled1 + filled2
+                    }
+                };
+            }
+        }
 
+        const uploadResumeAfter = async () => {
+            const filename = result.resume_filename || result.resumeFilename;
+            if (filename) {
+                try {
+                    resumeFile = await fetchResumeBase64(settings.apiBaseUrl, filename, settings.token, {
+                        profile,
+                        uploadFilename: result.resume_upload_filename || result.upload_filename || null
+                    });
+                } catch (err) {
+                    console.warn('[bidder] resume download for upload failed', err);
+                }
+            }
+            try {
+                coverLetterFile = await maybePrepareCoverLetterFile({
+                    form,
+                    profileId: settings.selectedProfileId || result.profile_id,
+                    jobDescription: job.description || job.job_description || '',
+                    resumeHtml: result.resume_html || result.draft_html || '',
+                    companyName: job.company || result.company_name || '',
+                    jobRole: job.title || result.job_role || '',
+                    settings,
+                    uploadCoverLetter: false
+                });
+            } catch (_) { /* ignore */ }
+            if (!(resumeFile?.base64 || coverLetterFile?.base64)) return null;
+            try {
+                return await fillAndUpload(tabId, {
+                    uploadOnly: true,
+                    filename: resumeFile?.filename,
+                    base64: resumeFile?.base64,
+                    mimeType: resumeFile?.mimeType,
+                    resume: resumeFile,
+                    coverLetter: coverLetterFile
+                });
+            } catch (err) {
+                console.warn('[bidder] post-profile resume upload', err);
+                return null;
+            }
+        };
+
+        // Profile-only: fill fields, then upload CV (await so Autofill actually attaches it).
         if (phase === 'profile') {
+            const up = await uploadResumeAfter().catch(() => null);
+            if (up?.uploadStats) fillResult.uploadStats = up.uploadStats;
+            const uploaded = Number(up?.uploadStats?.uploaded || 0);
+            if (!uploaded && !(result.resume_filename || result.resumeFilename)) {
+                await toastActiveTab(
+                    'No CV on file — Generate CV first, then Autofill to attach resume',
+                    'error'
+                ).catch(() => {});
+            } else if (uploaded) {
+                await toastActiveTab(`Uploaded ${uploaded} file(s)`, 'ok').catch(() => {});
+            }
+            await toastActiveTab(
+                `Autofilled ${fillResult?.fillStats?.filled ?? 0} profile field(s)`
+                    + (essayQuestions.length
+                        ? ` · ${essayQuestions.length} essay(s) → Answer questions after Generate CV`
+                        : ''),
+                'success'
+            );
             return {
                 ats: fillResult.ats || form.ats,
                 questions: essayQuestions.length,
@@ -1089,6 +1309,18 @@ async function autofillAfterGenerate({
                 phase: 'profile'
             };
         }
+
+        // Full phase: upload before AI answers so CV is on the form.
+        const up = await uploadResumeAfter();
+        if (up?.uploadStats) fillResult.uploadStats = up.uploadStats;
+
+        await toastActiveTab(
+            `Autofilled ${fillResult?.fillStats?.filled ?? 0} profile field(s)`
+                + (essayQuestions.length
+                    ? ` · ${essayQuestions.length} essay(s) need Answer questions (Generate CV)`
+                    : ''),
+            'success'
+        );
     }
 
     let answersPayload = {
@@ -1107,15 +1339,31 @@ async function autofillAfterGenerate({
             || result.application_id
         );
         if (!hasCv) {
-            throw new Error('Generate a CV first (Alt+Shift+G), then use Answer questions');
-        }
-
+            if (softAnswers || phase === 'full') {
+                await toastActiveTab(
+                    `Profile filled — ${writtenQuestions.length} question(s) need a CV. Generate CV, then Autofill again for AI answers.`,
+                    'info'
+                ).catch(() => {});
+                await notify(
+                    'Lumi',
+                    `${writtenQuestions.length} question(s) left — Generate CV so Autofill can call the answers API`
+                );
+            } else {
+                throw new Error('Generate a CV first (Alt+Shift+G), then use Answer questions');
+            }
+        } else {
         await notify(
             'Lumi',
             answerMode === 'auto'
-                ? `Drafting ${writtenQuestions.length} AI answer(s)…`
+                ? `Drafting ${writtenQuestions.length} answer(s) with Groq…`
                 : `${writtenQuestions.length} question(s) → Answer on Generate`
         );
+        await setWorkProgress({
+            phase: 'groq',
+            label: `Groq drafting ${writtenQuestions.length} answer(s)…`,
+            questionCount: writtenQuestions.length,
+            elapsedMs: Date.now() - t0
+        }).catch(() => {});
 
         const applyAiAnswers = async (payload) => {
             answersPayload = {
@@ -1137,6 +1385,12 @@ async function autofillAfterGenerate({
 
             if (!(answersPayload.answers || []).length) return;
 
+            await setWorkProgress({
+                phase: 'fill_answers',
+                label: `Filling ${answersPayload.answers.length} AI answer(s)…`,
+                provider: answersPayload.provider || 'groq',
+                elapsedMs: Date.now() - t0
+            }).catch(() => {});
             await notify(
                 'Filling AI answers',
                 `${answersPayload.answers.length} answer(s) → apply form`
@@ -1153,9 +1407,7 @@ async function autofillAfterGenerate({
                 resume: resumeFile,
                 coverLetter: coverLetterFile,
                 answersOnly: true,
-                autoSubmit: opts.bidderAutoSubmit != null
-                    ? !!opts.bidderAutoSubmit
-                    : true
+                autoSubmit: !!(settings.bidderAutoSubmit ?? settings.autoSubmit)
             });
             fillResult = {
                 ...fillResult,
@@ -1179,7 +1431,8 @@ async function autofillAfterGenerate({
                     questions: writtenQuestions,
                     company_name: job.company || result.company_name || '',
                     job_role: job.title || result.job_role || '',
-                    application_id: result.application_id || result.applicationId || null
+                    application_id: result.application_id || result.applicationId || null,
+                    answers_provider: 'groq'
                 });
                 await applyAiAnswers(apiPayload);
             } else {
@@ -1193,6 +1446,18 @@ async function autofillAfterGenerate({
                 });
                 await applyAiAnswers(viaAssistant);
             }
+            // Capture for popup review (Simplify-style).
+            try {
+                const latestAnswers = answersPayload?.answers || [];
+                await saveCapturedQuestionsPack({
+                    applicationId: result.application_id || result.applicationId || null,
+                    company: job.company || result.company_name || '',
+                    jobRole: job.title || result.job_role || '',
+                    url: job.url || '',
+                    questions: writtenQuestions,
+                    answers: latestAnswers
+                });
+            } catch (_) { /* ignore */ }
         } catch (err) {
             console.warn('[bidder] answer draft failed — trying API batch', err);
             try {
@@ -1203,7 +1468,8 @@ async function autofillAfterGenerate({
                     questions: writtenQuestions,
                     company_name: job.company || result.company_name || '',
                     job_role: job.title || result.job_role || '',
-                    application_id: result.application_id || result.applicationId || null
+                    application_id: result.application_id || result.applicationId || null,
+                    answers_provider: 'groq'
                 });
                 await applyAiAnswers(apiPayload);
                 if ((answersPayload.answers || []).length) {
@@ -1223,6 +1489,7 @@ async function autofillAfterGenerate({
                 }));
             }
         }
+        } // end hasCv else — AI answers via API
     } else if (phase === 'answers' && writtenQuestions.length === 0) {
         await notify('Lumi', 'No written questions found on this form');
     }
@@ -1524,7 +1791,16 @@ async function openGeneratePageAndInject({ settings, profile, job, coreSkills, s
  */
 async function fillProfileOnTab(tabId, { profile, job }) {
     await ensureScripts(tabId);
-    const form = await collectForm(tabId);
+    const ready = await waitForFormReady(tabId, {
+        minFields: 6,
+        profileFill: true,
+        requireIdentity: true,
+        stableReads: 2,
+        pollMs: 150,
+        maxMs: 8000
+    }).catch(() => null);
+    let form = ready?.form || null;
+    if (!form) form = await collectForm(tabId);
     if (form.blocked) {
         throw new Error(form.reason || 'This site is blocked for autofill');
     }
@@ -1556,6 +1832,7 @@ async function fillProfileOnTab(tabId, { profile, job }) {
         race_ethnicity: profile.race_ethnicity || '',
         website_url: profile.website_url || '',
         portfolio_url: profile.portfolio_url || '',
+        pronouns: profile.pronouns || '',
         preferred_name: profile.preferred_name || '',
         over_18: profile.over_18 || '',
         hispanic_latino: profile.hispanic_latino || '',
@@ -1986,6 +2263,13 @@ async function runFillOnly(opts = {}) {
         : phase === 'full'
             ? 'Autofill + answer questions…'
             : 'Autofill (profile)…';
+    await setWorkProgress({
+        kind: 'autofill',
+        phase: phase === 'answers' ? 'answers' : 'collect',
+        label: phaseLabel,
+        startedAt: Date.now(),
+        phaseStartedAt: Date.now()
+    }).catch(() => {});
     await notify('Lumi', phaseLabel);
     await toastActiveTab(phaseLabel, 'info');
 
@@ -2042,8 +2326,23 @@ async function runFillOnly(opts = {}) {
             linked,
             lastResult: settings.lastResult
         });
+        // Manual Autofill (profile / full from popup/hotkey): soft session —
+        // token+profile is enough; warn but continue. Bidder queue keeps strict session.
+        const softSession = opts.softSession !== false && (
+            phase === 'profile'
+            || opts.manualAutofill === true
+            || opts.fromPanel === true
+        );
         if (!gate.ok) {
-            throw new Error(gate.error);
+            if (softSession && settings.token && settings.selectedProfileId) {
+                await chrome.tabs.sendMessage(tab.id, {
+                    type: 'SHOW_TOAST',
+                    text: 'No job↔CV session — filling from profile anyway',
+                    kind: 'info'
+                }).catch(() => {});
+            } else {
+                throw new Error(gate.error);
+            }
         }
 
         await saveActiveJobSession({
@@ -2147,6 +2446,18 @@ async function runFillOnly(opts = {}) {
             } catch (_) { /* ignore */ }
         }
 
+        // Last resort: newest CV for this profile (so Autofill can still attach a resume).
+        if (!result.resume_filename && settings.selectedProfileId) {
+            try {
+                const latest = await getLatestBidderApplication(settings.selectedProfileId);
+                if (latest?.application?.resume_filename) {
+                    result.resume_filename = latest.application.resume_filename;
+                    result.resume_html = latest.application.draft_html || result.resume_html || '';
+                    if (!result.application_id) result.application_id = latest.application.id;
+                }
+            } catch (_) { /* ignore */ }
+        }
+
         if (!profile) {
             throw new Error('No profile selected — save a bid profile in the popup');
         }
@@ -2166,7 +2477,8 @@ async function runFillOnly(opts = {}) {
             job,
             result,
             phase,
-            answerMode: opts.answerMode || 'interactive'
+            answerMode: opts.answerMode || 'interactive',
+            softAnswers: !!opts.softAnswers
         });
 
         await rememberCvForJob({
@@ -2208,14 +2520,27 @@ async function runFillOnly(opts = {}) {
                 + (fillStats.answers ? `, answers ${fillStats.answers}` : '');
         await notify('Lumi', msg);
         await toastActiveTab(msg, (fillStats.filled || 0) > 0 ? 'ok' : 'error');
+        await setWorkProgress({
+            phase: 'done',
+            label: msg,
+            filled: fillStats.filled || 0,
+            answers: fillStats.answers || 0
+        }).catch(() => {});
         return fillStats;
     } catch (err) {
         const message = err?.message || String(err);
+        await setWorkProgress({
+            phase: 'error',
+            label: message,
+            error: message
+        }).catch(() => {});
         await notify('Fill failed', message);
         await toastActiveTab('Fill failed: ' + message, 'error');
         throw err;
     } finally {
         await clearFillLock();
+        // Keep final status ~8s so popup can show elapsed, then clear.
+        setTimeout(() => { clearWorkProgress().catch(() => {}); }, 8000);
     }
 }
 
@@ -2307,10 +2632,226 @@ async function getOrCreateBidderBgWindow() {
     return null;
 }
 
+function greenhouseJobKey(url) {
+    try {
+        const u = new URL(String(url || ''));
+        if (!/greenhouse\.io/i.test(u.hostname)) return '';
+        const forParam = (u.searchParams.get('for') || '').toLowerCase();
+        const token = u.searchParams.get('token') || '';
+        const jobId = token || (u.pathname.match(/\/jobs\/(\d+)/i)?.[1] || '');
+        if (!jobId) return '';
+        return `${forParam || u.hostname}|${jobId}`;
+    } catch {
+        return '';
+    }
+}
+
+function urlsSameApplyJob(a, b) {
+    const left = String(a || '');
+    const right = String(b || '');
+    if (!left || !right) return false;
+    if (left === right) return true;
+    try {
+        if (urlsLooselyMatch(left, right)) return true;
+    } catch (_) { /* ignore */ }
+    const gk1 = greenhouseJobKey(left);
+    const gk2 = greenhouseJobKey(right);
+    if (gk1 && gk2 && gk1 === gk2) return true;
+    try {
+        const u1 = new URL(left);
+        const u2 = new URL(right);
+        if (u1.hostname.replace(/^www\./i, '') !== u2.hostname.replace(/^www\./i, '')) return false;
+        const p1 = u1.pathname.replace(/\/+$/, '').toLowerCase();
+        const p2 = u2.pathname.replace(/\/+$/, '').toLowerCase();
+        return p1 === p2 || p1.includes(p2) || p2.includes(p1);
+    } catch {
+        return false;
+    }
+}
+
+/** Find an open Chrome tab for this job URL (any window) — recovers after false Tab closed. */
+async function findLiveApplyTabForUrl(wantedUrl) {
+    const wanted = String(wantedUrl || '').trim();
+    if (!wanted) return null;
+    try {
+        const tabs = await chrome.tabs.query({});
+        let best = null;
+        for (const t of tabs || []) {
+            if (!t?.id) continue;
+            const u = t.pendingUrl || t.url || '';
+            if (!u || /^chrome:|^about:/i.test(u)) continue;
+            if (!urlsSameApplyJob(u, wanted)) continue;
+            if (!best || t.active) best = t;
+            if (t.active) break;
+        }
+        return best;
+    } catch (_) {
+        return null;
+    }
+}
+
 async function closeBidderTab(tabId) {
     if (!tabId) return;
     await releasePageDebugger(tabId);
     try { await chrome.tabs.remove(tabId); } catch (_) { /* ignore */ }
+}
+
+/** Drop dead tab ids from queue maps so Control never shows a fake Focus chip. */
+async function clearTabMapping({ applicationId = null, tabId = null } = {}) {
+    const st = await getQueueState().catch(() => null);
+    if (!st) return;
+    const tabsByAppId = { ...(st.tabsByAppId || {}) };
+    if (applicationId != null) delete tabsByAppId[String(applicationId)];
+    if (tabId != null) {
+        for (const [k, v] of Object.entries(tabsByAppId)) {
+            if (Number(v) === Number(tabId)) delete tabsByAppId[k];
+        }
+    }
+    const patch = {
+        tabsByAppId,
+        ownedTabAlive: false,
+        captchaTabMissing: true
+    };
+    if (tabId != null && Number(st.currentTabId) === Number(tabId)) patch.currentTabId = null;
+    if (tabId != null && Number(st.captchaTabId) === Number(tabId)) patch.captchaTabId = null;
+    await setQueueState(patch).catch(() => {});
+}
+
+/**
+ * Best-effort evidence before close/park — screenshot + form collect + tab_closed event.
+ * Keeps missing fields so the operator can check out after the page is gone or parked.
+ */
+async function captureFailEvidence(applicationId, tabId, reason, extra = {}) {
+    if (!applicationId || !tabId) return null;
+    let formSnap = null;
+    try {
+        const res = await sendTabMessage(tabId, { type: 'COLLECT_FORM' }, { retries: 1, baseDelayMs: 80 });
+        const form = res?.form || res?.data || res || null;
+        const fields = Array.isArray(form?.fields) ? form.fields : [];
+        const missing = Array.isArray(form?.missingRequired)
+            ? form.missingRequired
+            : (Array.isArray(form?.missing) ? form.missing : []);
+        formSnap = {
+            fieldCount: fields.length || Number(form?.fieldCount) || 0,
+            requiredOk: form?.requiredOk,
+            requiredTotal: form?.requiredTotal,
+            missing: missing.filter(Boolean).slice(0, 12).map((m) => (
+                typeof m === 'string' ? m : String(m?.label || m?.name || m || '')
+            )).filter(Boolean),
+            url: form?.url || extra.url || null,
+            fingerprint: form?.formFingerprint || form?.fingerprint || null
+        };
+    } catch (_) { /* tab may already be dying */ }
+    try {
+        await uploadScreenshot(applicationId, 'pre_close', tabId, { settleMs: 0, stayInApp: true });
+    } catch (_) { /* ignore */ }
+    await logCourseEvent(applicationId, 'tab_closed', {
+        reason: String(reason || 'unknown'),
+        phase: extra.phase || reason,
+        tabId,
+        error: extra.error ? String(extra.error).slice(0, 200) : undefined,
+        ...(formSnap || {})
+    }).catch(() => {});
+    if (formSnap?.missing?.length || formSnap?.requiredTotal) {
+        await setAppRunState(applicationId, 'incomplete', {
+            tabId,
+            missingRequired: formSnap.missing || [],
+            requiredOk: formSnap.requiredOk,
+            requiredTotal: formSnap.requiredTotal,
+            url: formSnap.url || extra.url || null,
+            eventType: 'tab_closed'
+        }).catch(() => {});
+    }
+    try {
+        await notify(
+            'Lumi',
+            reason === 'leftover_sweep'
+                ? 'Apply tab closed — evidence saved'
+                : 'Fill issue — tab kept for review · check Control'
+        );
+    } catch (_) { /* ignore */ }
+    return formSnap;
+}
+
+/** Enrich queue payload with live tab liveness for Control / popup. */
+async function enrichQueueSnapshot(st) {
+    const data = st && typeof st === 'object' ? { ...st } : {};
+    const appId = data.currentId || data.captchaApplicationId || data.lastApplicationId;
+    const runRow = appId && data.runByAppId ? data.runByAppId[String(appId)] : null;
+    let ownedTabId = Number(
+        (appId && data.tabsByAppId?.[String(appId)])
+        || data.currentTabId
+        || data.captchaTabId
+        || runRow?.tabId
+        || 0
+    ) || null;
+    let ownedTabAlive = false;
+    let ownedTabUrl = data.currentJobUrl || data.ownedTabUrl || runRow?.url || null;
+    if (ownedTabId) {
+        try {
+            const tab = await chrome.tabs.get(ownedTabId);
+            ownedTabAlive = true;
+            ownedTabUrl = tab?.pendingUrl || tab?.url || ownedTabUrl;
+        } catch (_) {
+            ownedTabAlive = false;
+        }
+    }
+    // Heal: mapped id dead but an apply tab for this job is still open (common after Open / bg-window churn).
+    if (!ownedTabAlive && ownedTabUrl) {
+        const live = await findLiveApplyTabForUrl(ownedTabUrl);
+        if (live?.id) {
+            ownedTabId = live.id;
+            ownedTabAlive = true;
+            ownedTabUrl = live.pendingUrl || live.url || ownedTabUrl;
+            const tabsByAppId = { ...(data.tabsByAppId || {}) };
+            if (appId) tabsByAppId[String(appId)] = ownedTabId;
+            await setQueueState({
+                tabsByAppId,
+                currentTabId: ownedTabId,
+                captchaTabId: data.captchaTabId ? ownedTabId : data.captchaTabId,
+                captchaTabMissing: false,
+                ownedTabAlive: true,
+                currentJobUrl: ownedTabUrl || data.currentJobUrl || null
+            }).catch(() => {});
+            data.tabsByAppId = tabsByAppId;
+            data.currentTabId = ownedTabId;
+            data.captchaTabMissing = false;
+        }
+    } else if (!ownedTabAlive && ownedTabId && appId) {
+        await clearTabMapping({ applicationId: appId, tabId: ownedTabId }).catch(() => {});
+    }
+    return {
+        ...data,
+        runState: data.runState || runRow?.status || null,
+        ownedTabId: ownedTabAlive ? ownedTabId : (ownedTabId || null),
+        ownedTabAlive,
+        captchaTabMissing: !ownedTabAlive,
+        ownedTabUrl: ownedTabUrl || null,
+        missingRequired: runRow?.missingRequired
+            || data.lastStatusMeta?.missing
+            || data.lastStatusMeta?.missingRequired
+            || [],
+        lastDomSummary: data.lastDomSummary || runRow?.lastDomSummary || null,
+        captcha: /awaiting_captcha/i.test(String(data.status || '')) || !!runRow?.captcha
+    };
+}
+
+/** Bring the apply tab forward so the user can check answers / submit manually. */
+async function focusBidderTabForReview(tabId) {
+    if (!tabId) return false;
+    try {
+        const tab = await chrome.tabs.get(tabId);
+        if (!tab?.id) return false;
+        if (tab.windowId != null) {
+            try {
+                await chrome.windows.update(tab.windowId, { focused: true, state: 'normal' });
+            } catch (_) { /* ignore */ }
+        }
+        await chrome.tabs.update(tabId, { active: true });
+        return true;
+    } catch (_) {
+        return false;
+    }
 }
 
 async function openReadyApplication(item, { fromQueue = false } = {}) {
@@ -2465,6 +3006,10 @@ async function processReadyQueue(opts = {}) {
         || opts.capsolverApiKey != null
         || opts.twocaptchaApiKey != null
         || opts.disabledFillLessons != null
+        || opts.formWaitMs != null
+        || opts.openGapMs != null
+        || opts.screenshotSettleSec != null
+        || opts.maxTabs != null
     ) {
         const patch = {};
         if (opts.uploadCoverLetter != null) patch.bidderUploadCoverLetter = !!opts.uploadCoverLetter;
@@ -2485,6 +3030,18 @@ async function processReadyQueue(opts = {}) {
         if (opts.captchaGraceSec != null && Number(opts.captchaGraceSec) >= 0) {
             patch.bidderCaptchaGraceSec = Number(opts.captchaGraceSec);
         }
+        if (opts.formWaitMs != null && Number(opts.formWaitMs) >= 3000) {
+            patch.bidderFormWaitMs = Math.min(30000, Math.round(Number(opts.formWaitMs)));
+        }
+        if (opts.openGapMs != null && Number(opts.openGapMs) >= 0) {
+            patch.bidderOpenGapMs = Math.min(10000, Math.round(Number(opts.openGapMs)));
+        }
+        if (opts.screenshotSettleSec != null && Number(opts.screenshotSettleSec) >= 0) {
+            patch.bidderScreenshotSettleSec = Math.min(8, Math.round(Number(opts.screenshotSettleSec)));
+        }
+        if (opts.maxTabs != null && Number(opts.maxTabs) >= 1) {
+            patch.bidderMaxTabs = Math.min(5, Math.round(Number(opts.maxTabs)));
+        }
         if (opts.capsolverApiKey != null) {
             patch.bidderCapsolverApiKey = String(opts.capsolverApiKey || '').trim();
         }
@@ -2499,7 +3056,10 @@ async function processReadyQueue(opts = {}) {
             uploadCoverLetter: patch.bidderUploadCoverLetter ?? prefs.uploadCoverLetter,
             stayInApp: true,
             unattended: patch.bidderUnattended ?? prefs.unattended,
-            autoSubmit: patch.bidderAutoSubmit ?? prefs.autoSubmit,
+            // Explicit boolean — never leave stale true when Process says false.
+            autoSubmit: patch.bidderAutoSubmit !== undefined
+                ? !!patch.bidderAutoSubmit
+                : prefs.autoSubmit,
             autoNext: patch.bidderAutoNext ?? prefs.autoNext,
             captchaHelper: patch.bidderCaptchaHelper ?? prefs.captchaHelper,
             humanAssistWaitMs: patch.bidderHumanAssistWaitSec != null
@@ -2634,6 +3194,8 @@ async function processReadyQueue(opts = {}) {
         const openTabs = new Map(); // tabId -> item
         // Greenhouse email OTP: keep these tabs open after queue (never leftover-close).
         const holdEmailOtpTabs = new Map(); // tabId -> { id, company_name, ... }
+        // Manual review (auto-submit off): keep apply tab open so user can check / submit.
+        const manualReviewTabs = new Map(); // tabId -> item
 
         for (let i = 0; i < items.length; i++) {
             const pauseGate = await waitWhileBidderPaused();
@@ -2642,7 +3204,8 @@ async function processReadyQueue(opts = {}) {
             if (state?.stopRequested) break;
 
             // Soft wait until under max tabs
-            while (openTabs.size >= BIDDER_DEFAULTS.maxTabs) {
+            const maxTabs = Math.max(1, Math.min(5, Number(prefs.maxTabs) || BIDDER_DEFAULTS.maxTabs));
+            while (openTabs.size >= maxTabs) {
                 await new Promise((r) => setTimeout(r, 1000));
                 // Drop closed tabs
                 for (const tid of [...openTabs.keys()]) {
@@ -2660,7 +3223,11 @@ async function processReadyQueue(opts = {}) {
                 }
             }
 
-            const gap = BIDDER_DEFAULTS.openGapMs - (Date.now() - lastOpenAt);
+            const openGap = Number(prefs.openGapMs);
+            const gapMs = Number.isFinite(openGap) && openGap >= 0
+                ? openGap
+                : BIDDER_DEFAULTS.openGapMs;
+            const gap = gapMs - (Date.now() - lastOpenAt);
             if (lastOpenAt && gap > 0) {
                 await new Promise((r) => setTimeout(r, gap));
             }
@@ -2711,13 +3278,22 @@ async function processReadyQueue(opts = {}) {
             openTabs.set(opened.tabId, item);
             await setQueueState({
                 currentTabId: opened.tabId,
-                currentJobUrl: applyUrl || opened.url || null
+                currentJobUrl: applyUrl || opened.url || null,
+                captchaTabMissing: false,
+                ownedTabAlive: true,
+                tabsByAppId: {
+                    ...((await getQueueState().catch(() => null))?.tabsByAppId || {}),
+                    [String(item.id)]: opened.tabId
+                }
             });
             await setAppRunState(item.id, 'gating', {
                 tabId: opened.tabId,
                 url: applyUrl || opened.url || null,
                 eventType: 'run_gating'
             }).catch(() => {});
+            // First live frame ASAP so Control is not stuck on "Waiting for live frames…"
+            void uploadScreenshot(item.id, 'opened', opened.tabId, { settleMs: 0, stayInApp: true })
+                .catch(() => {});
 
             try {
             let siteSuccess = false;
@@ -2756,14 +3332,31 @@ async function processReadyQueue(opts = {}) {
             // Apply-gate wait — ATS-aware (slow SPAs need longer; still capped).
             const formWaitMs = Math.min(
                 formWaitMsForAts(itemAts, Number(prefs.formWaitMs) || BIDDER_DEFAULTS.formWaitMs),
-                22000
+                16000
             );
             const formDeadline = Date.now() + formWaitMs;
             const bidLimitMs = bidLimitMsForAts(itemAts, { pageCount: 0 });
             const bidDeadline = Date.now() + bidLimitMs;
+            await setWorkProgress({
+                kind: 'queue',
+                phase: 'form_wait',
+                label: `Waiting for form (${Math.round(formWaitMs / 1000)}s max)…`,
+                company: item.company_name || '',
+                applicationId: item.id,
+                startedAt: Date.now()
+            }).catch(() => {});
+            let lastGateShotAt = 0;
             while (Date.now() < formDeadline) {
                 try {
                     await ensureScripts(opened.tabId);
+                    // Keep Live monitor updating during the gate wait (was stuck on “Waiting…”).
+                    if (Date.now() - lastGateShotAt > 1200) {
+                        lastGateShotAt = Date.now();
+                        void uploadScreenshot(item.id, 'live', opened.tabId, {
+                            settleMs: 0,
+                            stayInApp: true
+                        }).catch(() => {});
+                    }
                     const revealedEarly = await ensureApplyFormVisible(opened.tabId, {
                         profileEmail,
                         applicationId: item.id
@@ -2861,17 +3454,52 @@ async function processReadyQueue(opts = {}) {
                         break;
                     }
                 } catch (_) { /* loading */ }
-                await new Promise((r) => setTimeout(r, 800));
+                await new Promise((r) => setTimeout(r, 400));
             }
 
             if (opened.expired) continue;
 
-            // Unattended / user may have closed the apply tab — skip quietly.
+            // Unattended / user may have closed the apply tab — try URL rebind before skip.
             {
-                const alive = await chrome.tabs.get(opened.tabId).catch(() => null);
+                let alive = await chrome.tabs.get(opened.tabId).catch(() => null);
+                if (!alive) {
+                    const rebound = await findLiveApplyTabForUrl(applyUrl || opened.url || '');
+                    if (rebound?.id) {
+                        openTabs.delete(opened.tabId);
+                        opened.tabId = rebound.id;
+                        openTabs.set(opened.tabId, item);
+                        alive = rebound;
+                        await setQueueState({
+                            currentTabId: opened.tabId,
+                            captchaTabMissing: false,
+                            ownedTabAlive: true,
+                            tabsByAppId: {
+                                ...((await getQueueState().catch(() => null))?.tabsByAppId || {}),
+                                [String(item.id)]: opened.tabId
+                            }
+                        }).catch(() => {});
+                        await logCourseEvent(item.id, 'tab_rebound', {
+                            phase: 'form_wait',
+                            tabId: opened.tabId,
+                            url: rebound.url || applyUrl || null
+                        }).catch(() => {});
+                        void uploadScreenshot(item.id, 'live', opened.tabId, {
+                            settleMs: 0,
+                            stayInApp: true
+                        }).catch(() => {});
+                    }
+                }
                 if (!alive) {
                     openTabs.delete(opened.tabId);
-                    await logCourseEvent(item.id, 'tab_closed', { phase: 'form_wait' }).catch(() => {});
+                    await logCourseEvent(item.id, 'tab_closed', {
+                        phase: 'form_wait',
+                        reason: 'tab_missing_during_gating'
+                    }).catch(() => {});
+                    await setAppRunState(item.id, 'incomplete', {
+                        eventType: 'tab_closed',
+                        url: applyUrl || null
+                    }).catch(() => {});
+                    await notify('Bidder', 'Apply tab closed during gating — Open tab, then Re-fill');
                     continue;
                 }
             }
@@ -3035,10 +3663,60 @@ async function processReadyQueue(opts = {}) {
                     continue;
                 }
                 if (!formOk) {
-                    await logCourseEvent(item.id, 'no_form', {});
-                    await notify('Bidder', `No form in ${Math.round(formWaitMs / 1000)}s — skip ${item.company_name || item.id}`);
-                    try { await chrome.tabs.remove(opened.tabId); } catch (_) {}
-                    openTabs.delete(opened.tabId);
+                    // Last chance: scripts may have been late — collect once more before giving up.
+                    await ensureScripts(opened.tabId).catch(() => {});
+                    const lateReady = await waitForFormReady(opened.tabId, {
+                        minFields: 2,
+                        requireIdentity: false,
+                        profileFill: false,
+                        stableReads: 1,
+                        pollMs: 200,
+                        maxMs: 4000
+                    }).catch(() => null);
+                    if (lateReady?.ok && Number(lateReady.fieldCount || 0) >= 2) {
+                        formOk = true;
+                        await logCourseEvent(item.id, 'form_detected_late', {
+                            fieldCount: lateReady.fieldCount || 0,
+                            waitedMs: lateReady.waitedMs || 0
+                        }).catch(() => {});
+                    }
+                }
+                if (!formOk) {
+                    await logCourseEvent(item.id, 'no_form', {
+                        waitMs: formWaitMs,
+                        tabId: opened.tabId
+                    });
+                    await notify(
+                        'Bidder',
+                        `No form in ${Math.round(formWaitMs / 1000)}s — tab kept · Open + Re-fill`
+                    );
+                    await uploadScreenshot(item.id, 'no_form', opened.tabId, {
+                        settleMs: 0,
+                        stayInApp: true
+                    }).catch(() => {});
+                    // Never leftover-close here — that left users with an empty reopened tab + 0 processed.
+                    if (prefs.unattended) {
+                        try { await chrome.tabs.remove(opened.tabId); } catch (_) { /* ignore */ }
+                        openTabs.delete(opened.tabId);
+                    } else if (opened?.tabId) {
+                        manualReviewTabs.set(opened.tabId, item);
+                        openTabs.delete(opened.tabId);
+                        await focusBidderTabForReview(opened.tabId).catch(() => {});
+                        await setAppRunState(item.id, 'incomplete', {
+                            tabId: opened.tabId,
+                            eventType: 'no_form',
+                            url: applyUrl || opened.url || null
+                        }).catch(() => {});
+                        await setQueueState({
+                            status: 'awaiting_manual_submit',
+                            captchaTabId: opened.tabId,
+                            captchaApplicationId: item.id,
+                            captchaKind: 'manual_review',
+                            ownedTabAlive: true,
+                            coachStatus: 'Form not detected — Open tab, wait for fields, then Re-fill',
+                            coachAt: Date.now()
+                        }).catch(() => {});
+                    }
                     continue;
                 }
             }
@@ -3048,18 +3726,80 @@ async function processReadyQueue(opts = {}) {
             await logCourseEvent(item.id, 'form_revealed', revealed);
             await refocusStayInAppHome();
 
-            // Live frames fire on status events (≤0.5s) — no 3s interval.
-
-            // Let the form paint before the "opened" capture (was too early).
-            await new Promise((r) => setTimeout(r, 800));
+            // Form already passed DETECT in the gate loop — only a short stability check
+            // before fill (was a second full 8s wait that delayed typing).
             await ensureApplyFormVisible(opened.tabId);
-            await uploadScreenshot(item.id, 'opened', opened.tabId, { settleMs: 600, stayInApp: true });
-            await logCourseEvent(item.id, 'form_detected', { revealed });
+            const ready = await waitForFormReady(opened.tabId, {
+                minFields: 4,
+                requireIdentity: true,
+                profileFill: true,
+                stableReads: 1,
+                pollMs: 100,
+                maxMs: 2500
+            });
+            void uploadScreenshot(item.id, 'opened', opened.tabId, { settleMs: 0, stayInApp: true })
+                .catch(() => {});
+            await logCourseEvent(item.id, 'form_detected', {
+                revealed,
+                fieldCount: ready.fieldCount || 0,
+                ready: !!ready.ok,
+                reason: ready.reason || null,
+                waitedMs: ready.waitedMs || 0
+            });
+
+            // P2: do not burn Groq/files on a skeleton form (name/email only after timeout).
+            const thinCount = Number(ready.fieldCount || 0);
+            const thinForm = thinCount > 0 && thinCount < 4
+                && (/timeout_partial|timeout_empty/i.test(String(ready.reason || '')) || !ready.ok);
+            if (thinForm) {
+                await captureFailEvidence(
+                    item.id,
+                    opened.tabId,
+                    'form_too_thin',
+                    {
+                        phase: 'form_ready',
+                        error: `Only ${thinCount} field(s) mounted — waiting for full form`,
+                        url: applyUrl || opened.url || null
+                    }
+                ).catch(() => {});
+                await setAppRunState(item.id, 'incomplete', {
+                    tabId: opened.tabId,
+                    url: applyUrl || opened.url || null,
+                    eventType: 'form_too_thin'
+                }).catch(() => {});
+                await notify(
+                    'Bidder',
+                    `Form not ready (${thinCount} fields) — tab kept for review`
+                );
+                await playBidderSound(prefs.soundEnabled);
+                if (opened?.tabId) {
+                    manualReviewTabs.set(opened.tabId, item);
+                    openTabs.delete(opened.tabId);
+                    await focusBidderTabForReview(opened.tabId).catch(() => {});
+                    await setQueueState({
+                        status: 'awaiting_manual_submit',
+                        captchaTabId: opened.tabId,
+                        captchaApplicationId: item.id,
+                        captchaKind: 'manual_review',
+                        ownedTabAlive: true,
+                        coachStatus: 'Form still mounting — wait, then Re-fill or Reject',
+                        coachAt: Date.now()
+                    }).catch(() => {});
+                }
+                continue;
+            }
 
             await setAppRunState(item.id, 'filling', {
                 tabId: opened.tabId,
                 url: applyUrl || opened.url || null,
                 eventType: 'run_filling'
+            }).catch(() => {});
+            await setWorkProgress({
+                kind: 'queue',
+                phase: 'filling',
+                label: `Filling ${item.company_name || 'application'}…`,
+                applicationId: item.id,
+                company: item.company_name || ''
             }).catch(() => {});
 
             // Clear per-job lesson stash from prior item.
@@ -3202,40 +3942,81 @@ async function processReadyQueue(opts = {}) {
             }
 
             if (fillErr) {
-                const parkedRegen = /cv_regen_pending/i.test(String(fillErr?.message || ''))
+                const errMsg = String(fillErr?.message || '');
+                const parkedRegen = /cv_regen_pending/i.test(errMsg)
                     || fillErr?.code === 'cv_regen_pending';
+                const isBudget = /bid_time_budget|bid_budget/i.test(errMsg)
+                    || fillErr?.code === 'answers_budget_short';
+                const isThin = /form_too_thin/i.test(errMsg) || fillErr?.code === 'form_too_thin';
+                const isCaptcha = /captcha/i.test(errMsg);
                 // bid_budget_exceeded already logged — avoid a second FAILED event.
-                if (!parkedRegen && !/bid_time_budget|bid_budget/i.test(String(fillErr?.message || ''))) {
-                    await logCourseEvent(item.id, 'fill_failed', { error: fillErr?.message });
+                if (!parkedRegen && !isBudget && !isThin) {
+                    await logCourseEvent(item.id, 'fill_failed', {
+                        error: errMsg,
+                        tabId: opened.tabId
+                    });
                 }
-                await setAppRunState(item.id, parkedRegen ? 'incomplete' : 'failed', {
+                // Capture form + screenshot BEFORE any close/park so Control keeps evidence.
+                const snap = await captureFailEvidence(
+                    item.id,
+                    opened.tabId,
+                    isThin
+                        ? 'form_too_thin'
+                        : (isBudget ? 'bid_time_budget' : (parkedRegen ? 'cv_regen_pending' : 'fill_failed')),
+                    { phase: 'fill', error: errMsg, url: applyUrl || item.open_url || null }
+                ).catch(() => null);
+                await setAppRunState(item.id, parkedRegen || isBudget || isThin ? 'incomplete' : 'failed', {
                     tabId: opened.tabId,
-                    eventType: parkedRegen ? 'run_incomplete' : 'run_failed'
+                    missingRequired: snap?.missing || [],
+                    requiredOk: snap?.requiredOk,
+                    requiredTotal: snap?.requiredTotal,
+                    url: snap?.url || applyUrl || item.open_url || null,
+                    eventType: parkedRegen || isBudget || isThin ? 'run_incomplete' : 'run_failed'
                 }).catch(() => {});
                 await notify(
                     'Bidder',
                     parkedRegen
                         ? 'CV regenerating (pending) — will auto-rebid when it passes'
-                        : (/bid_time_budget|bid_budget/i.test(String(fillErr?.message || ''))
-                            ? `Time limit (~${Math.round(bidLimitMs / 1000)}s) — next job`
-                            : `Fill failed: ${fillErr.message}`)
+                        : (isThin
+                            ? 'Form still mounting — tab kept for review'
+                            : (isBudget
+                                ? `Time limit (~${Math.round(bidLimitMs / 1000)}s) — tab kept for review`
+                                : `Fill failed — tab kept for review: ${errMsg.slice(0, 80)}`))
                 );
                 await playBidderSound(prefs.soundEnabled);
-                if (
-                    prefs.unattended
-                    && (/captcha/i.test(String(fillErr?.message || '')) || parkedRegen)
-                ) {
+                // Unattended + captcha/regen: close after evidence. Otherwise PARK for checkout.
+                if (prefs.unattended && (isCaptcha || parkedRegen)) {
+                    await clearTabMapping({ applicationId: item.id, tabId: opened.tabId }).catch(() => {});
                     try { await chrome.tabs.remove(opened.tabId); } catch (_) { /* ignore */ }
                     openTabs.delete(opened.tabId);
+                } else if (opened?.tabId) {
+                    manualReviewTabs.set(opened.tabId, item);
+                    openTabs.delete(opened.tabId);
+                    await focusBidderTabForReview(opened.tabId).catch(() => {});
+                    await setQueueState({
+                        status: 'awaiting_manual_submit',
+                        captchaTabId: opened.tabId,
+                        captchaApplicationId: item.id,
+                        captchaKind: 'manual_review',
+                        ownedTabAlive: true,
+                        coachStatus: isThin
+                            ? 'Form still mounting — wait, then Re-fill'
+                            : (isBudget
+                                ? 'Time limit — review filled answers, then submit or Reject'
+                                : 'Fill issue — review answers on the apply tab, then submit or Reject'),
+                        coachAt: Date.now()
+                    }).catch(() => {});
                 }
                 continue;
             }
 
-            // Wait for React/Greenhouse to settle, then capture filled form (~2s).
-            const settleSec = Math.max(2, Math.min(6, Number(prefs.screenshotSettleSec) || 2));
-            await new Promise((r) => setTimeout(r, settleSec * 1000));
+            // Brief settle for React paint, then capture — do not force a 2s+ delay.
+            const settleSec = Math.max(0, Math.min(4, Number(prefs.screenshotSettleSec) || 0));
+            if (settleSec > 0) {
+                await new Promise((r) => setTimeout(r, settleSec * 1000));
+            }
             await ensureApplyFormVisible(opened.tabId);
-            await uploadScreenshot(item.id, 'after_fill', opened.tabId, { settleMs: 800, stayInApp: true });
+            await uploadScreenshot(item.id, 'after_fill', opened.tabId, { settleMs: 0, stayInApp: true });
             fillStats = normalizeFillStats(fillStats || {});
             await setAppRunState(item.id, 'verifying', {
                 tabId: opened.tabId,
@@ -3253,9 +4034,25 @@ async function processReadyQueue(opts = {}) {
                 requiredOk: fillStats?.requiredOk,
                 requiredTotal: fillStats?.requiredTotal
             });
+            await saveCapturedQuestionsPack({
+                applicationId: item.id,
+                company: item.company_name || '',
+                jobRole: item.job_role || '',
+                url: applyUrl || item.open_url || '',
+                questions: fillStats?.questionsList || [],
+                answers: fillStats?.answersList || []
+            }).catch(() => {});
 
             // Submit success path — proof screenshot defaults to site thank-you / success message.
-            submitted = !!fillStats?.submitClicked;
+            // Never treat engine submitClicked as intentional when Auto-submit is OFF.
+            submitted = !!fillStats?.submitClicked && !!prefs.autoSubmit;
+            if (fillStats?.submitClicked && !prefs.autoSubmit) {
+                await logCourseEvent(item.id, 'submit_suppressed', {
+                    reason: 'auto_submit_off',
+                    filled: fillStats?.filled || 0
+                }).catch(() => {});
+                fillStats = { ...(fillStats || {}), submitClicked: false };
+            }
             const fillIncomplete = fillIncompleteEarly;
             if (!submitted && prefs.autoSubmit) {
                 await setAppRunState(item.id, 'submitting', {
@@ -3447,7 +4244,7 @@ async function processReadyQueue(opts = {}) {
                             answersOnly: false
                         }).catch(() => null);
                         const reStats = normalizeFillStats(refills || {});
-                        if (canAutoSubmit(reStats, { autoSubmit: true })) {
+                        if (canAutoSubmit(reStats, { autoSubmit: !!prefs.autoSubmit })) {
                             const sub2 = await sendTabMessage(opened.tabId, { type: 'BIDDER_ENGINE_SUBMIT' }).catch(() => null);
                             if (sub2?.clicked) {
                                 await logCourseEvent(item.id, 'submit_clicked', { via: 'validation_refill' });
@@ -3715,29 +4512,36 @@ async function processReadyQueue(opts = {}) {
                     missingRequired: fillStats.missingRequired,
                     eventType: 'run_incomplete'
                 }).catch(() => {});
-                // Keep apply tab open for manual finish — do not close.
-                await refocusStayInAppHome();
+                // Keep apply tab open for manual finish — do not leftover-close.
+                manualReviewTabs.set(opened.tabId, item);
+                openTabs.delete(opened.tabId);
+                await focusBidderTabForReview(opened.tabId);
             } else if (!prefs.autoSubmit) {
                 await logCourseEvent(item.id, 'awaiting_manual_submit', {
                     filled: fillStats?.filled || 0
                 });
-                // Fill finished — close background tab; user stays on Job Links + Live monitor history.
+                // Keep apply tab open — user reviews answers / submits manually.
+                // Captured Q&A also live in the extension popup for editing.
                 await ensureApplyFormVisible(opened.tabId);
                 await uploadScreenshot(item.id, 'after_fill_done', opened.tabId, { stayInApp: true });
-                await closeBidderTab(opened.tabId);
+                manualReviewTabs.set(opened.tabId, item);
                 openTabs.delete(opened.tabId);
-                await refocusStayInAppHome();
+                await focusBidderTabForReview(opened.tabId);
                 await notify(
                     'Bidder',
-                    `Fill done (${fillStats?.filled || 0} fields) — tab closed. Review Live monitor / Bid course.`
+                    `Fill done (${fillStats?.filled || 0} fields) — tab kept open. Fix answers in the popup or submit on the form.`
                 );
             } else {
-                // autoSubmit on but could not click Submit — still FILLED for monitor.
+                // autoSubmit on but could not click Submit — keep tab for manual finish.
                 await ensureApplyFormVisible(opened.tabId);
                 await uploadScreenshot(item.id, 'after_fill_done', opened.tabId, { stayInApp: true });
-                await closeBidderTab(opened.tabId);
+                manualReviewTabs.set(opened.tabId, item);
                 openTabs.delete(opened.tabId);
-                await refocusStayInAppHome();
+                await focusBidderTabForReview(opened.tabId);
+                await notify(
+                    'Bidder',
+                    'Could not click Submit — tab kept open for you to finish.'
+                );
             }
 
             // Pause for Next unless autoNext
@@ -3796,9 +4600,10 @@ async function processReadyQueue(opts = {}) {
         }
 
         // Close leftover apply tabs — but NEVER close Greenhouse email-OTP tabs
-        // (Submit #1 done; waiting for code + Submit #2).
+        // (Submit #1 done; waiting for code + Submit #2), or manual-review tabs.
+        // Always capture evidence + clear tab mapping before close so Control stays honest.
         for (const tid of [...openTabs.keys()]) {
-            if (holdEmailOtpTabs.has(tid)) {
+            if (holdEmailOtpTabs.has(tid) || manualReviewTabs.has(tid)) {
                 openTabs.delete(tid);
                 continue;
             }
@@ -3809,27 +4614,47 @@ async function processReadyQueue(opts = {}) {
                 openTabs.delete(tid);
                 continue;
             }
+            const leftoverItem = openTabs.get(tid);
+            const leftoverAppId = leftoverItem?.id || null;
+            if (leftoverAppId) {
+                await captureFailEvidence(leftoverAppId, tid, 'leftover_sweep', {
+                    phase: 'leftover_sweep',
+                    url: leftoverItem?.open_url || null
+                }).catch(() => {});
+                await clearTabMapping({ applicationId: leftoverAppId, tabId: tid }).catch(() => {});
+            } else {
+                await clearTabMapping({ tabId: tid }).catch(() => {});
+            }
             await closeBidderTab(tid);
             openTabs.delete(tid);
         }
-        await refocusStayInAppHome();
+        const reviewHoldCount = manualReviewTabs.size;
+        if (!reviewHoldCount) {
+            await refocusStayInAppHome();
+        }
 
         const otpHoldCount = holdEmailOtpTabs.size;
         const firstOtpTab = otpHoldCount ? [...holdEmailOtpTabs.keys()][0] : null;
         const firstOtpItem = firstOtpTab ? holdEmailOtpTabs.get(firstOtpTab) : null;
+        const firstReviewTab = reviewHoldCount ? [...manualReviewTabs.keys()][0] : null;
+        const firstReviewItem = firstReviewTab ? manualReviewTabs.get(firstReviewTab) : null;
 
         await setQueueState({
-            running: otpHoldCount > 0,
-            status: otpHoldCount > 0 ? 'awaiting_email_otp' : 'done',
+            running: otpHoldCount > 0 || reviewHoldCount > 0,
+            status: otpHoldCount > 0
+                ? 'awaiting_email_otp'
+                : (reviewHoldCount > 0 ? 'awaiting_manual_submit' : 'done'),
             processed,
             skippedAts,
             queueEndedAt: Date.now(),
-            captchaTabId: firstOtpTab || null,
-            captchaApplicationId: firstOtpItem?.id || null,
-            captchaKind: otpHoldCount > 0 ? 'email_otp' : null,
+            captchaTabId: firstOtpTab || firstReviewTab || null,
+            captchaApplicationId: firstOtpItem?.id || firstReviewItem?.id || null,
+            captchaKind: otpHoldCount > 0 ? 'email_otp' : (reviewHoldCount > 0 ? 'manual_review' : null),
             coachStatus: otpHoldCount > 0
                 ? 'Security code tab(s) kept open — Instruct Lumi with the code, then Submit'
-                : null,
+                : (reviewHoldCount > 0
+                    ? 'Apply tab kept open — review answers in popup or submit on the form'
+                    : null),
             coachAt: Date.now()
         });
         if (otpHoldCount > 0) {
@@ -3837,12 +4662,19 @@ async function processReadyQueue(opts = {}) {
                 'Lumi — Security code',
                 `${otpHoldCount} Greenhouse tab(s) waiting for email code. Instruct Lumi with the code (second Submit).`
             );
+        } else if (reviewHoldCount > 0) {
+            await notify(
+                'Lumi — Review answers',
+                `${reviewHoldCount} apply tab(s) kept open. Edit answers in the extension popup, then submit on the form.`
+            );
         }
         const doneMsg = otpHoldCount > 0
             ? `Queue paused — ${otpHoldCount} tab(s) need email security code (Instruct Lumi)`
-            : (skippedAts
-                ? `Queue finished — processed ${processed}, skipped ${skippedAts} unsupported`
-                : `Queue finished — processed ${processed}`);
+            : (reviewHoldCount > 0
+                ? `Queue paused — ${reviewHoldCount} tab(s) open for review / manual submit`
+                : (skippedAts
+                    ? `Queue finished — processed ${processed}, skipped ${skippedAts} unsupported`
+                    : `Queue finished — processed ${processed}`));
         await notify('Bidder', doneMsg);
 
         // Drain any CVs that finished regenerating while this Process was running.
@@ -3851,7 +4683,7 @@ async function processReadyQueue(opts = {}) {
             const rebidIds = Array.isArray(stEnd?.pendingRebidIds)
                 ? stEnd.pendingRebidIds.map((id) => parseInt(id, 10)).filter((n) => Number.isInteger(n) && n > 0)
                 : [];
-            if (rebidIds.length && otpHoldCount === 0) {
+            if (rebidIds.length && otpHoldCount === 0 && reviewHoldCount === 0) {
                 await setQueueState({ pendingRebidIds: [] });
                 // Release lock first so nested Process can acquire it.
                 clearInterval(keepAlive);
@@ -5121,6 +5953,15 @@ async function generateBidderAnswersForItem(item, app, questions, engineLabel, b
                 provider: brain.provider || null
             }).catch(() => {});
         }
+        // Simplify-style: capture questions + answers for popup review / edit.
+        await saveCapturedQuestionsPack({
+            applicationId: item.id,
+            company: app.company_name || item.company_name || '',
+            jobRole: app.job_role || item.job_role || '',
+            url: item.open_url || '',
+            questions,
+            answers
+        }).catch(() => {});
         // Persist Policy labels into question memory so the next bid studies them.
         try {
             for (const a of answers) {
@@ -5251,20 +6092,25 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
 
         // Wait briefly for SPA form fields to mount (Oracle/Workday)
         let formSnap = null;
-        for (let readyTry = 0; readyTry < 6; readyTry++) {
+        for (let readyTry = 0; readyTry < 10; readyTry++) {
             formSnap = await collectForm(tabId).catch(() => null);
             if (formSnap?.blocked) {
                 throw new Error(formSnap.reason || 'Site blocked');
             }
-            if (formFieldCount(formSnap) > 0 || formFingerprint(formSnap)) break;
-            await new Promise((r) => setTimeout(r, 500));
+            // Do NOT use formFingerprint alone — empty forms still have a truthy fingerprint.
+            if (formHasUsableFields(formSnap, 4)
+                && (formHasCoreIdentity(formSnap) || formFieldCount(formSnap) >= 6)) {
+                break;
+            }
+            await new Promise((r) => setTimeout(r, 150));
         }
         const fp = formFingerprint(formSnap);
+        // lastFp = page we already filled. Do NOT set lastFp to the destination
+        // after Next — that skips fill+AI on page 2 (fp === lastFp && pages > 1).
         if (fp && fp === lastFp && pages > 1) {
-            // Page did not change after Next — stop looping
+            // Same fingerprint as the page we just filled — Next did not advance.
             break;
         }
-        lastFp = fp || lastFp;
 
         // Fresh questions on later pages → AI only when budget remains (≥12s).
         const pageQuestions = mapBidderQuestions(formSnap?.questions || []);
@@ -5287,7 +6133,7 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
             });
         }
 
-        await uploadScreenshot(item.id, `autofill_page_${pages}_before`, tabId, shotOpts({ settleMs: 400 }))
+        void uploadScreenshot(item.id, `autofill_page_${pages}_before`, tabId, shotOpts({ settleMs: 0 }))
             .catch(() => {});
 
         let fillResp = null;
@@ -5306,9 +6152,35 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
                     engine: AUTOFILL_ENGINE
                 });
                 fillErr = null;
+                // Post-fill re-collect: catch conditional fields that mounted mid-fill.
+                await new Promise((r) => setTimeout(r, 200));
+                const postForm = await collectForm(tabId).catch(() => null);
+                const postQs = mapBidderQuestions(postForm?.questions || []);
+                const postFresh = pickNewQuestions(postQs, answers);
+                if (postFresh.length && (bidDeadline - Date.now()) >= 8000) {
+                    const morePost = await generateBidderAnswersForItem(
+                        item,
+                        app,
+                        postFresh,
+                        engineLabel || engineLabelForAts(ats),
+                        Math.min(25000, bidDeadline - Date.now() - 4000)
+                    );
+                    answers = mergeAnswers(answers, morePost);
+                    fillResp = await fillAndUpload(tabId, {
+                        ...filePayload,
+                        profile: { ...profile, ...payload.profile },
+                        answers,
+                        jobDescription: app.job_description || '',
+                        autoSubmit: false,
+                        answersOnly: false,
+                        skipFiles: true,
+                        engine: AUTOFILL_ENGINE
+                    }).catch(() => fillResp);
+                }
+                const refillForm = postForm || formSnap;
                 if (
                     shouldRefillPage({
-                        form: formSnap,
+                        form: refillForm,
                         fillStats: {
                             filled: fillResp.fillStats?.filled || 0,
                             uploaded: fillResp.uploadStats?.uploaded || 0
@@ -5316,14 +6188,16 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
                         attempt,
                         maxAttempts: AUTOFILL_RETRY_PER_PAGE
                     })
+                    || (postFresh.length > 0 && attempt < AUTOFILL_RETRY_PER_PAGE)
                 ) {
                     await logCourseEvent(item.id, 'fill_retry', {
                         engine: AUTOFILL_ENGINE,
                         page: pages,
                         attempt,
-                        reason: 'low_coverage',
+                        reason: postFresh.length ? 'new_questions' : 'low_coverage',
                         filled: fillResp.fillStats?.filled || 0,
-                        fields: formFieldCount(formSnap)
+                        fields: formFieldCount(refillForm),
+                        fresh: postFresh.length
                     });
                     await new Promise((r) => setTimeout(r, 700));
                     continue;
@@ -5342,6 +6216,8 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
         }
         if (fillErr) throw fillErr;
         lastFillResp = fillResp;
+        // Record fingerprint of the page we just filled (not the Next destination).
+        lastFp = fp || lastFp;
 
         totalFilled += fillResp.fillStats?.filled || 0;
         totalUploaded += fillResp.uploadStats?.uploaded || 0;
@@ -5382,8 +6258,8 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
         }
 
         await new Promise((r) => setTimeout(r, pageSettleMs));
-        const afterForm = await collectForm(tabId).catch(() => null);
-        const afterFp = formFingerprint(afterForm);
+        let afterForm = await collectForm(tabId).catch(() => null);
+        let afterFp = formFingerprint(afterForm);
         if (!shouldAdvancePage({
             clickedNext: true,
             fingerprintBefore: beforeNextFp,
@@ -5391,9 +6267,21 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
             pages,
             maxPages: pageLimit
         })) {
-            break;
+            // SPA still painting — retry settle once before giving up.
+            await new Promise((r) => setTimeout(r, pageSettleMs));
+            afterForm = await collectForm(tabId).catch(() => null);
+            afterFp = formFingerprint(afterForm);
+            if (!shouldAdvancePage({
+                clickedNext: true,
+                fingerprintBefore: beforeNextFp,
+                fingerprintAfter: afterFp,
+                pages,
+                maxPages: pageLimit
+            })) {
+                break;
+            }
         }
-        lastFp = afterFp || lastFp;
+        // Do NOT set lastFp = afterFp here — next loop must fill the new page.
         // Continue loop for next page fill
     }
 
@@ -5727,14 +6615,27 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
     }
 
     await uploadScreenshot(item.id, 'pre_submit', tabId, shotOpts({ settleMs: 1000 })).catch(() => {});
+    // Never promote to FILLED from raw fill-count alone when required fields are incomplete/unknown-with-missing.
     const minFillForReady = 5;
+    const hasMissing = Array.isArray(lastMissingRequired) && lastMissingRequired.length > 0;
     const fillLooksComplete = lastRequiredComplete === true
-        || (lastRequiredComplete !== false && (
-            submitClicked
-            || totalFilled >= minFillForReady
-            || (totalFilled + totalUploaded) >= minFillForReady
-        ));
-    const incomplete = lastRequiredComplete === false || !fillLooksComplete;
+        || (
+            lastRequiredComplete !== false
+            && !hasMissing
+            && (
+                submitClicked
+                || (
+                    // Only use the 5-field heuristic when required tracking never ran.
+                    lastRequiredComplete == null
+                    && !(Number(lastRequiredTotal) > 0)
+                    && (
+                        totalFilled >= minFillForReady
+                        || (totalFilled + totalUploaded) >= minFillForReady
+                    )
+                )
+            )
+        );
+    const incomplete = lastRequiredComplete === false || hasMissing || !fillLooksComplete;
     if (incomplete) {
         await logCourseEvent(item.id, 'fill_incomplete', {
             ats,
@@ -5959,26 +6860,67 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         jobTitle: app.job_role || item.job_role
     });
 
-    // Fill name/email/phone ASAP — never wait on CV QA / AI answers for this.
+    // Fill name/email/phone ASAP — gate already found a form; only a short re-check.
     await setAutofillPanelStatus(tabId, 'Filling profile (name, email, phone)…', 12);
     await ensureApplyFormVisible(tabId).catch(() => {});
+    const earlyReady = await waitForFormReady(tabId, {
+        minFields: 3,
+        requireIdentity: true,
+        profileFill: false,
+        stableReads: 1,
+        pollMs: 100,
+        maxMs: 2000
+    }).catch(() => ({ ok: false, fieldCount: 0, reason: 'wait_failed' }));
+    const earlyCount = Number(earlyReady?.fieldCount || 0);
+    if (
+        earlyCount > 0 && earlyCount < 3
+        && (/timeout_partial|timeout_empty|wait_failed/i.test(String(earlyReady?.reason || '')) || !earlyReady?.ok)
+    ) {
+        const thinErr = new Error(`form_too_thin:${earlyCount}`);
+        thinErr.code = 'form_too_thin';
+        thinErr.fieldCount = earlyCount;
+        throw thinErr;
+    }
     try {
-        await sendTabMessage(tabId, {
+        let early = await sendTabMessage(tabId, {
             type: 'FILL_FORM',
             payload: {
                 profile: { ...profile, ...payload.profile },
                 answers: [],
                 autoSubmit: false,
                 skipFiles: true,
-                // Identity only — no heuristic essays that get overwritten by AI.
                 skipQuestions: true,
                 profileOnly: true
             }
         });
+        // Short second pass for late-mounted fields (was up to 4.5s).
+        await waitForFormReady(tabId, {
+            minFields: 4,
+            requireIdentity: true,
+            profileFill: true,
+            stableReads: 1,
+            pollMs: 100,
+            maxMs: 1800
+        }).catch(() => {});
+        const gap = await sendTabMessage(tabId, {
+            type: 'FILL_FORM',
+            payload: {
+                profile: { ...profile, ...payload.profile },
+                answers: [],
+                autoSubmit: false,
+                skipFiles: true,
+                skipQuestions: true,
+                profileOnly: true,
+                profileGapFill: true
+            }
+        }).catch(() => null);
+        const filledEarly = Number(early?.fillStats?.filled || 0)
+            + Number(gap?.fillStats?.filled || 0);
         await logCourseEvent(item.id, 'profile_fill_started', {
             ats,
             engine: engineLabel,
-            early: true
+            early: true,
+            filled: filledEarly
         });
     } catch (err) {
         console.warn('[bidder] early profile fill', err);
@@ -6103,20 +7045,28 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         35
     );
 
-    // AI answers — only when enough wall-clock budget remains (≥12s after reserve).
-    const remainingForAi = bidDeadline - Date.now() - 12000;
+    // Reserve wall-clock for verify/submit AFTER answers — never skip Groq then burn TIME LIMIT.
+    const ANSWERS_RESERVE_MS = 18000;
+    const MIN_ANSWERS_MS = 8000;
+    const remainingTotal = Math.max(0, bidDeadline - Date.now());
+    const remainingForAi = remainingTotal - ANSWERS_RESERVE_MS;
     let answersPromise;
-    if (questions.length && remainingForAi < 12000) {
+    if (questions.length && remainingForAi < MIN_ANSWERS_MS) {
         await logCourseEvent(item.id, 'ai_skipped_budget', {
             fresh: questions.length,
             questions: questions.length,
             duration_ms: 0,
-            remainingMs: Math.max(0, bidDeadline - Date.now()),
-            reason: 'pre_fill'
+            remainingMs: remainingTotal,
+            reason: 'answers_budget_short'
         }).catch(() => {});
+        // Park for checkout instead of profile-only then TIME LIMIT kill.
+        const budgetErr = new Error('bid_time_budget_exceeded');
+        budgetErr.code = 'answers_budget_short';
+        throw budgetErr;
+    } else if (!questions.length) {
         answersPromise = Promise.resolve([]);
     } else {
-        const answersBudgetMs = Math.min(50000, Math.max(0, remainingForAi));
+        const answersBudgetMs = Math.min(50000, Math.max(MIN_ANSWERS_MS, remainingForAi));
         answersPromise = generateBidderAnswersForItem(
             item,
             app,
@@ -6429,11 +7379,20 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             incomplete: !result.requiredComplete,
             missing: result.missingRequired || []
         });
+        await saveCapturedQuestionsPack({
+            applicationId: item.id,
+            company: app.company_name || item.company_name || '',
+            jobRole: app.job_role || item.job_role || '',
+            url: item.open_url || '',
+            questions,
+            answers
+        }).catch(() => {});
 
         return {
             filled: result.filled || 0,
             submitClicked: !!result.submitClicked,
             answersList: answers,
+            questionsList: questions,
             submitStats: { clicked: !!result.submitClicked },
             engine: engineLabel,
             requiredComplete: !!result.requiredComplete,
@@ -6444,6 +7403,52 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             attempts: result.attempts
         };
 }
+
+// When the user (or Chrome) closes an owned apply tab — clear stale Focus chips + log once.
+chrome.tabs.onRemoved.addListener((tabId) => {
+    (async () => {
+        const st = await getQueueState().catch(() => null);
+        if (!st) return;
+        const tid = Number(tabId);
+        const tabsByAppId = st.tabsByAppId || {};
+        let appId = null;
+        for (const [k, v] of Object.entries(tabsByAppId)) {
+            if (Number(v) === tid) {
+                appId = k;
+                break;
+            }
+        }
+        if (!appId && Number(st.currentTabId) === tid) appId = st.currentId || null;
+        if (!appId && Number(st.captchaTabId) === tid) appId = st.captchaApplicationId || null;
+        const ours = !!appId
+            || Number(st.currentTabId) === tid
+            || Number(st.captchaTabId) === tid;
+        if (!ours) return;
+        // Avoid duplicate tab_closed if leftover_sweep / fill park already logged.
+        const lastEv = String(st.lastStatusEvent || '');
+        const lastTab = Number(st.lastStatusMeta?.tabId || 0);
+        const alreadyLogged = /tab_closed/i.test(lastEv) && lastTab === tid
+            && (Date.now() - Number(st.lastStatusAt || 0) < 15_000);
+        if (appId && !alreadyLogged) {
+            await logCourseEvent(appId, 'tab_closed', {
+                reason: 'browser_closed',
+                phase: 'tabs.onRemoved',
+                tabId: tid,
+                missing: st.lastStatusMeta?.missing || st.runByAppId?.[String(appId)]?.missingRequired || undefined
+            }).catch(() => {});
+            await notify(
+                'Lumi',
+                'Apply tab closed — evidence kept · Open tab to continue checkout'
+            ).catch(() => {});
+        }
+        await clearTabMapping({ applicationId: appId, tabId: tid }).catch(() => {});
+        await setQueueState({
+            ownedTabAlive: false,
+            captchaTabMissing: true,
+            coachStatus: st.coachStatus || 'Apply tab closed — Open tab to continue checkout'
+        }).catch(() => {});
+    })().catch(() => {});
+});
 
 // Mode 2 / Bidder: when pendingFill tab finishes loading an apply-looking form, fill it.
 chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
@@ -6611,6 +7616,48 @@ chrome.commands.onCommand.addListener((command) => {
 });
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type === 'GET_CAPTURED_QUESTIONS') {
+        getLatestCapturedPack()
+            .then((pack) => sendResponse({ ok: true, pack }))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
+    if (msg?.type === 'SAVE_CAPTURED_ANSWER') {
+        (async () => {
+            const pack = await updateCapturedItemAnswer(
+                msg.applicationId || null,
+                Number(msg.index),
+                msg.answer
+            );
+            if (!pack) throw new Error('Captured question not found');
+            const item = pack.items?.[Number(msg.index)];
+            if (item?.label && String(msg.answer || '').trim()) {
+                await upsertQuestionMemory({
+                    kind: item.kind || undefined,
+                    question: item.label,
+                    answer: String(msg.answer).trim(),
+                    source: 'manual_fix'
+                }).catch(() => {});
+            }
+            // Also push correction into bid course when we have an application id.
+            if (pack.applicationId != null && item?.label) {
+                await savePackage(pack.applicationId, pack.items.map((row) => ({
+                    id: row.id,
+                    label: row.label,
+                    kind: row.kind,
+                    answer: row.answer,
+                    value: row.answer
+                })), {
+                    reason: 'popup_answer_edit',
+                    index: Number(msg.index)
+                }).catch(() => {});
+            }
+            return pack;
+        })()
+            .then((pack) => sendResponse({ ok: true, pack }))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
     if (msg?.type === 'ENSURE_US_DIAL_CODE') {
         const tabId = msg.tabId || _sender?.tab?.id;
         ensureUsDialCodeTrusted(tabId)
@@ -6637,7 +7684,26 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return true;
     }
     if (msg?.type === 'RUN_PROFILE_AUTOFILL') {
-        runFillOnly({ phase: 'profile' })
+        // Profile first, then answers API for remaining questions (essays / custom Qs).
+        runFillOnly({
+            phase: 'full',
+            answerMode: 'auto',
+            manualAutofill: true,
+            softSession: true,
+            softAnswers: true
+        })
+            .then((result) => sendResponse({ ok: true, result }))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
+    if (msg?.type === 'RUN_CONTINUE_FILL') {
+        runFillOnly({
+            phase: 'full',
+            answerMode: 'auto',
+            manualAutofill: true,
+            softSession: true,
+            fromPanel: true
+        })
             .then((result) => sendResponse({ ok: true, result }))
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
@@ -6709,7 +7775,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 'bidderSoundEnabled',
                 'bidderCapsolverApiKey',
                 'bidderTwocaptchaApiKey',
-                'bidderDisabledFillLessons'
+                'bidderDisabledFillLessons',
+                'bidderScreenshotSettleSec',
+                'bidderFormWaitMs',
+                'bidderOpenGapMs',
+                'bidderMaxTabs'
             ];
             const patch = {};
             for (const key of allowed) {
@@ -6721,6 +7791,22 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 patch.bidderHumanAssistWaitSec = sec;
                 patch.bidderCaptchaHelperWaitSec = sec;
                 patch.bidderCaptchaGraceSec = sec;
+            }
+            if (patch.bidderFormWaitMs != null) {
+                const ms = Math.round(Number(patch.bidderFormWaitMs));
+                if (Number.isFinite(ms)) patch.bidderFormWaitMs = Math.max(3000, Math.min(30000, ms));
+            }
+            if (patch.bidderOpenGapMs != null) {
+                const ms = Math.round(Number(patch.bidderOpenGapMs));
+                if (Number.isFinite(ms)) patch.bidderOpenGapMs = Math.max(0, Math.min(10000, ms));
+            }
+            if (patch.bidderScreenshotSettleSec != null) {
+                const sec = Math.round(Number(patch.bidderScreenshotSettleSec));
+                if (Number.isFinite(sec)) patch.bidderScreenshotSettleSec = Math.max(0, Math.min(8, sec));
+            }
+            if (patch.bidderMaxTabs != null) {
+                const n = Math.round(Number(patch.bidderMaxTabs));
+                if (Number.isFinite(n)) patch.bidderMaxTabs = Math.max(1, Math.min(5, n));
             }
             if (!Object.keys(patch).length) {
                 return { ok: false, error: 'No prefs to save' };
@@ -6746,6 +7832,44 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type === 'BIDDER_STATUS') {
         getBidderStatus()
             .then((data) => sendResponse({ ok: true, data }))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
+    if (msg?.type === 'GET_MONITOR_SNAPSHOT') {
+        (async () => {
+            const settings = await getSettings();
+            const profileId = msg.profileId || settings.selectedProfileId || null;
+            const [statusSettled, queuePair, readySettled, work] = await Promise.all([
+                getBidderStatus().then((data) => ({ ok: true, data })).catch((err) => ({
+                    ok: false,
+                    error: err?.message || String(err)
+                })),
+                Promise.all([getQueueState(), getUiMessageLog()]).then(async ([data, uiMessageLog]) => {
+                    const enriched = await enrichQueueSnapshot(data || {});
+                    return {
+                        ok: true,
+                        data: {
+                            ...enriched,
+                            uiMessageLog
+                        }
+                    };
+                }).catch((err) => ({ ok: false, error: err?.message || String(err) })),
+                listBidderReady(msg.limit || 50, profileId)
+                    .then((data) => ({ ok: true, data }))
+                    .catch((err) => ({ ok: false, error: err?.message || String(err) })),
+                getWorkProgress()
+            ]);
+            return {
+                ok: true,
+                at: Date.now(),
+                status: statusSettled,
+                queue: queuePair,
+                ready: readySettled,
+                work,
+                profileId
+            };
+        })()
+            .then((data) => sendResponse(data))
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
     }
@@ -7093,18 +8217,32 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             let tabId = null;
             let tabUrl = '';
 
-            // 0) Tab remembered for this applicationId (survives queue moving to another job)
+            // 0) Tab remembered for this applicationId — only if URL still matches THIS job.
             if (wantedAppId) {
                 const mapped = Number(st?.tabsByAppId?.[String(wantedAppId)] || 0) || 0;
                 if (mapped) {
                     const t = await tabAlive(mapped);
                     const u = t ? (t.pendingUrl || t.url || '') : '';
-                    // NEVER focus another job's apply tab just because it "looks like apply".
-                    if (t && (!wantedUrl || tabMatchesWanted(u))) {
+                    if (t && wantedUrl && tabMatchesWanted(u)) {
                         await focusTab(t);
                         tabId = t.id;
                         tabUrl = u;
                         focusedExisting = true;
+                    } else if (t && wantedUrl && !tabMatchesWanted(u)) {
+                        // Stale map pointed at another ATS/job (e.g. Lever while user wants Greenhouse).
+                        // Navigate this owned tab to the correct URL instead of focusing the wrong form.
+                        try {
+                            await chrome.tabs.update(t.id, { url: wantedUrl, active: true });
+                            if (t.windowId != null) {
+                                try { await chrome.windows.update(t.windowId, { focused: true }); } catch (_) { /* ignore */ }
+                            }
+                            tabId = t.id;
+                            tabUrl = wantedUrl;
+                            focusedExisting = true;
+                            navigated = true;
+                        } catch (_) { /* create below */ }
+                    } else if (t && !wantedUrl) {
+                        // No URL from Control — refuse to trust a mapped tab alone (wrong-job risk).
                     }
                 }
             }
@@ -7114,9 +8252,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 const preferredIds = [
                     msg.tabId,
                     wantedAppId && String(st?.currentId) === String(wantedAppId) ? st?.captchaTabId : null,
-                    wantedAppId && String(st?.currentId) === String(wantedAppId) ? st?.currentTabId : null,
-                    !wantedAppId ? st?.captchaTabId : null,
-                    !wantedAppId ? st?.currentTabId : null
+                    wantedAppId && String(st?.currentId) === String(wantedAppId) ? st?.currentTabId : null
+                    // Never fall back to captchaTabId/currentTabId without wantedAppId —
+                    // that focused leftover Lever/Greenhouse tabs for the wrong job.
                 ].map((n) => Number(n)).filter((n) => Number.isFinite(n) && n > 0);
 
                 for (const id of preferredIds) {
@@ -7124,7 +8262,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                     if (!t) continue;
                     const u = t.pendingUrl || t.url || '';
                     if (brokenLanding(u) && !looksLikeApplyTab(u)) continue;
-                    if (wantedUrl && !tabMatchesWanted(u)) continue;
+                    if (!wantedUrl || !tabMatchesWanted(u)) continue;
                     await focusTab(t);
                     tabId = t.id;
                     tabUrl = u;
@@ -7133,8 +8271,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 }
             }
 
-            // 2) Search existing apply tabs — MUST match wanted URL when provided.
-            if (!focusedExisting) {
+            // 2) Search existing apply tabs — MUST match wanted URL (token/job id).
+            if (!focusedExisting && wantedUrl) {
                 try {
                     const bgId = (await chrome.storage.session.get(['bidderBgWindowId']))?.bidderBgWindowId;
                     const pools = [];
@@ -7150,8 +8288,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                             if (!t?.id || seen.has(t.id)) continue;
                             seen.add(t.id);
                             const u = t.pendingUrl || t.url || '';
-                            if (!looksLikeApplyTab(u) && wantedUrl && !tabMatchesWanted(u)) continue;
-                            if (!wantedUrl) continue;
+                            if (!looksLikeApplyTab(u) && !tabMatchesWanted(u)) continue;
                             const match = urlsLooselySameJob(u, wantedUrl)
                                 || (wantedTok && ghToken(u) === wantedTok)
                                 || (wantedJob && ghJobId(u) === wantedJob && ghFor(u) === ghFor(wantedUrl));
@@ -7166,26 +8303,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 } catch (_) { /* ignore */ }
             }
 
-            // 3) Last resort: open/reopen THIS job's URL — never focus a random other apply tab.
-            if (!focusedExisting && msg.preferExistingTab !== false && !wantedUrl) {
-                try {
-                    const all = await chrome.tabs.query({});
-                    const applyTabs = (all || [])
-                        .filter((t) => looksLikeApplyTab(t?.pendingUrl || t?.url || ''))
-                        .sort((a, b) => (Number(b.lastAccessed) || 0) - (Number(a.lastAccessed) || 0));
-                    if (applyTabs[0]?.id) {
-                        await focusTab(applyTabs[0]);
-                        tabId = applyTabs[0].id;
-                        tabUrl = applyTabs[0].pendingUrl || applyTabs[0].url || '';
-                        focusedExisting = true;
-                    }
-                } catch (_) { /* ignore */ }
-            }
+            // 3) REMOVED: never focus a random recent apply tab when URL is missing
+            // (that opened leftover Lever while the user selected Greenhouse Figma).
 
             if (!focusedExisting) {
                 if (!wantedUrl) {
                     throw new Error(
-                        'No live apply tab found for this job and no URL to reopen. Select the Bid course, then Process again.'
+                        'No apply URL for this job. Select the Job Link / Bid course that has the Greenhouse/Lever apply link, then Open again.'
                     );
                 }
                 // Never open LinkedIn / non-apply source pages as the "apply tab".
@@ -7212,11 +8336,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 tabId = created.id;
                 tabUrl = wantedUrl;
                 reopened = true;
+            } else if (wantedUrl && tabUrl && !tabMatchesWanted(tabUrl) && msg.forceNavigate !== false) {
+                // Final safety: focused tab still wrong host/job → navigate.
+                try {
+                    await chrome.tabs.update(tabId, { url: wantedUrl });
+                    tabUrl = wantedUrl;
+                    navigated = true;
+                } catch (_) { /* ignore */ }
             }
 
             const patch = {
                 currentTabId: tabId,
-                captchaTabMissing: false
+                captchaTabMissing: false,
+                ownedTabAlive: true
             };
             if (wantedAppId) patch.currentId = wantedAppId;
             if (wantedUrl && !/linkedin\.com/i.test(wantedUrl)) patch.currentJobUrl = wantedUrl;
@@ -7233,7 +8365,30 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 if (wantedAppId) patch.captchaApplicationId = wantedAppId;
                 if (st?.status === 'awaiting_captcha') patch.status = 'awaiting_captcha';
             }
+            // Clear stale "Tab closed" coach so Control reflects the live tab.
+            if (focusedExisting || reopened) {
+                patch.coachStatus = reopened
+                    ? 'Apply tab reopened — click Re-fill to start filling'
+                    : 'Apply tab focused — click Re-fill if fields are empty';
+                patch.coachAt = Date.now();
+                if (/tab_closed/i.test(String(st?.lastStatusEvent || ''))) {
+                    patch.lastStatusEvent = reopened ? 'tab_reopened' : 'tab_focused';
+                    patch.lastStatusAt = Date.now();
+                    patch.lastStatusMeta = {
+                        ...(st?.lastStatusMeta || {}),
+                        reason: reopened ? 'reopened' : 'focused_existing',
+                        tabId
+                    };
+                }
+            }
             await setQueueState(patch);
+
+            if (wantedAppId && tabId) {
+                void uploadScreenshot(wantedAppId, reopened ? 'reopened' : 'live', tabId, {
+                    settleMs: 0,
+                    stayInApp: true
+                }).catch(() => {});
+            }
 
             await chrome.storage.session.set({
                 captchaUserFocusHoldUntil: Date.now() + 10 * 60 * 1000
@@ -7245,7 +8400,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 navigated,
                 focusedExisting,
                 applicationId: wantedAppId || null,
-                url: patch.currentJobUrl || tabUrl || null
+                url: patch.currentJobUrl || tabUrl || null,
+                needsRefill: !!(reopened || focusedExisting)
             });
         })().catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
@@ -8217,33 +9373,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     }
     if (msg?.type === 'BIDDER_QUEUE_STATE') {
         Promise.all([getQueueState(), getUiMessageLog()])
-            .then(([data, uiMessageLog]) => {
-                const st = data || {};
-                const appId = st.currentId || st.captchaApplicationId || st.lastApplicationId;
-                const runRow = appId && st.runByAppId
-                    ? st.runByAppId[String(appId)]
-                    : null;
-                const ownedTabId = Number(
-                    (appId && st.tabsByAppId?.[String(appId)])
-                    || st.currentTabId
-                    || st.captchaTabId
-                    || runRow?.tabId
-                    || 0
-                ) || null;
+            .then(async ([data, uiMessageLog]) => {
+                const enriched = await enrichQueueSnapshot(data || {});
                 sendResponse({
                     ok: true,
                     data: {
-                        ...st,
-                        uiMessageLog,
-                        runState: st.runState || runRow?.status || null,
-                        ownedTabId,
-                        ownedTabUrl: st.currentJobUrl || runRow?.url || null,
-                        missingRequired: runRow?.missingRequired
-                            || st.lastStatusMeta?.missing
-                            || st.lastStatusMeta?.missingRequired
-                            || [],
-                        captcha: /awaiting_captcha/i.test(String(st.status || ''))
-                            || !!runRow?.captcha
+                        ...enriched,
+                        uiMessageLog
                     }
                 });
             })

@@ -207,7 +207,7 @@ function formatJobLinkTimestamp(value) {
 
 /**
  * Single-line profile chips for a job link row.
- * Name + outcome badge (SUCCESS / FAILED / CV READY / …).
+ * Name + outcome badge (APPLIED / REJECTED / FILLED / CV READY / …).
  */
 function AvailableProfilesCell({ profiles }) {
     const list = Array.isArray(profiles) ? profiles : [];
@@ -218,19 +218,19 @@ function AvailableProfilesCell({ profiles }) {
     }
 
     const chipMeta = (p) => {
-        if (p.status === 'rejected' || p.state === 'rejected' || p.state === 'cancelled') {
+        if (p.status === 'rejected' || p.state === 'rejected' || p.state === 'cancelled' || p.bid_outcome === 'rejected') {
             return {
-                label: 'FAILED',
+                label: 'REJECTED',
                 className: 'border-red-500/50 bg-red-500/20 text-red-200'
             };
         }
         if (p.status === 'applied' || p.bid_applied || p.bid_outcome === 'applied') {
             return {
-                label: 'SUCCESS',
+                label: 'APPLIED',
                 className: 'border-emerald-500/50 bg-emerald-500/20 text-emerald-200'
             };
         }
-        if (p.status === 'interview') {
+        if (p.status === 'interview' || p.bid_outcome === 'interview') {
             return {
                 label: 'INTERVIEW',
                 className: 'border-sky-500/50 bg-sky-500/20 text-sky-200'
@@ -277,7 +277,7 @@ function AvailableProfilesCell({ profiles }) {
                 const gen = cvGenerationTimeLabel(p, { now });
                 const parts = [name, meta.label];
                 if (gen) parts.push(gen);
-                if (meta.label === 'FILLED') parts.push('form filled — not site SUCCESS');
+                if (meta.label === 'FILLED') parts.push('form filled — not applied yet');
                 if (p.status) parts.push(p.status);
                 if (p.generation_status) parts.push(p.generation_status);
                 return parts.join(' · ');

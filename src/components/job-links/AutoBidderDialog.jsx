@@ -492,11 +492,11 @@ function profileBidOutcome(courses, profileId, jobLinkIds) {
         if (counts[kind] != null) counts[kind] += 1;
     }
     if (!any) return null;
-    if (counts.failed) return { kind: 'failed', short: `FAILED×${counts.failed}` };
+    if (counts.failed) return { kind: 'failed', short: `REJECTED×${counts.failed}` };
     if (counts.attention) return { kind: 'attention', short: `CAPTCHA×${counts.attention}` };
     if (counts.running) return { kind: 'running', short: 'RUNNING' };
     if (counts.filled) return { kind: 'filled', short: `FILLED×${counts.filled}` };
-    if (counts.success) return { kind: 'success', short: `SUCCESS×${counts.success}` };
+    if (counts.success) return { kind: 'success', short: `APPLIED×${counts.success}` };
     return null;
 }
 
@@ -919,17 +919,31 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         return matchedProfileOptions.length ? matchedProfileOptions : profileOptions;
     }, [jobLinkIds.length, showAllProfiles, profileOptions, matchedProfileOptions]);
 
-    const profileStatusSuffix = (p) => {
+    const profileStatusSuffix = (p, bidOutcome) => {
         const parts = [];
-        if (p.generation_status === 'ready') parts.push('ready');
-        else if (p.generation_status === 'generating' || p.generation_status === 'pending') {
-            parts.push(p.generation_status);
-        } else if (p.generation_status === 'failed') parts.push('CV failed');
-        else if (p.matched) parts.push('no CV');
-        if (p.matched && p.selectedCount > 1 && p.matchCount < p.selectedCount) {
-            parts.push(`${p.matchCount}/${p.selectedCount} jobs`);
+        if (bidOutcome?.short) parts.push(bidOutcome.short);
+        const appStatus = String(p?.application_status || p?.status || '').toLowerCase();
+        if (appStatus === 'applied' || p?.bid_applied || p?.bid_outcome === 'applied') {
+            parts.push('APPLIED');
+        } else if (appStatus === 'rejected' || p?.state === 'rejected' || p?.bid_outcome === 'rejected') {
+            parts.push('REJECTED');
+        } else if (appStatus === 'interview' || p?.bid_outcome === 'interview') {
+            parts.push('INTERVIEW');
+        } else if (p?.generation_status === 'ready') {
+            parts.push('CV READY');
+        } else if (p?.generation_status === 'failed') {
+            parts.push('CV FAIL');
+        } else if (p?.generation_status === 'generating') {
+            parts.push('CV GEN…');
+        } else if (p?.generation_status === 'pending') {
+            parts.push('CV PENDING');
+        } else if (p?.matched) {
+            parts.push('NO CV');
         }
-        if (p.is_default) parts.push('default');
+        if (p?.matched && p?.selectedCount > 1 && (p.matchCount || 0) < p.selectedCount) {
+            parts.push(`${p.matchCount || 0}/${p.selectedCount} jobs`);
+        }
+        if (p?.is_default) parts.push('default');
         return parts.length ? ` · ${parts.join(' · ')}` : '';
     };
 
@@ -1315,10 +1329,12 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     useEffect(() => {
         const watching = (open && selectedId) || (monitorActive && selectedId);
         if (!watching) return undefined;
-        const activeBid = !!(queueState?.running || /awaiting_captcha|awaiting_email_otp/i.test(String(queueState?.status || '')));
+        const activeBid = !!(queueState?.running
+            || /awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|running/i.test(String(queueState?.status || ''))
+            || /gating|filling|opening/i.test(String(queueState?.runState || '')));
         const listTimer = setInterval(() => {
             loadList({ silent: true });
-        }, activeBid ? 10000 : 20000);
+        }, activeBid ? 8000 : 20000);
         return () => {
             clearInterval(listTimer);
         };
@@ -1497,7 +1513,10 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         let alive = true;
         const activeBid = !!(
             queueState?.running
-            || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_next)$/i.test(String(queueState?.status || ''))
+            || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_next|gating|filling)$/i.test(
+                String(queueState?.status || '')
+            )
+            || /^(?:gating|filling|opening|verifying|submitting)$/i.test(String(queueState?.runState || ''))
         );
         const poll = async () => {
             try {
@@ -1513,7 +1532,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             }
         };
         poll();
-        const t = setInterval(poll, activeBid ? 250 : 4000);
+        const t = setInterval(poll, activeBid ? 250 : 2000);
         return () => {
             alive = false;
             clearInterval(t);
@@ -1565,33 +1584,44 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         || queueState?.currentTabId
         || 0
     ) || null;
-    const ownedTabMapped = !!ownedTabId;
+    // Extension probes chrome.tabs.get — never trust a stale mapped id alone.
+    const ownedTabAlive = queueState?.ownedTabAlive === true
+        || (queueState?.ownedTabAlive == null && !!ownedTabId && !queueState?.captchaTabMissing);
+    const ownedTabMapped = !!ownedTabId && ownedTabAlive;
     const captchaTabMissing = !!queueState?.captchaTabMissing
+        || (ownedTabId > 0 && queueState?.ownedTabAlive === false)
         || (awaitingCaptcha && !ownedTabId);
     const viewingActiveQueueJob = !!(detailAppId && queueAppId && detailAppId === queueAppId);
-    const captchaApplyUrl = viewingActiveQueueJob
-        ? (pickApplyOpenUrl(
-            queueState?.currentJobUrl,
-            queueState?.ownedTabUrl,
-            queueState?.captchaJobUrl,
-            detail?.application?.open_url,
-            detail?.application?.job_url,
-            detail?.course?.job_url,
-            primaryJobUrl(
-                selectedLinks.find((l) => Number(l.id) === Number(detail?.course?.job_link_id))
-            )
-        ) || null)
-        : (pickApplyOpenUrl(
-            detail?.application?.open_url,
-            detail?.application?.job_url,
-            detail?.course?.job_url,
-            primaryJobUrl(
-                selectedLinks.find((l) => Number(l.id) === Number(detail?.course?.job_link_id))
-            ),
-            queueState?.currentJobUrl,
-            queueState?.ownedTabUrl,
-            queueState?.captchaJobUrl
-        ) || null);
+    // Prefer the SELECTED course / Job Link URL — never let a stale queue Lever URL
+    // win over the Greenhouse (etc.) link the user actually chose.
+    const selectedLinkUrl = primaryJobUrl(
+        selectedLinks.find((l) => Number(l.id) === Number(detail?.course?.job_link_id))
+    );
+    const detailApplyUrl = pickApplyOpenUrl(
+        detail?.application?.open_url,
+        detail?.application?.job_url,
+        detail?.course?.job_url,
+        selectedLinkUrl
+    );
+    const queueApplyUrl = pickApplyOpenUrl(
+        queueState?.currentJobUrl,
+        queueState?.ownedTabUrl,
+        queueState?.captchaJobUrl
+    );
+    const captchaApplyUrl = (() => {
+        if (detailApplyUrl && queueApplyUrl) {
+            // Same job in queue: prefer detail (canonical) when hosts differ (wrong-tab bug).
+            try {
+                const dh = new URL(detailApplyUrl).hostname.replace(/^www\./i, '');
+                const qh = new URL(queueApplyUrl).hostname.replace(/^www\./i, '');
+                if (dh !== qh) return detailApplyUrl;
+            } catch { /* ignore */ }
+        }
+        if (viewingActiveQueueJob) {
+            return pickApplyOpenUrl(detailApplyUrl, queueApplyUrl) || null;
+        }
+        return pickApplyOpenUrl(detailApplyUrl, queueApplyUrl) || null;
+    })();
 
     const lessonHost = useMemo(() => {
         const raw = captchaApplyUrl || queueState?.ownedTabUrl || queueState?.currentJobUrl || '';
@@ -1709,13 +1739,18 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             const applicationId = detailAppId
                 || queueAppId
                 || undefined;
+            if (!url) {
+                setError('No apply URL on this job — open the Job Link that has the Greenhouse/Lever apply link.');
+                return;
+            }
             // Always prefer the tab mapped to THIS course; never a random apply tab.
             const mappedTab = applicationId
                 ? (queueState?.tabsByAppId?.[String(applicationId)]
                     || queueState?.ownedTabId
                     || undefined)
                 : undefined;
-            const willReopenEmpty = captchaTabMissing || !mappedTab;
+            const willReopenEmpty = (captchaTabMissing || ownedTabAlive === false)
+                || (!mappedTab && !ownedTabId);
             if (willReopenEmpty && url) {
                 const ok = window.confirm(
                     'The owned apply tab is closed. Reopen it? The form will be empty and may need Re-fill.'
@@ -1728,7 +1763,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_CAPTCHA_FOCUS_TAB', 12000, {
                 url,
                 applicationId,
-                forceNavigate: false,
+                forceNavigate: true,
                 preferExistingTab: true,
                 tabId: mappedTab
                     || (viewingActiveQueueJob
@@ -1750,6 +1785,19 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                             : 'Opened apply tab'
             );
             setError('');
+            // Empty form after reopen/focus — offer Re-fill immediately (don’t wait another Process).
+            if ((reopened || focusedExisting) && typeof window !== 'undefined') {
+                const shouldFill = window.confirm(
+                    reopened
+                        ? 'Apply tab was reopened empty. Run Re-fill now?'
+                        : 'Apply tab focused. Fields may still be empty — run Re-fill now?'
+                );
+                if (shouldFill) {
+                    setBusy(false);
+                    await reAutofillCurrentJob();
+                    return;
+                }
+            }
         } catch (err) {
             setError(
                 err.message
@@ -2498,7 +2546,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             || /marked_applied|submitted_ok|mark_applied|submit_success_detected/i.test(t)
             || isSuccessEvent(queueState?.lastStatusEvent)
         ) {
-            return 'SUCCESS — Applied on site';
+            return 'APPLIED — Confirmed on site';
         }
         if (/awaiting_manual_submit|after_fill|fill_done|ready_to_submit|package_saved|reautofill_done/i.test(t)) {
             return 'Filled — waiting for thank-you';
@@ -2559,7 +2607,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         : null;
     const dockStatusRaw =
         (detailRun?.kind === 'success'
-            ? (detailRun.label || 'SUCCESS — Applied on site')
+            ? (detailRun.label || 'APPLIED — Confirmed on site')
             : null)
         || (bidProgress.tone === 'emerald' ? bidProgress.label : null)
         || (detailRun?.kind === 'success' ? detailRun.label : null)
@@ -2576,7 +2624,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         ? 100
         : bidProgress.pct;
     const dockProgressLabelRaw = detailRun?.kind === 'success' || bidProgress.tone === 'emerald'
-        ? (bidProgress.tone === 'emerald' ? bidProgress.label : (detailRun?.label || 'SUCCESS — Applied on site'))
+        ? (bidProgress.tone === 'emerald' ? bidProgress.label : (detailRun?.label || 'APPLIED — Confirmed on site'))
         : (bidProgress.label || dockStatus);
     const dockProgressLabel = shortenOutcomeLabel(dockProgressLabelRaw) || dockProgressLabelRaw;
     const dockProgressTone = detailRun?.kind === 'success' ? 'emerald' : bidProgress.tone;
@@ -2790,6 +2838,8 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                                 setShowAdvanced={setShowAdvanced}
                                 lumiPrefs={lumiPrefs}
                                 setLumiPrefs={setLumiPrefs}
+                                lumiPrefs={lumiPrefs}
+                                settingsHref={isAdmin ? '/admin/bidder-settings' : '/user/bidder-settings'}
                                 unattended={unattended}
                                 captchaHelper={captchaHelper}
                                 uploadCoverLetter={uploadCoverLetter}
@@ -2907,8 +2957,8 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                                 <div className="mb-2 flex flex-wrap items-center gap-1.5 border-b border-border/40 pb-2">
                                     {[
                                         { id: 'all', label: 'All', n: courses.length },
-                                        { id: 'success', label: 'SUCCESS', n: courseStats.success },
-                                        { id: 'failed', label: 'FAILED', n: courseStats.failed },
+                                        { id: 'success', label: 'APPLIED', n: courseStats.success },
+                                        { id: 'failed', label: 'REJECTED', n: courseStats.failed },
                                         { id: 'filled', label: 'FILLED', n: courseStats.filled },
                                         { id: 'attention', label: 'CAPTCHA', n: courseStats.attention },
                                         { id: 'running', label: 'RUNNING', n: courseStats.running }
@@ -3352,6 +3402,40 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             outcomeKind={detailRun?.kind || ''}
             outcomeShort={detailRun?.short || ''}
             outcomeLabel={detailRun?.label || ''}
+            applicationStatus={
+                detail?.application?.status
+                || detail?.course?.application_status
+                || (detailRun?.kind === 'success' ? 'applied' : '')
+                || ''
+            }
+            runPhase={
+                queueState?.runState
+                || queueState?.lastStatusEvent
+                || ''
+            }
+            queueStatus={queueState?.status || ''}
+            missingFields={
+                queueState?.missingRequired
+                || queueState?.lastStatusMeta?.missing
+                || queueState?.lastStatusMeta?.missingRequired
+                || []
+            }
+            lastError={
+                queueState?.lastStatusMeta?.error
+                || queueState?.lastStatusMeta?.reason
+                || ''
+            }
+            lastEventType={queueState?.lastStatusEvent || ''}
+            companyName={
+                detail
+                    ? (displayCompanyName(detail.course, detail.application, jobLinkById) || '')
+                    : ''
+            }
+            jobRole={
+                detail?.application?.job_role
+                || detail?.course?.job_role
+                || ''
+            }
             jobStartedAt={
                 detail?.course?.started_at
                 || queueState?.jobStartedAt
@@ -3373,8 +3457,9 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             controlsBusy={dockBusy || busy}
             awaitingCaptcha={awaitingCaptcha}
             captchaTabMissing={captchaTabMissing}
+            ownedTabAlive={ownedTabAlive}
             queueRunning={
-                /running|awaiting_captcha|awaiting_email_otp|awaiting_next/i.test(String(queueState?.status || ''))
+                /running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_next/i.test(String(queueState?.status || ''))
                 || !!queueState?.running
                 || monitorActive
             }
@@ -3388,6 +3473,8 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             cvFilename={dockCvFilename}
             cvDownloadUrl={dockCvDownloadUrl}
             cvEditHref={dockCvEditHref}
+            settingsHref={isAdmin ? '/admin/bidder-settings' : '/user/bidder-settings'}
+            prefsSummary={lumiPrefs}
             onOpenApplyTab={() => runDockControl(() => openCaptchaTab(), ownedTabMapped && !captchaTabMissing ? 'Focus tab' : 'Open apply tab')}
             onResumeCaptcha={() => runDockControl(
                 () => resumeCaptcha({ force: true, focusTab: true }),
@@ -3408,7 +3495,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                 setLocalNotifs([]);
                 setExtNotifs([]);
             }}
-            ownedTabId={ownedTabId}
+            ownedTabId={ownedTabAlive ? ownedTabId : null}
             ownedTabUrl={captchaApplyUrl || queueState?.ownedTabUrl || queueState?.currentJobUrl || ''}
             ownedTabMapped={ownedTabMapped}
             successConfirming={

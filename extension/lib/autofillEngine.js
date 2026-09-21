@@ -11,7 +11,7 @@
 
 export const AUTOFILL_ENGINE = 'autofill-engine-v3';
 export const AUTOFILL_MAX_PAGES = 6;
-export const AUTOFILL_PAGE_SETTLE_MS = 1800;
+export const AUTOFILL_PAGE_SETTLE_MS = 450;
 /** Was 3 — each full refill re-ran AI and stretched one bid past 10 minutes. */
 export const AUTOFILL_RETRY_PER_PAGE = 2;
 export const AUTOFILL_MIN_COVERAGE = 0.35;
@@ -21,9 +21,10 @@ export const BID_HARD_LIMIT_MS = 90000;
 /** Slower SPAs (Oracle / Workday) need longer Next-page settles. */
 export function settleMsForAts(ats) {
     const id = String(ats || '').toLowerCase();
-    if (id === 'oracle' || id === 'workday') return 2800;
-    if (id === 'icims' || id === 'smartrecruiters') return 2200;
-    if (id === 'ashby' || id === 'lever') return 2000;
+    if (id === 'oracle' || id === 'workday') return 900;
+    if (id === 'icims' || id === 'smartrecruiters') return 700;
+    if (id === 'ashby' || id === 'lever') return 500;
+    if (id === 'greenhouse') return 350;
     return AUTOFILL_PAGE_SETTLE_MS;
 }
 
@@ -51,6 +52,71 @@ export function formFieldCount(form) {
     const fields = Array.isArray(form.fields) ? form.fields.length : 0;
     const files = Array.isArray(form.fileInputs) ? form.fileInputs.length : 0;
     return fields + files;
+}
+
+/** True when the form has enough mounted inputs to start filling. */
+export function formHasUsableFields(form, minFields = 2) {
+    return formFieldCount(form) >= Math.max(1, Number(minFields) || 2);
+}
+
+/**
+ * Prefer waiting until identity fields exist (name/email) so we don't fill a
+ * skeleton that only has decoy inputs.
+ */
+export function formHasIdentityFields(form) {
+    const fields = Array.isArray(form?.fields) ? form.fields : [];
+    return fields.some((f) => {
+        const kind = String(f?.kind || '').toLowerCase();
+        const id = String(f?.id || '').toLowerCase();
+        const label = String(f?.label || '').toLowerCase();
+        if (/^(first_name|last_name|email|phone|full_name|name)$/.test(kind)) return true;
+        if (/first.?name|last.?name|e-?mail|phone|full.?name/.test(id)) return true;
+        if (/^(first|last)\s*name$|^email$|^phone$|^full\s*name$/.test(label)) return true;
+        if (/job_application\[(first_name|last_name|email|phone)\]/.test(id)) return true;
+        return false;
+    });
+}
+
+/**
+ * Core identity for profile fills — first name + email at minimum.
+ * Waiting only for "any identity field" caused fills to run when only
+ * first_name+email had mounted (rest of form still empty).
+ */
+export function formHasCoreIdentity(form) {
+    const fields = Array.isArray(form?.fields) ? form.fields : [];
+    let hasFirst = false;
+    let hasEmail = false;
+    let hasLast = false;
+    for (const f of fields) {
+        const kind = String(f?.kind || '').toLowerCase();
+        const id = String(f?.id || '').toLowerCase();
+        const label = String(f?.label || '').toLowerCase();
+        if (kind === 'first_name' || /first.?name/.test(id) || /^first\s*name$/.test(label)
+            || /job_application\[first_name\]/.test(id)) {
+            hasFirst = true;
+        }
+        if (kind === 'last_name' || /last.?name/.test(id) || /^last\s*name$/.test(label)
+            || /job_application\[last_name\]/.test(id)) {
+            hasLast = true;
+        }
+        if (kind === 'email' || /e-?mail/.test(id) || /^e-?mail$/.test(label)
+            || /job_application\[email\]/.test(id)) {
+            hasEmail = true;
+        }
+        if (kind === 'full_name' || (/full.?name/.test(id) && !/first|last/.test(id))) {
+            hasFirst = true;
+            hasLast = true;
+        }
+    }
+    return hasFirst && hasEmail && (hasLast || formFieldCount(form) >= 6);
+}
+
+/** Profile pass should wait for a fuller form, not just name+email. */
+export function formReadyForProfileFill(form, { minFields = 6 } = {}) {
+    const count = formFieldCount(form);
+    if (count >= Math.max(8, Number(minFields) || 6)) return true;
+    if (count >= Math.max(4, Number(minFields) || 6) && formHasCoreIdentity(form)) return true;
+    return false;
 }
 
 export function mergeAnswers(existing, incoming) {
@@ -143,7 +209,8 @@ export function shouldRefillPage({ form, fillStats, attempt, maxAttempts }) {
     const max = Number(maxAttempts) > 0 ? Number(maxAttempts) : AUTOFILL_RETRY_PER_PAGE;
     if (attempt >= max) return false;
     const total = formFieldCount(form);
-    if (total <= 0) return false;
+    // Form not mounted yet — retry so React/SPA can finish hydrating.
+    if (total <= 0) return true;
     const filled = Number(fillStats?.filled || 0) + Number(fillStats?.uploaded || 0);
     if (filled <= 0) return true;
     return filled / total < AUTOFILL_MIN_COVERAGE;

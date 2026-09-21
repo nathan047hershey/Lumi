@@ -864,7 +864,9 @@ async function generateApplicationAnswers({
     userId,
     /** Bidder engine only — longer essays + extra rules/few-shot block */
     bidderMode = false,
-    promptExtras = ''
+    promptExtras = '',
+    /** Force LLM for written Q&A — Autofill/answers always Groq (CV stays MiniMax). */
+    preferProvider = 'groq'
 }) {
     const list = Array.isArray(questions) ? questions.filter((q) => q && (q.label || q.id)) : [];
     if (!list.length) {
@@ -1231,6 +1233,28 @@ QUESTIONS (answer ALL ids):
 ${JSON.stringify(questionList, null, 2)}`;
 
     let provider = getAnswersProviderConfig();
+    // Written form answers → Groq only (rotate keys). Never MiniMax here;
+    // CV generation keeps MiniMax elsewhere. Override: ANSWERS_PROVIDER=minimax
+    // or preferProvider='minimax' / ANSWERS_USE_LOCAL=1.
+    const prefer = String(preferProvider || process.env.ANSWERS_PROVIDER || 'groq')
+        .trim()
+        .toLowerCase();
+    if (provider.provider !== 'local' && prefer !== 'minimax' && prefer !== 'deepseek') {
+        const groq = getAnswersGroqRescueConfig();
+        if (groq?.apiKey) {
+            if (provider.provider !== 'groq') {
+                console.warn(
+                    `[answers] Forcing Groq for question answers (was ${provider.provider})`
+                );
+            }
+            provider = groq;
+        } else if (provider.provider !== 'groq') {
+            console.warn(
+                '[answers] No Groq key — cannot force Groq; falling back to',
+                provider.provider
+            );
+        }
+    }
     const answersOnGroq = provider.provider === 'groq';
     // Prefer MiniMax highspeed only when answers actually run on MiniMax
     // (ANSWERS_PROVIDER=minimax override). Autofill default is Groq-only.
@@ -1263,7 +1287,7 @@ ${JSON.stringify(questionList, null, 2)}`;
             Authorization: `Bearer ${cfg.apiKey}`,
             'Content-Type': 'application/json'
         },
-        timeout: cfg.timeoutMs || (cfg.provider === 'local' ? 55000 : 55000)
+        timeout: cfg.timeoutMs || (cfg.provider === 'local' ? 40000 : 40000)
     });
 
     function trackAnswersUsage(response, cfg) {
@@ -1283,8 +1307,9 @@ ${JSON.stringify(questionList, null, 2)}`;
     }
 
     /**
-     * MiniMax first (rotate Key 1/2 on quota). Any MiniMax failure
-     * (timeout, 401, 413, 5xx, Akamai) → Groq. Groq rotates on quota/401.
+     * Default: Groq only (rotate keys on quota/401).
+     * Legacy MiniMax path only when ANSWERS_PROVIDER=minimax — then
+     * MiniMax key rotate, and Groq rescue on MiniMax failure.
      */
     async function runWithQuotaFallback(questionList, opts) {
         const triedKeys = new Set();

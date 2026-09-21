@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from '@/next/router';
 import {
+    Bot,
     LayoutDashboard,
     Users,
     ClipboardList,
@@ -101,7 +102,8 @@ function buildNavTree({ isAdmin, isCaller, isManagerOnly, isDeveloperOnly, hasMa
             primary: [
                 { to: '/manager/dashboard', label: 'Dashboard', icon: LayoutDashboard, match: ['/manager/dashboard'] },
                 { to: '/manager/profiles/new', label: 'Create Profile', icon: ClipboardList, match: ['/manager/profiles'] },
-                { to: '/manager/autofill-settings', label: 'Autofill', icon: PenLine, match: ['/manager/autofill-settings'] }
+                { to: '/manager/autofill-settings', label: 'Autofill', icon: PenLine, match: ['/manager/autofill-settings'] },
+                { to: '/manager/bidder-settings', label: 'Auto Bidder', icon: Bot, match: ['/manager/bidder-settings'] }
             ],
             more: []
         };
@@ -147,9 +149,10 @@ function buildNavTree({ isAdmin, isCaller, isManagerOnly, isDeveloperOnly, hasMa
                     id: 'people',
                     label: 'People',
                     icon: Users,
-                    match: ['/admin/profiles', '/admin/users', '/admin/assignments', '/admin/developers', '/admin/autofill-settings'],
+                    match: ['/admin/profiles', '/admin/users', '/admin/assignments', '/admin/developers', '/admin/autofill-settings', '/admin/bidder-settings'],
                     children: [
                         { to: '/admin/profiles', label: 'Profiles', icon: ClipboardList, end: true },
+                        { to: '/admin/bidder-settings', label: 'Auto Bidder', icon: Bot, end: true },
                         { to: '/admin/autofill-settings', label: 'Autofill', icon: PenLine, end: true },
                         { to: '/admin/assignments', label: 'Assignments', icon: Link2, end: true },
                         { to: '/admin/users', label: 'Users', icon: Users, end: true },
@@ -167,6 +170,7 @@ function buildNavTree({ isAdmin, isCaller, isManagerOnly, isDeveloperOnly, hasMa
 
     const more = [
         { to: '/user/templates', label: 'Templates', icon: LayoutTemplate },
+        { to: '/user/bidder-settings', label: 'Auto Bidder', icon: Bot },
         { to: '/user/autofill-settings', label: 'Autofill Settings', icon: PenLine },
         { to: '/user/dashboard', label: 'Dashboard', icon: LayoutDashboard }
     ];

@@ -65,14 +65,26 @@
       <div><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>Q</kbd> select questions</div>
       <div><kbd>Alt</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd> Autofill profile (no AI)</div>
       <div class="muted small">Then click <b>Answer questions</b> on the apply page (AI fills selected fields)</div>
-      <div class="muted small">v1.9.4 — Autofill Engineer v3 (multi-ATS)</div>
+      <div class="muted small">v2.1.9 — Live monitor · Groq answers · keep tab open</div>
+    </div>
+
+    <div id="capturedBox" class="last">
+      <div class="label">Captured questions</div>
+      <div id="capturedMeta" class="small muted">None yet — run Autofill / Process queue on an apply form.</div>
+      <div id="capturedList" class="captured-list"></div>
+      <button id="btnRefreshCaptured" class="btn ghost full">Refresh captured</button>
+      <button id="btnAiFillCaptured" class="btn secondary full">Fill empties with AI</button>
+      <p class="hint">Edit an answer and click <b>Save &amp; learn</b> — or <b>Fill empties with AI</b> (Groq answers API; needs CV).</p>
     </div>
 
     <div id="monitorBox" class="last">
-      <div class="label">Lumi · engine v1 (Greenhouse)</div>
+      <div class="label">Monitor · Live</div>
+      <div id="monitorPhase" class="monitor-phase">Idle</div>
+      <div id="monitorElapsed" class="monitor-elapsed muted small"></div>
       <div id="monitorSummary" class="small muted">Loading…</div>
-      <p class="hint">AFK / CAPTCHA keys: Settings in app</p>
-      <button id="btnOpenLumiSettings" class="btn secondary full">Open Lumi Settings</button>
+      <div id="monitorLog" class="monitor-log muted small"></div>
+      <p class="hint">AFK / CAPTCHA keys: Settings in app · times update every 1s while working</p>
+      <button id="btnOpenLumiSettings" class="btn secondary full">Open Auto Bidder settings</button>
       <div id="readyList" class="ready-list"></div>
       <button id="btnConnectJobLinks" class="btn secondary full">Connect Job Links tab</button>
       <button id="btnProcessQueue" class="btn primary full">Process ready queue</button>

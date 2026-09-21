@@ -435,7 +435,7 @@ export function liveStatusComment({
         return 'Form filled — waiting for submit / site thank-you.';
     }
     if (/marked_applied|submitted_ok|mark_applied|submit_success_detected/i.test(t)) {
-        return 'SUCCESS — site thank-you confirmed.';
+        return 'APPLIED — site thank-you confirmed.';
     }
     if (/submit_clicked/i.test(t)) {
         return 'Submitted — checking site confirmation…';
@@ -615,13 +615,13 @@ export function courseRunStatus(course) {
         || appStatus === 'applied'
         || isSuccessEvent(event)
     ) {
-        return { kind: 'success', label: 'SUCCESS — Site confirmed the application', short: 'SUCCESS' };
+        return { kind: 'success', label: 'APPLIED — Site confirmed the application', short: 'APPLIED' };
     }
     const shots = [].concat(course?.screenshots || [], course?.disk_screenshots || []);
     const hasThankYouProof = shots.some((s) => isProofScreenshotStage(s?.stage));
     if (hasThankYouProof && (course?.filled_at || isFilledEvent(event) || isCaptchaAttention(event, meta)
         || /submit_clicked/i.test(event))) {
-        return { kind: 'success', label: 'SUCCESS — Site confirmed the application', short: 'SUCCESS' };
+        return { kind: 'success', label: 'APPLIED — Site confirmed the application', short: 'APPLIED' };
     }
     if (isCaptchaAttention(event, meta)) {
         return {
@@ -654,7 +654,7 @@ export function courseRunStatus(course) {
         const shots = [].concat(course?.screenshots || [], course?.disk_screenshots || []);
         const proof = shots.some((s) => isProofScreenshotStage(s?.stage));
         if (hadFill || proof) {
-            return { kind: 'success', label: 'SUCCESS — Site confirmed the application', short: 'SUCCESS' };
+            return { kind: 'success', label: 'APPLIED — Site confirmed the application', short: 'APPLIED' };
         }
     }
     if (/^item_aborted$/i.test(event) && !isBudgetExceededMeta(meta)) {
@@ -712,7 +712,14 @@ export function courseRunStatus(course) {
             short: 'INCOMPLETE'
         };
     }
-    if (isFailureEvent(event, meta) || outcome === 'rejected' || appStatus === 'rejected') {
+    if (outcome === 'rejected' || appStatus === 'rejected') {
+        return {
+            kind: 'failed',
+            label: failureLabel(event, meta) || 'Rejected',
+            short: 'REJECTED'
+        };
+    }
+    if (isFailureEvent(event, meta)) {
         return {
             kind: 'failed',
             label: failureLabel(event, meta) || 'Failed',
@@ -860,10 +867,11 @@ export function runStatusBannerClass(kind) {
 export function runStatusHeadline(kind, short) {
     switch (kind) {
         case 'success':
-            return 'SUCCESS — Applied on site';
+            return 'APPLIED — Confirmed on site';
         case 'filled':
             return 'Filled — waiting for thank-you';
         case 'failed':
+            if (short === 'REJECTED') return 'REJECTED';
             if (short === 'TIME LIMIT') return 'TIME LIMIT — Bid budget used';
             if (short === 'RE-FILL FAIL') return 'RE-FILL FAIL — Could not re-autofill';
             return 'FAILED — Did not complete';
@@ -988,7 +996,7 @@ export function bidStageProgress({
     };
 
     if (/marked_applied|submitted_ok|mark_applied|submit_success_detected/i.test(t) || courseApplied) {
-        bump(4, 100, 'SUCCESS — Applied on site', 'emerald');
+        bump(4, 100, 'APPLIED — Confirmed on site', 'emerald');
     } else if (isTabClosedEvent(t, meta)) {
         bump(Math.max(stepIndex, 1), Math.max(pct, 40), 'TAB CLOSED — Open tab, then Re-autofill', 'amber');
     } else if (isBudgetExceededEvent(t, meta)) {
@@ -1021,7 +1029,7 @@ export function bidStageProgress({
     } else if (/done/i.test(qStatus)) {
         // Queue ended — classify outcome even if last event is still mid-fill.
         if (/marked_applied|submitted_ok|submitted/i.test(t)) {
-            bump(4, 100, 'SUCCESS — Applied on site', 'emerald');
+            bump(4, 100, 'APPLIED — Confirmed on site', 'emerald');
         } else if (/awaiting_manual_submit|after_fill|fill_done|ready_to_submit|reautofill_done/i.test(t)) {
             bump(4, 100, 'Filled — waiting for thank-you', 'sky');
         } else if (/fill_incomplete|submit_blocked_incomplete/i.test(t)) {
@@ -1043,13 +1051,15 @@ export function bidStageProgress({
                     ? `RE-FILL FAIL — ${meta.error || t}`
                     : `FAILED — ${meta.error || t}`, 'rose');
         } else if (/tab_closed|item_aborted/i.test(t) || isTabClosedEvent(t, meta)) {
-            bump(4, 90, isTabClosedEvent(t, meta)
-                ? 'TAB CLOSED — Open tab, then Re-autofill'
+            bump(2, 35, isTabClosedEvent(t, meta)
+                ? 'TAB CLOSED — Open tab, then Re-fill (fill never finished)'
                 : `SKIPPED — ${meta.error || t}`, 'amber');
         } else if (/needs_captcha|login_wall/i.test(t)) {
             bump(4, 90, 'Needs CAPTCHA / login — not finished', 'amber');
+        } else if (Number.isFinite(processed) && processed <= 0) {
+            bump(1, 25, 'Queue finished — 0 processed (no fill)', 'amber');
         } else {
-            bump(4, 100, 'Queue finished — NOT confirmed success (open Bid course)', 'muted');
+            bump(3, 55, 'Queue finished — NOT confirmed success (open Bid course)', 'muted');
         }
     } else if (/stopped/i.test(qStatus)) {
         bump(Math.max(stepIndex, 0), Math.max(pct, 20), 'Queue stopped — not a confirmed success', 'muted');
