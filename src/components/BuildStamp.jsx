@@ -6,12 +6,14 @@ function buildInfo() {
     if (iso) {
         const date = new Date(iso);
         if (!Number.isNaN(date.getTime())) {
-            updated = date.toLocaleString(undefined, {
+            updated = date.toLocaleString('en-US', {
+                timeZone: 'America/New_York',
                 month: 'short',
                 day: 'numeric',
                 year: 'numeric',
                 hour: 'numeric',
-                minute: '2-digit'
+                minute: '2-digit',
+                timeZoneName: 'short'
             });
         }
     }
