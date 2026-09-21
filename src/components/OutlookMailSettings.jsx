@@ -117,6 +117,15 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
     const connect = async () => {
         setBusy(true); setMsg(''); setDevice(null);
         try {
+            if ((status?.accounts || []).length > 0) {
+                window.open(
+                    'https://login.microsoftonline.com/common/oauth2/v2.0/logout',
+                    `ms-logout-${Date.now()}`,
+                    'width=520,height=640'
+                );
+                setMsg('Sign out of the current Microsoft account in the popup. Then come back here — a code for the new mailbox appears next.');
+                await new Promise((r) => setTimeout(r, 1200));
+            }
             const { data } = await userAPI.startOutlookDeviceCode();
             if (data.device_code) {
                 setDevice(data);
@@ -179,7 +188,9 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
                     </Button>
                 )}
             </div>
-            <p className="text-xs text-muted-foreground">Connect Outlook/Hotmail. Keep the panel open until it says Connected.</p>
+            <p className="text-xs text-muted-foreground">
+                Connect more than one Outlook or Hotmail. Microsoft reuses whichever account is already signed in, so adding another mailbox signs that session out first.
+            </p>
             {status?.config?.clientIdSet
                 ? <p className="text-xs text-emerald-300/80">Graph ready</p>
                 : <p className="text-xs text-amber-200/90">Set OUTLOOK_CLIENT_ID in server/.env</p>}
@@ -210,7 +221,7 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
             )}
             <Button type="button" size="sm" disabled={busy || !status?.config?.clientIdSet} onClick={connect}>
                 <Plus className="mr-1 h-3 w-3" />
-                {busy ? 'Waiting for Microsoft…' : 'Add mailbox'}
+                {busy ? 'Waiting for Microsoft…' : (accounts.length ? 'Add another mailbox' : 'Add mailbox')}
             </Button>
             {device?.user_code && (
                 <div className="rounded border border-sky-400/25 bg-sky-400/10 p-2">

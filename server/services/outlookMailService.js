@@ -219,6 +219,7 @@ function ensureTables() {
     `);
     try { db.run(`ALTER TABLE outlook_messages ADD COLUMN mailbox_id INTEGER`); } catch (_) { /* exists */ }
     try { db.run(`ALTER TABLE outlook_messages ADD COLUMN folder TEXT DEFAULT 'inbox'`); } catch (_) { /* exists */ }
+    try { db.run(`ALTER TABLE outlook_mailboxes ADD COLUMN delta_json TEXT`); } catch (_) { /* exists */ }
     db.run(`CREATE INDEX IF NOT EXISTS idx_outlook_msg_user_recv ON outlook_messages(user_id, received_at DESC)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_outlook_msg_otp ON outlook_messages(user_id, otp_code)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_outlook_msg_folder ON outlook_messages(user_id, folder, received_at DESC)`);
@@ -573,10 +574,11 @@ async function getAccessToken(mailboxId) {
     return data.access_token;
 }
 
-async function graphGet(mailboxId, path, params = {}) {
+async function graphGet(mailboxId, path, params = {}, extraHeaders = {}) {
     const token = await getAccessToken(mailboxId);
+    const headers = { Authorization: `Bearer ${token}`, ...extraHeaders };
     const { data, status } = await axios.get(`${GRAPH}${path}`, {
-        headers: { Authorization: `Bearer ${token}` },
+        headers,
         params,
         timeout: 30000,
         validateStatus: () => true
@@ -592,7 +594,7 @@ async function graphGet(mailboxId, path, params = {}) {
             });
             await saveTokens(mailboxId, tok);
             const again = await axios.get(`${GRAPH}${path}`, {
-                headers: { Authorization: `Bearer ${tok.access_token}` },
+                headers: { Authorization: `Bearer ${tok.access_token}`, ...extraHeaders },
                 params,
                 timeout: 30000,
                 validateStatus: () => true
@@ -623,13 +625,34 @@ async function graphGetUrl(mailboxId, url) {
 }
 
 function graphSinceIso(mailbox) {
-    // Unfiltered $orderby pages stay frozen at connect time on Graph.
-    // A moving receivedDateTime filter forces mail that arrived after connect.
+    // Always look back far enough to include mail that arrived after connect.
+    // Do not advance this floor with last_sync — that hid anything Graph's
+    // frozen $orderby page never returned.
     const lookbackMs = 21 * 24 * 60 * 60 * 1000;
-    const floor = Date.now() - lookbackMs;
-    const last = mailbox?.last_sync_at ? Date.parse(mailbox.last_sync_at) : NaN;
-    const since = Number.isFinite(last) ? Math.max(floor, last - 12 * 60 * 60 * 1000) : floor;
-    return new Date(since).toISOString().replace(/\.\d{3}Z$/, 'Z');
+    const connected = mailbox?.connected_at ? Date.parse(mailbox.connected_at) : NaN;
+    const fromConnect = Number.isFinite(connected) ? connected - 60 * 60 * 1000 : Date.now();
+    const since = Math.max(Date.now() - lookbackMs, Math.min(fromConnect, Date.now()));
+    return new Date(Math.min(since, Date.now() - 14 * 24 * 60 * 60 * 1000)).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
+function loadDeltaMap(mailbox) {
+    try {
+        const parsed = JSON.parse(mailbox?.delta_json || '{}');
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (_) {
+        return {};
+    }
+}
+
+function saveDeltaLink(mailboxId, folderId, link) {
+    const row = getMailbox(mailboxId);
+    const map = loadDeltaMap(row);
+    if (link) map[folderId] = link;
+    else delete map[folderId];
+    runQuery(
+        `UPDATE outlook_mailboxes SET delta_json = ? WHERE id = ?`,
+        [JSON.stringify(map), mailboxId]
+    );
 }
 
 async function graphPost(mailboxId, path, body) {
@@ -702,37 +725,59 @@ function upsertMessage(userId, mailboxId, msg, folder = 'inbox') {
 
 async function syncFolder(mailbox, folderSpec) {
     const since = graphSinceIso(mailbox);
-    const base = {
-        $top: 50,
-        $orderby: 'receivedDateTime desc',
-        $filter: `receivedDateTime ge ${since}`
-    };
-    let data;
-    try {
-        data = await graphGet(mailbox.id, `/me/mailFolders/${folderSpec.path}/messages`, {
-            ...base,
-            $select: 'id,subject,from,receivedDateTime,bodyPreview,body,isRead'
-        });
-    } catch (err) {
-        // body + orderby is often "too complex" — retry without body so new mail still lands.
-        data = await graphGet(mailbox.id, `/me/mailFolders/${folderSpec.path}/messages`, {
-            ...base,
-            $select: 'id,subject,from,receivedDateTime,bodyPreview,isRead'
-        });
-        if (err) { /* logged via fallback success */ }
-    }
+    const select = 'id,subject,from,receivedDateTime,bodyPreview,isRead';
     const list = [];
     const take = (rows) => {
-        for (const msg of rows || []) list.push(msg);
+        for (const msg of rows || []) {
+            if (!msg || msg['@removed']) continue;
+            list.push(msg);
+        }
     };
-    take(data?.value);
-    let next = data?.['@odata.nextLink'] || null;
-    let pages = 0;
-    while (next && pages < 2 && list.length < 100) {
-        pages += 1;
-        const more = await graphGetUrl(mailbox.id, next);
-        take(more?.value);
-        next = more?.['@odata.nextLink'] || null;
+
+    // Delta is the only Graph call that keeps returning mail received after connect.
+    // $orderby=receivedDateTime desc stays frozen on the page from the first sync.
+    const saved = loadDeltaMap(mailbox)[folderSpec.id] || '';
+    let deltaLink = '';
+    try {
+        let data;
+        if (saved.startsWith('http')) {
+            data = await graphGetUrl(mailbox.id, saved);
+        } else {
+            data = await graphGet(mailbox.id, `/me/mailFolders/${folderSpec.path}/messages/delta`, {
+                $filter: `receivedDateTime ge ${since}`,
+                $select: select,
+                $top: 50
+            });
+        }
+        take(data?.value);
+        deltaLink = data?.['@odata.deltaLink'] || '';
+        let next = data?.['@odata.nextLink'] || null;
+        let pages = 0;
+        while (next && pages < (folderSpec.id === 'inbox' ? 6 : 2) && list.length < 200) {
+            pages += 1;
+            const more = await graphGetUrl(mailbox.id, next);
+            take(more?.value);
+            deltaLink = more?.['@odata.deltaLink'] || deltaLink;
+            next = more?.['@odata.nextLink'] || null;
+            if (deltaLink && !next) break;
+        }
+        if (deltaLink) saveDeltaLink(mailbox.id, folderSpec.id, deltaLink);
+        else if (next) saveDeltaLink(mailbox.id, folderSpec.id, next);
+    } catch (err) {
+        console.warn('[outlook] delta sync', folderSpec.id, err?.message || err);
+        saveDeltaLink(mailbox.id, folderSpec.id, '');
+        const data = await graphGet(
+            mailbox.id,
+            `/me/mailFolders/${folderSpec.path}/messages`,
+            {
+                $top: 40,
+                $filter: `receivedDateTime ge ${since}`,
+                $select: select,
+                $count: 'true'
+            },
+            { ConsistencyLevel: 'eventual' }
+        );
+        take(data?.value);
     }
     let otps = 0;
     let hydrated = 0;
@@ -827,9 +872,13 @@ function listMessages(userId, { limit = 30, mailbox_id = null, folder = null } =
                COALESCE(folder, 'inbox') AS folder
         FROM outlook_messages
         WHERE user_id = ?`;
-    if (mailbox_id != null && mailbox_id !== '' && mailbox_id !== 'all') {
+    const rawMb = mailbox_id == null ? '' : String(mailbox_id);
+    if (rawMb.startsWith('gmail:')) {
         sql += ` AND mailbox_id = ?`;
-        params.push(Number(mailbox_id));
+        params.push(-Number(rawMb.slice(6)));
+    } else if (rawMb && rawMb !== 'all') {
+        sql += ` AND mailbox_id = ?`;
+        params.push(Number(rawMb));
     }
     if (folder && folder !== 'all') {
         sql += ` AND COALESCE(folder, 'inbox') = ?`;
@@ -870,9 +919,13 @@ function folderCounts(userId, mailboxId = null) {
                SUM(CASE WHEN is_read = 0 THEN 1 ELSE 0 END) AS unread
         FROM outlook_messages
         WHERE user_id = ?`;
-    if (mailboxId != null && mailboxId !== '' && mailboxId !== 'all') {
+    const rawMb = mailboxId == null ? '' : String(mailboxId);
+    if (rawMb.startsWith('gmail:')) {
         sql += ` AND mailbox_id = ?`;
-        params.push(Number(mailboxId));
+        params.push(-Number(rawMb.slice(6)));
+    } else if (rawMb && rawMb !== 'all') {
+        sql += ` AND mailbox_id = ?`;
+        params.push(Number(rawMb));
     }
     sql += ` GROUP BY COALESCE(folder, 'inbox')`;
     return getAll(sql, params);

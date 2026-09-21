@@ -20,6 +20,7 @@ import OutlookMailSettings, {
     loadOutlookPersistBundle,
     saveOutlookPersistBundle
 } from '@/components/OutlookMailSettings';
+import GmailMailSettings from '@/components/GmailMailSettings';
 import { cn } from '@/lib/utils';
 
 const FOLDERS = [
@@ -42,6 +43,20 @@ function formatDate(iso) {
         return d.toLocaleDateString([], { weekday: 'short' });
     }
     return d.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+function mergeMailAccounts(data) {
+    const outlook = (data?.accounts || []).map((a) => ({
+        ...a,
+        provider: 'outlook',
+        optionValue: String(a.id)
+    }));
+    const gmail = (data?.gmail || []).map((a) => ({
+        ...a,
+        provider: 'gmail',
+        optionValue: `gmail:${a.id}`
+    }));
+    return [...outlook, ...gmail];
 }
 
 function initials(name, email) {
@@ -70,8 +85,8 @@ export default function OutlookMailbox() {
         try {
             const res = await userAPI.getOutlookStatus();
             setStatus(res.data);
-            setAccounts(res.data?.accounts || []);
-            if (!(res.data?.accounts || []).length) setShowConnect(true);
+            setAccounts(mergeMailAccounts(res.data));
+            if (!(res.data?.accounts || []).length && !(res.data?.gmail || []).length) setShowConnect(true);
             return res.data;
         } catch (err) {
             console.error('Failed to fetch outlook status:', err);
@@ -96,15 +111,27 @@ export default function OutlookMailbox() {
 
     const onAccountsChange = useCallback(async (nextAccounts, meta = {}) => {
         if (Array.isArray(nextAccounts)) {
-            setAccounts(nextAccounts);
+            setAccounts((prev) => {
+                const gmail = prev.filter((a) => a.provider === 'gmail');
+                const outlook = nextAccounts.map((a) => ({
+                    ...a,
+                    provider: 'outlook',
+                    optionValue: String(a.id)
+                }));
+                return [...outlook, ...gmail];
+            });
             if (nextAccounts.length) setShowConnect(false);
-        } else {
-            await fetchStatus();
         }
+        await fetchStatus();
         if (meta.synced) {
             setLoading(true);
             await fetchMessages();
         }
+    }, [fetchStatus, fetchMessages]);
+
+    const onGmailChange = useCallback(async () => {
+        await fetchStatus();
+        await fetchMessages();
     }, [fetchStatus, fetchMessages]);
 
     useEffect(() => {
@@ -122,13 +149,15 @@ export default function OutlookMailbox() {
                 if (restored.data?.persist_bundle) {
                     saveOutlookPersistBundle(restored.data.persist_bundle);
                 }
-                setAccounts(restored.data?.accounts || []);
+                setAccounts(mergeMailAccounts({ accounts: restored.data?.accounts || [] }));
                 if ((restored.data?.accounts || []).length) {
                     setShowConnect(false);
                     setSyncing(true);
                     try {
                         await userAPI.syncOutlook();
+                        await userAPI.syncGmailImap({}).catch(() => {});
                         await fetchMessages();
+                        await fetchStatus();
                     } finally {
                         if (!cancelled) setSyncing(false);
                     }
@@ -154,9 +183,8 @@ export default function OutlookMailbox() {
         let cancelled = false;
         const pull = async () => {
             try {
-                const payload = mailboxId !== 'all' ? { mailbox_id: Number(mailboxId) } : {};
-                await userAPI.syncOutlook(payload);
-                await userAPI.syncGmailImap(payload).catch(() => {});
+                await userAPI.syncOutlook({});
+                await userAPI.syncGmailImap({}).catch(() => {});
                 if (!cancelled) {
                     await fetchMessages();
                     await fetchStatus();
@@ -173,14 +201,14 @@ export default function OutlookMailbox() {
             cancelled = true;
             clearInterval(timer);
         };
-    }, [accounts.length, mailboxId, fetchMessages, fetchStatus]);
+    }, [accounts.length, fetchMessages, fetchStatus]);
 
     const handleSync = async () => {
         setSyncing(true);
         setError(null);
         try {
-            const payload = mailboxId !== 'all' ? { mailbox_id: Number(mailboxId) } : {};
-            await userAPI.syncOutlook(payload);
+            await userAPI.syncOutlook({});
+            await userAPI.syncGmailImap({}).catch(() => {});
             await fetchMessages();
             await fetchStatus();
         } catch (err) {
@@ -237,7 +265,7 @@ export default function OutlookMailbox() {
         } catch (_) { /* ignore */ }
     };
 
-    const activeAccount = accounts.find((a) => String(a.id) === String(mailboxId));
+    const activeAccount = accounts.find((a) => String(a.optionValue || a.id) === String(mailboxId));
     const configured = !!(status?.configured || status?.config?.clientIdSet || status?.config?.configured);
 
     return (
@@ -316,8 +344,8 @@ export default function OutlookMailbox() {
                         >
                             <option value="all">All mailboxes</option>
                             {accounts.map((acc) => (
-                                <option key={acc.id} value={String(acc.id)}>
-                                    {acc.email || acc.display_name || `Mailbox ${acc.id}`}
+                                <option key={acc.optionValue || acc.id} value={acc.optionValue || String(acc.id)}>
+                                    {(acc.provider === 'gmail' ? 'Gmail · ' : 'Outlook · ') + (acc.email || acc.display_name || 'Mailbox')}
                                 </option>
                             ))}
                         </select>
@@ -358,10 +386,14 @@ export default function OutlookMailbox() {
                     </nav>
 
                     {showConnect && (
-                        <div className="max-h-[45%] overflow-y-auto border-t border-white/[0.06] p-2">
+                        <div className="max-h-[70%] space-y-2 overflow-y-auto border-t border-white/[0.06] p-2">
                             <OutlookMailSettings
                                 className="!border-white/[0.08] !bg-white/[0.03]"
                                 onAccountsChange={onAccountsChange}
+                            />
+                            <GmailMailSettings
+                                className="!border-white/[0.08] !bg-white/[0.03]"
+                                onAccountsChange={onGmailChange}
                             />
                         </div>
                     )}

@@ -18,7 +18,7 @@ const { extractOtp, htmlToText, upsertInboundMessage } = require('./outlookMailS
 
 const HOST_DEFAULT = 'imap.gmail.com';
 const POLL_MS = Math.max(15_000, Number(process.env.GMAIL_IMAP_POLL_MS) || 30_000);
-const LOOKBACK_MS = Math.max(60_000, Number(process.env.GMAIL_IMAP_LOOKBACK_MS) || 2 * 24 * 3600 * 1000);
+const LOOKBACK_MS = Math.max(60_000, Number(process.env.GMAIL_IMAP_LOOKBACK_MS) || 14 * 24 * 3600 * 1000);
 const FILTER_RE = /greenhouse|security\s*code|verification\s*code|one[-\s]?time|confirm\s+your\s+email|passcode|otp/i;
 
 let pollTimer = null;
@@ -287,23 +287,20 @@ async function syncMailbox(mailboxId) {
         const lock = await client.getMailboxLock('INBOX');
         try {
             const since = new Date(Date.now() - LOOKBACK_MS);
-            // Include already-read mail. seen:false froze the list at whatever
-            // was unread at connect time, so later mail never appeared.
             const uids = await client.search({ since }, { uid: true });
-            const list = Array.isArray(uids) ? uids.slice(-25) : [];
+            const list = Array.isArray(uids) ? uids.slice(-50) : [];
             for (const uid of list) {
                 try {
                     const downloaded = await client.download(uid, { uid: true });
                     const chunks = [];
                     for await (const chunk of downloaded.content) chunks.push(chunk);
                     const parsed = parseRawMessage(Buffer.concat(chunks));
-                    if (!interesting(parsed)) continue;
                     const otp = extractOtp(`${parsed.subject}\n${parsed.text}`);
                     const graphId = parsed.message_id
                         ? `gmail:${String(parsed.message_id).slice(0, 180)}`
                         : `gmail:${row.id}:${uid}`;
                     upsertInboundMessage(row.user_id, {
-                        mailbox_id: null,
+                        mailbox_id: -Number(row.id),
                         graph_id: graphId,
                         subject: parsed.subject,
                         from_address: parsed.from_address,
@@ -312,7 +309,8 @@ async function syncMailbox(mailboxId) {
                         body_preview: String(parsed.text || '').slice(0, 500),
                         body_text: String(parsed.text || '').slice(0, 20000),
                         otp_code: otp,
-                        is_read: 0
+                        is_read: 0,
+                        folder: 'inbox'
                     });
                     stored += 1;
                 } catch (err) {

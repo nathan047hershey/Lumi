@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/button';
 import { userAPI } from '@/api';
 import { Trash2, Plus, Mail, ExternalLink, RefreshCw, Eye, EyeOff } from 'lucide-react';
 
-export default function GmailMailSettings({ className = '' }) {
+export default function GmailMailSettings({ className = '', onAccountsChange } = {}) {
     const [mailboxes, setMailboxes] = useState([]);
     const [busy, setBusy] = useState(false);
     const [syncingId, setSyncingId] = useState(null);
@@ -34,6 +34,7 @@ export default function GmailMailSettings({ className = '' }) {
         if (first.ok) {
             const list = first.data?.gmail || [];
             setMailboxes(Array.isArray(list) ? list : []);
+            onAccountsChange?.(Array.isArray(list) ? list : []);
             return;
         }
         const code = first.err?.response?.status;
@@ -44,13 +45,14 @@ export default function GmailMailSettings({ className = '' }) {
             if (second.ok) {
                 const list = second.data?.gmail || [];
                 setMailboxes(Array.isArray(list) ? list : []);
+                onAccountsChange?.(Array.isArray(list) ? list : []);
                 return;
             }
         }
         // Don't wipe existing mailboxes on transient errors — keep showing
         // the last known list (server still owns them for this user).
         // Fall through without calling setMailboxes([]).
-    }, []);
+    }, [onAccountsChange]);
 
     useEffect(() => { refresh(); }, [refresh]);
 
