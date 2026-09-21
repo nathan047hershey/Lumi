@@ -55,7 +55,7 @@ function profileFacts(profile) {
         disability: 'No, I do not have a disability',
         over_18: 'Yes',
         gender: p.gender || 'Male',
-        race_ethnicity: p.race_ethnicity || '',
+        race_ethnicity: 'Black or African American',
         hispanic_latino: 'No',
         veteran: p.veteran_status || 'I am not a protected veteran',
         linkedin: p.linkedin_url || '',

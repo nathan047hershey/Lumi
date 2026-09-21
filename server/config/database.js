@@ -1843,6 +1843,29 @@ async function initDatabase() {
     addEeo('disability_status');
     addEeo('veteran_status');
     addEeo('race_ethnicity');
+    // One-time: race answer is Black (Asia was a false match on "caucasian").
+    try {
+      db.run(`CREATE TABLE IF NOT EXISTS schema_flags (key TEXT PRIMARY KEY, value TEXT)`);
+      const flag = db.exec(`SELECT value FROM schema_flags WHERE key = 'race_ethnicity_black_v1'`);
+      const already = flag?.[0]?.values?.[0]?.[0];
+      if (!already) {
+        db.run(
+          `UPDATE candidate_profiles
+              SET race_ethnicity = 'Black or African American'
+            WHERE race_ethnicity IS NULL
+               OR TRIM(race_ethnicity) = ''
+               OR lower(race_ethnicity) NOT LIKE '%black%'`
+        );
+        db.run(
+          `INSERT INTO schema_flags (key, value) VALUES ('race_ethnicity_black_v1', '1')
+           ON CONFLICT(key) DO UPDATE SET value = '1'`
+        );
+        saveDatabase();
+        console.log('Set profile race/ethnicity to Black or African American');
+      }
+    } catch (raceErr) {
+      console.warn('race_ethnicity update skipped:', raceErr.message);
+    }
     addEeo('website_url');
     addEeo('portfolio_url');
     addEeo('preferred_name');

@@ -1108,7 +1108,7 @@ async function autofillAfterGenerate({
         requires_sponsorship: profile.requires_sponsorship || '',
         disability_status: 'No, I do not have a disability',
         veteran_status: profile.veteran_status || '',
-        race_ethnicity: profile.race_ethnicity || '',
+        race_ethnicity: 'Black or African American',
         website_url: profile.website_url || '',
         portfolio_url: profile.portfolio_url || '',
         pronouns: profile.pronouns || '',
@@ -1841,7 +1841,7 @@ async function fillProfileOnTab(tabId, { profile, job }) {
         requires_sponsorship: profile.requires_sponsorship || '',
         disability_status: 'No, I do not have a disability',
         veteran_status: profile.veteran_status || '',
-        race_ethnicity: profile.race_ethnicity || '',
+        race_ethnicity: 'Black or African American',
         website_url: profile.website_url || '',
         portfolio_url: profile.portfolio_url || '',
         pronouns: profile.pronouns || '',
@@ -3544,6 +3544,21 @@ async function processReadyQueue(opts = {}) {
                             });
                         } catch (_) { /* ignore */ }
                     }
+                }
+            }
+
+            if (!formOk) {
+                const late = await chrome.tabs.sendMessage(opened.tabId, { type: 'DETECT_APPLY_FORM' }).catch(() => null);
+                let href = '';
+                try { href = (await chrome.tabs.get(opened.tabId))?.url || ''; } catch (_) { /* ignore */ }
+                const onAts = /greenhouse\.io|lever\.co|ashbyhq\.com|myworkdayjobs\.com|smartrecruiters\.com/i.test(href);
+                if (late?.data?.ok || Number(late?.data?.count || 0) >= 1 || onAts) {
+                    formOk = true;
+                    await logCourseEvent(item.id, 'form_detected', {
+                        late: true,
+                        count: late?.data?.count || 0,
+                        atsUrl: onAts
+                    }).catch(() => {});
                 }
             }
 
@@ -7521,55 +7536,39 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
             return;
         }
 
-        // Claim immediately so concurrent "complete" events cannot restart fill (loop guard).
+        // Claim the tab, but keep autoFillWhenReady until a form is actually ready.
+        // Clearing it on the first "complete" made Greenhouse wait for the popup Autofill click.
         if (inflightPendingFillTabs.has(tabId)) return;
-        await saveSettings({ pendingFill: { ...pending, autoFillWhenReady: false } });
         inflightPendingFillTabs.set(tabId, Date.now());
 
         try {
             await ensureScripts(tabId);
-            await new Promise((r) => setTimeout(r, 1500));
-
-            // Ashby Overview (JD) has no form — navigate to .../application first.
-            let liveUrl = tab.url;
-            try {
-                liveUrl = (await chrome.tabs.get(tabId))?.url || tab.url;
-            } catch (_) { /* ignore */ }
-            if (isAshbyJobDescriptionUrl(liveUrl)) {
+            const readyDeadline = Date.now() + 22000;
+            let formReady = false;
+            while (Date.now() < readyDeadline) {
+                let liveUrl = tab.url;
                 try {
-                    if (pending.applicationId) {
-                        await logCourseEvent(pending.applicationId, 'ashby_open_application', {
-                            from: liveUrl
-                        });
-                    }
-                    await ensureAshbyApplicationPage(tabId, liveUrl);
-                    await new Promise((r) => setTimeout(r, 2000));
-                } catch (err) {
-                    console.warn('[bidder] ashby pending → application', err);
-                }
-            }
-
-            const detect = await chrome.tabs.sendMessage(tabId, { type: 'DETECT_APPLY_FORM' });
-            if (!detect?.ok || !detect.data?.ok) {
-                // One more Ashby attempt if we landed back on Overview.
-                try {
-                    const again = (await chrome.tabs.get(tabId))?.url || '';
-                    if (isAshbyJobDescriptionUrl(again)) {
-                        await ensureAshbyApplicationPage(tabId, again);
-                        await new Promise((r) => setTimeout(r, 2000));
-                        const detectAshby = await chrome.tabs.sendMessage(tabId, { type: 'DETECT_APPLY_FORM' })
-                            .catch(() => null);
-                        if (detectAshby?.ok && detectAshby.data?.ok) {
-                            /* continue fill below */
-                        } else {
-                            const wall = await detectCaptchaOrLogin(tabId);
-                            if (!(wall.captcha || wall.login)) return;
+                    liveUrl = (await chrome.tabs.get(tabId))?.url || tab.url;
+                } catch (_) { /* ignore */ }
+                if (isAshbyJobDescriptionUrl(liveUrl)) {
+                    try {
+                        if (pending.applicationId) {
+                            await logCourseEvent(pending.applicationId, 'ashby_open_application', {
+                                from: liveUrl
+                            });
                         }
+                        await ensureAshbyApplicationPage(tabId, liveUrl);
+                    } catch (err) {
+                        console.warn('[bidder] ashby pending → application', err);
                     }
-                } catch (_) { /* fall through */ }
-
-                const wall = await detectCaptchaOrLogin(tabId);
-                if (wall.captcha || wall.login) {
+                }
+                const detect = await chrome.tabs.sendMessage(tabId, { type: 'DETECT_APPLY_FORM' }).catch(() => null);
+                if (detect?.ok && detect.data?.ok) {
+                    formReady = true;
+                    break;
+                }
+                const wall = await detectCaptchaOrLogin(tabId).catch(() => ({}));
+                if ((wall.captcha || wall.login) && isBlockingCaptchaWall(wall, { formReady: false })) {
                     const prefs = await getBidderPrefs();
                     const wait = await runCaptchaPassEngine({
                         tabId,
@@ -7579,18 +7578,20 @@ chrome.tabs.onUpdated.addListener(async (tabId, changeInfo, tab) => {
                         phase: 'pending_fill',
                         companyLabel: pending.company || 'Job'
                     });
-                    if (!wait.cleared) {
-                        return;
+                    if (wait.cleared) {
+                        formReady = true;
+                        break;
                     }
-                } else {
-                    const still = await chrome.tabs.sendMessage(tabId, { type: 'DETECT_APPLY_FORM' })
-                        .catch(() => null);
-                    if (!still?.ok || !still.data?.ok) return;
                 }
+                await new Promise((r) => setTimeout(r, 700));
             }
+            if (!formReady) {
+                // Bidder Open/Process should still start fill; the engine waits for fields.
+                formReady = !!(pending.fromBidder && pending.applicationId);
+            }
+            if (!formReady) return;
 
-            const detect2 = await chrome.tabs.sendMessage(tabId, { type: 'DETECT_APPLY_FORM' }).catch(() => null);
-            if (!detect2?.ok || !detect2.data?.ok) return;
+            await saveSettings({ pendingFill: { ...pending, autoFillWhenReady: false } });
 
             await notify('Lumi Bidder', 'Apply form detected — full fill…');
 

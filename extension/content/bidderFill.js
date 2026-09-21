@@ -1431,12 +1431,12 @@
                 if (wantFemale && optFemale) score = Math.max(score, 99);
             }
 
-            // Race: reject other race buckets when want is a specific race.
+            // Race: "caucasian" contains "asian" — never treat that as the Asian bucket.
             if (kind === 'race_ethnicity') {
                 const buckets = [
                     { re: /black|african american|african-american/i },
-                    { re: /asian|east asian|south asian|southeast asian/i },
-                    { re: /\bwhite\b|caucasian/i },
+                    { re: /\bwhite\b|\bcaucasian\b/i },
+                    { re: /\basian\b|east asian|south asian|southeast asian/i },
                     { re: /hispanic|latino|latina|latinx/i },
                     { re: /american indian|alaska native|native american|indigenous/i },
                     { re: /pacific islander|native hawaiian/i },
@@ -2170,7 +2170,7 @@
             return profile?.gender || 'Male';
         }
         if (kind === 'race_ethnicity' || /\bidentify your race\b/i.test(lab) || /\brace\b/i.test(lab)) {
-            return profile?.race_ethnicity || '';
+            return 'Black or African American';
         }
         if (kind === 'skill_experience'
             || /\bbest describes.{0,40}experience\b/i.test(lab)
@@ -2362,8 +2362,7 @@
             const lab = String(f.label || '');
             const got = readCurrentValue(f);
             if (kind === 'race_ethnicity' || /\bidentify your race\b/i.test(lab)) {
-                const want = String(profile?.race_ethnicity || '').trim();
-                if (!want) continue;
+                const want = 'Black or African American';
                 const empty = !got || isPlaceholderValue(got);
                 const helper = cm();
                 const mismatch = !empty && helper && helper.scoreChoice(want, got, '') < 60;
@@ -2610,7 +2609,7 @@
             case 'export_control_us_citizen':
                 return 'U.S. Citizen';
             case 'veteran_status': return p.veteran_status || 'I am not a protected veteran';
-            case 'race_ethnicity': return p.race_ethnicity || '';
+            case 'race_ethnicity': return 'Black or African American';
             case 'hispanic_latino': return p.hispanic_latino || 'No';
             case 'how_heard': return p.how_heard || 'LinkedIn';
             case 'notice_period': return p.notice_period || '2 weeks';

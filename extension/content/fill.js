@@ -2895,7 +2895,7 @@
             }
             case 'veteran_status':
                 return profile.veteran_status || 'I am not a protected veteran';
-            case 'race_ethnicity': return profile.race_ethnicity || '';
+            case 'race_ethnicity': return 'Black or African American';
             case 'website_url':
                 return profile.website_url || profile.portfolio_url || profile.github_url
                     || profile.linkedin_url || '';
@@ -3986,8 +3986,10 @@
                     }
                     if (kind === 'race_ethnicity') {
                         aliases.push(
-                            'Black or African American', 'White', 'Asian',
-                            'Hispanic or Latino', 'Two or more races', 'Prefer not to say'
+                            'Black or African American',
+                            'Black',
+                            'African American',
+                            'African-American'
                         );
                     }
                     if (kind === 'hispanic_latino') {
@@ -4894,8 +4896,12 @@
                 'prefer not to say': ['prefer not to say', 'decline to identify', 'do not wish to provide', 'decline']
             };
             for (const [canonical, variants] of Object.entries(raceMap)) {
-                const wantMatches = variants.some((v) => want.includes(v) || want === canonical);
-                const tMatches = variants.some((v) => t.includes(v) || t === canonical);
+                const hit = (hay, token) => {
+                    const esc = String(token).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+                    return new RegExp(`(?:^|[^a-z])${esc}(?:[^a-z]|$)`, 'i').test(hay);
+                };
+                const wantMatches = variants.some((v) => hit(want, v) || want === canonical);
+                const tMatches = variants.some((v) => hit(t, v) || t === canonical);
                 if (wantMatches && tMatches) {
                     best = Math.max(best, 88);
                     break;

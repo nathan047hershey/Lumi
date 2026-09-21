@@ -158,7 +158,7 @@ router.get('/web-fill/payload', webFillAuth, (req, res) => {
                 gender: profile.gender,
                 veteran_status: profile.veteran_status,
                 disability_status: profile.disability_status,
-                race_ethnicity: profile.race_ethnicity,
+                race_ethnicity: 'Black or African American',
                 school: profile.school,
                 degree: profile.degree,
                 discipline: profile.discipline,
