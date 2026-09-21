@@ -1,5 +1,6 @@
 import BrandMark from '@/components/BrandMark';
 import AppIcon from '@/components/AppIcon';
+import BuildStamp from '@/components/BuildStamp';
 
 /**
  * Auth — new Lumi app entry.
@@ -30,9 +31,7 @@ export default function AuthLayout({ title, subtitle, children }) {
                         Pipeline, performance, and resume tooling in one redesigned workspace.
                     </p>
                 </div>
-                <p className="relative font-mono text-[10px] uppercase tracking-[0.18em] text-white/30">
-                    Internal · Lumi
-                </p>
+                <BuildStamp className="relative" />
             </div>
 
             <div className="relative flex flex-1 flex-col items-center justify-center px-6 py-12">
@@ -54,6 +53,7 @@ export default function AuthLayout({ title, subtitle, children }) {
                     <div className="rounded-3xl border border-white/[0.08] bg-[hsl(222_24%_9%/0.9)] p-6 shadow-[0_30px_80px_-24px_rgba(0,0,0,0.8),0_0_0_1px_hsla(199,95%,55%,0.12)] backdrop-blur-xl sm:p-8">
                         {children}
                     </div>
+                    <BuildStamp className="mt-4 text-center lg:hidden" />
                 </div>
             </div>
         </div>

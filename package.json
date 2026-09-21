@@ -1,6 +1,6 @@
 {
   "name": "lumi",
-  "version": "0.1.0",
+  "version": "2.1.20",
   "private": true,
   "scripts": {
     "dev": "node --max-old-space-size=12288 ./node_modules/next/dist/bin/next dev --webpack -H 0.0.0.0 -p 3000",

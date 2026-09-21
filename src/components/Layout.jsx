@@ -23,6 +23,7 @@ import {
     Mail
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import BuildStamp from '@/components/BuildStamp';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 
@@ -367,6 +368,7 @@ function Layout({ children }) {
                         <p className="font-mono text-[10px] uppercase tracking-wider text-white/35">{primaryRole}</p>
                     </div>
                 </div>
+                <BuildStamp className="px-1 pt-1" />
             </div>
         </aside>
     );
@@ -395,6 +397,7 @@ function Layout({ children }) {
                     <span className="font-display text-sm font-semibold">
                         Lu<span className="text-primary">mi</span>
                     </span>
+                    <BuildStamp className="ml-auto text-right" />
                 </header>
 
                 <main className="app-main min-h-0 flex-1 overflow-auto" key={location.pathname}>
