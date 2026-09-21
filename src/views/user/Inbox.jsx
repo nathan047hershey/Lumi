@@ -147,6 +147,34 @@ export default function OutlookMailbox() {
         fetchMessages();
     }, [fetchMessages]);
 
+    // Graph's unfiltered inbox page stays frozen at connect time.
+    // Pull newer mail on open and while this page stays open.
+    useEffect(() => {
+        if (!accounts.length) return undefined;
+        let cancelled = false;
+        const pull = async () => {
+            try {
+                const payload = mailboxId !== 'all' ? { mailbox_id: Number(mailboxId) } : {};
+                await userAPI.syncOutlook(payload);
+                await userAPI.syncGmailImap(payload).catch(() => {});
+                if (!cancelled) {
+                    await fetchMessages();
+                    await fetchStatus();
+                }
+            } catch (err) {
+                if (!cancelled) {
+                    setError(err?.response?.data?.error || err?.message || 'Sync failed');
+                }
+            }
+        };
+        pull();
+        const timer = setInterval(pull, 30000);
+        return () => {
+            cancelled = true;
+            clearInterval(timer);
+        };
+    }, [accounts.length, mailboxId, fetchMessages, fetchStatus]);
+
     const handleSync = async () => {
         setSyncing(true);
         setError(null);

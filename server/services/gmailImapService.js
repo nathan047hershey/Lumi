@@ -287,11 +287,9 @@ async function syncMailbox(mailboxId) {
         const lock = await client.getMailboxLock('INBOX');
         try {
             const since = new Date(Date.now() - LOOKBACK_MS);
-            // Unread recent mail first; also search subject keywords when possible
-            const uids = await client.search({
-                seen: false,
-                since
-            }, { uid: true });
+            // Include already-read mail. seen:false froze the list at whatever
+            // was unread at connect time, so later mail never appeared.
+            const uids = await client.search({ since }, { uid: true });
             const list = Array.isArray(uids) ? uids.slice(-25) : [];
             for (const uid of list) {
                 try {

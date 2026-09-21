@@ -350,6 +350,7 @@ function upsertInboundMessage(userId, msg) {
             body_text = excluded.body_text,
             otp_code = COALESCE(excluded.otp_code, outlook_messages.otp_code),
             is_read = excluded.is_read,
+            received_at = COALESCE(excluded.received_at, outlook_messages.received_at),
             folder = COALESCE(excluded.folder, outlook_messages.folder)`,
         [
             userId,
@@ -608,6 +609,29 @@ async function graphGet(mailboxId, path, params = {}) {
     return data;
 }
 
+async function graphGetUrl(mailboxId, url) {
+    const token = await getAccessToken(mailboxId);
+    const { data, status } = await axios.get(url, {
+        headers: { Authorization: `Bearer ${token}` },
+        timeout: 30000,
+        validateStatus: () => true
+    });
+    if (status >= 400) {
+        throw new Error(data?.error?.message || `graph_${status}`);
+    }
+    return data;
+}
+
+function graphSinceIso(mailbox) {
+    // Unfiltered $orderby pages stay frozen at connect time on Graph.
+    // A moving receivedDateTime filter forces mail that arrived after connect.
+    const lookbackMs = 21 * 24 * 60 * 60 * 1000;
+    const floor = Date.now() - lookbackMs;
+    const last = mailbox?.last_sync_at ? Date.parse(mailbox.last_sync_at) : NaN;
+    const since = Number.isFinite(last) ? Math.max(floor, last - 12 * 60 * 60 * 1000) : floor;
+    return new Date(since).toISOString().replace(/\.\d{3}Z$/, 'Z');
+}
+
 async function graphPost(mailboxId, path, body) {
     const token = await getAccessToken(mailboxId);
     const { data, status } = await axios.post(`${GRAPH}${path}`, body, {
@@ -677,17 +701,54 @@ function upsertMessage(userId, mailboxId, msg, folder = 'inbox') {
 }
 
 async function syncFolder(mailbox, folderSpec) {
-    const data = await graphGet(mailbox.id, `/me/mailFolders/${folderSpec.path}/messages`, {
-        $top: MAX_SYNC,
+    const since = graphSinceIso(mailbox);
+    const base = {
+        $top: 50,
         $orderby: 'receivedDateTime desc',
-        $select: 'id,subject,from,receivedDateTime,bodyPreview,body,isRead'
-    });
-    const list = Array.isArray(data?.value) ? data.value : [];
+        $filter: `receivedDateTime ge ${since}`
+    };
+    let data;
+    try {
+        data = await graphGet(mailbox.id, `/me/mailFolders/${folderSpec.path}/messages`, {
+            ...base,
+            $select: 'id,subject,from,receivedDateTime,bodyPreview,body,isRead'
+        });
+    } catch (err) {
+        // body + orderby is often "too complex" — retry without body so new mail still lands.
+        data = await graphGet(mailbox.id, `/me/mailFolders/${folderSpec.path}/messages`, {
+            ...base,
+            $select: 'id,subject,from,receivedDateTime,bodyPreview,isRead'
+        });
+        if (err) { /* logged via fallback success */ }
+    }
+    const list = [];
+    const take = (rows) => {
+        for (const msg of rows || []) list.push(msg);
+    };
+    take(data?.value);
+    let next = data?.['@odata.nextLink'] || null;
+    let pages = 0;
+    while (next && pages < 2 && list.length < 100) {
+        pages += 1;
+        const more = await graphGetUrl(mailbox.id, next);
+        take(more?.value);
+        next = more?.['@odata.nextLink'] || null;
+    }
     let otps = 0;
+    let hydrated = 0;
     for (const msg of list) {
+        if (!msg?.body?.content && msg?.id && hydrated < 8) {
+            hydrated += 1;
+            try {
+                const full = await graphGet(mailbox.id, `/me/messages/${encodeURIComponent(msg.id)}`, {
+                    $select: 'id,subject,from,receivedDateTime,bodyPreview,body,isRead'
+                });
+                if (full?.id) Object.assign(msg, full);
+            } catch (_) { /* preview is enough to list the message */ }
+        }
         if (upsertMessage(mailbox.user_id, mailbox.id, msg, folderSpec.id)) otps += 1;
     }
-    return { folder: folderSpec.id, synced: list.length, withOtp: otps };
+    return { folder: folderSpec.id, synced: list.length, withOtp: otps, since };
 }
 
 async function syncInbox(mailboxIdOrUserId, maybeUserId) {
@@ -717,6 +778,10 @@ async function syncInbox(mailboxIdOrUserId, maybeUserId) {
                     error: folderErr?.message || String(folderErr)
                 });
             }
+        }
+        const failed = folders.filter((f) => f.error);
+        if (folders.length && failed.length === folders.length) {
+            throw new Error(failed[0].error || 'Outlook sync failed');
         }
         runQuery(
             `UPDATE outlook_mailboxes SET last_sync_at = ?, last_error = NULL, updated_at = ? WHERE id = ?`,
