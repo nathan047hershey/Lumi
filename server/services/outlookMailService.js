@@ -126,6 +126,20 @@ function redirectUri() {
 function publicBase() {
     const fromEnv = String(process.env.MAIL_WEBHOOK_PUBLIC_BASE || '').trim().replace(/\/$/, '');
     if (fromEnv) return fromEnv;
+    // Stable production host on Vercel — Graph push needs a fixed HTTPS URL.
+    const vercelProd = String(
+        process.env.APP_PUBLIC_URL
+        || process.env.NEXT_PUBLIC_APP_URL
+        || process.env.VERCEL_PROJECT_PRODUCTION_URL
+        || ''
+    ).trim().replace(/\/$/, '');
+    if (vercelProd) {
+        return /^https?:\/\//i.test(vercelProd) ? vercelProd : `https://${vercelProd}`;
+    }
+    const vercel = String(process.env.VERCEL_URL || '').trim().replace(/\/$/, '');
+    if (vercel) {
+        return /^https?:\/\//i.test(vercel) ? vercel : `https://${vercel}`;
+    }
     const port = process.env.PORT || 9017;
     return `http://127.0.0.1:${port}`;
 }

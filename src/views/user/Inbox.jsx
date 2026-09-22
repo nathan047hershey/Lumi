@@ -204,6 +204,24 @@ export default function OutlookMailbox() {
         };
     }, [accounts.length, fetchMessages, fetchStatus]);
 
+    // When Outlook is connected on production HTTPS, subscribe so new mail pushes into Lumi instantly.
+    useEffect(() => {
+        const outlook = accounts.filter((a) => a.provider !== 'gmail');
+        if (!outlook.length) return undefined;
+        if (!status?.config?.pushReady && !status?.config?.publicBase) return undefined;
+        const publicBase = String(status?.config?.publicBase || '');
+        if (/localhost|127\.0\.0\.1/i.test(publicBase) && !status?.config?.pushReady) return undefined;
+        if (outlook.every((a) => a.push_enabled)) return undefined;
+        let cancelled = false;
+        (async () => {
+            try {
+                await userAPI.subscribeOutlookPush();
+                if (!cancelled) await fetchStatus();
+            } catch (_) { /* poll path still works */ }
+        })();
+        return () => { cancelled = true; };
+    }, [accounts, status?.config?.pushReady, status?.config?.publicBase, fetchStatus]);
+
     const handleSync = async () => {
         setSyncing(true);
         setError(null);

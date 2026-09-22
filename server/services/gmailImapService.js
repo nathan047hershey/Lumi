@@ -17,7 +17,7 @@ const { getOne, getAll, runQuery, saveDatabase, getDb } = require('../config/dat
 const { extractOtp, htmlToText, upsertInboundMessage } = require('./outlookMailService');
 
 const HOST_DEFAULT = 'imap.gmail.com';
-const POLL_MS = Math.max(15_000, Number(process.env.GMAIL_IMAP_POLL_MS) || 30_000);
+const POLL_MS = Math.max(10_000, Number(process.env.GMAIL_IMAP_POLL_MS) || 15_000);
 const LOOKBACK_MS = Math.max(60_000, Number(process.env.GMAIL_IMAP_LOOKBACK_MS) || 14 * 24 * 3600 * 1000);
 const FILTER_RE = /greenhouse|security\s*code|verification\s*code|one[-\s]?time|confirm\s+your\s+email|passcode|otp/i;
 

@@ -77,8 +77,22 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
                             data.account?.id ? { mailbox_id: data.account.id } : {}
                         );
                     } catch (_) { /* sync best-effort */ }
+                    // Instant sync: Microsoft pushes new mail to Lumi as soon as it arrives.
+                    try {
+                        if (data.account?.id) {
+                            await userAPI.subscribeOutlookPush({ mailbox_id: data.account.id });
+                        } else {
+                            await userAPI.subscribeOutlookPush();
+                        }
+                    } catch (_) { /* push needs public HTTPS — poll still works */ }
                     const latest = await refresh();
                     onAccountsChange?.(latest?.accounts || [], { synced: true });
+                    const pushOn = (latest?.accounts || []).some((a) => a.push_enabled);
+                    setMsg(
+                        pushOn
+                            ? `Connected ${data.account?.email || ''} — instant sync ON`.trim()
+                            : `Connected ${data.account?.email || ''} — syncing (enable Instant sync if push is off)`.trim()
+                    );
                     return;
                 }
                 if (data?.status === 'error') {
@@ -176,7 +190,33 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
         }
     };
 
+    const enableInstantSync = async () => {
+        setBusy(true);
+        setMsg('Turning on instant sync…');
+        try {
+            await userAPI.subscribeOutlookPush();
+            const data = await refresh();
+            const on = (data?.accounts || []).filter((a) => a.push_enabled).length;
+            setMsg(
+                on
+                    ? `Instant sync ON for ${on} mailbox(es) — new mail appears in Lumi right away`
+                    : (data?.config?.pushReady
+                        ? 'Subscribe returned but push is still off — check Graph permissions'
+                        : 'Need a public HTTPS app URL (production) for Microsoft push. Polling still syncs often.')
+            );
+        } catch (err) {
+            setMsg(err?.response?.data?.error || err.message || 'Instant sync failed');
+        } finally {
+            setBusy(false);
+        }
+    };
+
     const accounts = status?.accounts || [];
+    const pushReady = !!(
+        status?.config?.pushReady
+        || (status?.config?.publicBase && !/localhost|127\.0\.0\.1/i.test(String(status?.config?.publicBase || '')))
+    );
+    const anyPushOff = accounts.some((a) => !a.push_enabled);
 
     return (
         <div className={`space-y-3 rounded-lg border border-border/60 bg-background/40 px-3 py-3 ${className}`}>
@@ -189,10 +229,10 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
                 )}
             </div>
             <p className="text-xs text-muted-foreground">
-                Connect more than one Outlook or Hotmail. Microsoft reuses whichever account is already signed in, so adding another mailbox signs that session out first.
+                Connect more than one Outlook or Hotmail. With instant sync, new mail is pushed into Lumi as soon as it arrives (Greenhouse codes, OTPs).
             </p>
             {status?.config?.clientIdSet
-                ? <p className="text-xs text-emerald-300/80">Graph ready</p>
+                ? <p className="text-xs text-emerald-300/80">Graph ready{pushReady ? ' · push URL ready' : ' · using fast poll until push URL is public'}</p>
                 : <p className="text-xs text-amber-200/90">Set OUTLOOK_CLIENT_ID in server/.env</p>}
             {accounts.length > 0 ? (
                 <ul className="space-y-1.5">
@@ -200,7 +240,9 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
                         <li key={a.id || a.email} className="flex items-center justify-between gap-2 rounded border border-border/40 bg-background/30 px-2.5 py-1.5">
                             <div className="flex items-center gap-2 min-w-0">
                                 <span className="truncate text-xs font-medium">{a.email || a.display_name || 'Mailbox'}</span>
-                                <span className="text-[10px] text-muted-foreground">{a.push_enabled ? 'push ON' : 'push off'}</span>
+                                <span className={`text-[10px] ${a.push_enabled ? 'text-emerald-300/90' : 'text-muted-foreground'}`}>
+                                    {a.push_enabled ? 'instant ON' : 'poll'}
+                                </span>
                             </div>
                             <Button
                                 type="button"
@@ -219,10 +261,17 @@ export default function OutlookMailSettings({ className = '', onAccountsChange }
             ) : (
                 <p className="text-xs text-muted-foreground">No mailboxes connected.</p>
             )}
-            <Button type="button" size="sm" disabled={busy || !status?.config?.clientIdSet} onClick={connect}>
-                <Plus className="mr-1 h-3 w-3" />
-                {busy ? 'Waiting for Microsoft…' : (accounts.length ? 'Add another mailbox' : 'Add mailbox')}
-            </Button>
+            <div className="flex flex-wrap gap-2">
+                <Button type="button" size="sm" disabled={busy || !status?.config?.clientIdSet} onClick={connect}>
+                    <Plus className="mr-1 h-3 w-3" />
+                    {busy ? 'Waiting for Microsoft…' : (accounts.length ? 'Add another mailbox' : 'Add mailbox')}
+                </Button>
+                {accounts.length > 0 && anyPushOff ? (
+                    <Button type="button" size="sm" variant="outline" disabled={busy} onClick={enableInstantSync}>
+                        Turn on instant sync
+                    </Button>
+                ) : null}
+            </div>
             {device?.user_code && (
                 <div className="rounded border border-sky-400/25 bg-sky-400/10 p-2">
                     <p className="text-xs text-sky-100/90">
