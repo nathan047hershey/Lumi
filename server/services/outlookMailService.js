@@ -863,6 +863,21 @@ async function syncAllMailboxesForUser(userId) {
     return { ok: true, mailboxes: results.length, results };
 }
 
+/** Fast path for Greenhouse security codes — inbox only, every few seconds. */
+async function syncInboxOnlyForUser(userId) {
+    const boxes = listMailboxes(userId);
+    const results = [];
+    for (const b of boxes) {
+        try {
+            const result = await syncFolder(b, { id: 'inbox', path: 'inbox' });
+            results.push({ ok: true, mailbox_id: b.id, email: b.email, ...result });
+        } catch (err) {
+            results.push({ ok: false, mailbox_id: b.id, email: b.email, error: err?.message || String(err) });
+        }
+    }
+    return { ok: true, mailboxes: results.length, results };
+}
+
 function listMessages(userId, { limit = 30, mailbox_id = null, folder = null } = {}) {
     ensureTables();
     const params = [userId];
@@ -952,25 +967,25 @@ function findLatestOtp(userId, { afterIso = null, fromHint = null } = {}) {
 }
 
 async function waitForOtp(userId, {
-    timeoutMs = 180_000,
+    timeoutMs = 540_000,
     pollMs = 2000,
     afterIso = null,
     fromHint = 'greenhouse'
 } = {}) {
     const started = Date.now();
-    const after = afterIso || new Date(Date.now() - 2 * 60 * 1000).toISOString();
-    const interval = Math.max(1000, Number(pollMs) || 2000);
+    // Greenhouse codes live ~10m — look back a few minutes so a slightly early mail still matches.
+    const after = afterIso || new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const interval = Math.max(1500, Number(pollMs) || 2000);
     let lastGmailSync = 0;
     let lastGraphSync = 0;
 
     while (Date.now() - started < timeoutMs) {
-        // Microsoft Graph — preferred for Outlook/Hotmail OTPs
-        if (ON_DEMAND_GRAPH && clientId() && Date.now() - lastGraphSync >= 5000) {
+        // Inbox-only Graph pull — full folder sync is too slow for a 10m code.
+        if (ON_DEMAND_GRAPH && clientId() && Date.now() - lastGraphSync >= 3000) {
             lastGraphSync = Date.now();
-            await syncAllMailboxesForUser(userId).catch(() => {});
+            await syncInboxOnlyForUser(userId).catch(() => {});
         }
-        // Free Gmail IMAP — pull periodically while waiting for OTP (not every tick)
-        if (Date.now() - lastGmailSync >= 8000) {
+        if (Date.now() - lastGmailSync >= 4000) {
             lastGmailSync = Date.now();
             try {
                 const gmailImap = require('./gmailImapService');
@@ -990,8 +1005,8 @@ async function waitForOtp(userId, {
             };
         }
         const any = findLatestOtp(userId, { afterIso: after, fromHint: null });
-        if (any?.otp_code && /greenhouse|security code|verification|verify/i.test(
-            `${any.subject || ''} ${any.from_address || ''} ${any.body_preview || ''}`
+        if (any?.otp_code && /greenhouse|security code|verification|verify|one[-\s]?time|passcode/i.test(
+            `${any.subject || ''} ${any.from_address || ''} ${any.body_preview || ''} ${any.body_text || ''}`
         )) {
             return {
                 ok: true,
@@ -1358,6 +1373,7 @@ module.exports = {
     refreshProfile,
     syncInbox,
     syncAllMailboxesForUser,
+    syncInboxOnlyForUser,
     listMessages,
     getMessage,
     markMessageRead,

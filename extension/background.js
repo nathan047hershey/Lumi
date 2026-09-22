@@ -58,6 +58,7 @@ import {
     saveBidderPrefs,
     logCourseEvent,
     uploadScreenshot,
+    setFileInputViaDebugger,
     savePackage,
     detectSubmitSuccess,
     detectSubmitSuccessDetail,
@@ -3046,7 +3047,7 @@ async function processReadyQueue(opts = {}) {
             patch.bidderCaptchaGraceSec = Number(opts.captchaGraceSec);
         }
         if (opts.formWaitMs != null && Number(opts.formWaitMs) >= 3000) {
-            patch.bidderFormWaitMs = Math.min(30000, Math.round(Number(opts.formWaitMs)));
+            patch.bidderFormWaitMs = Math.min(45000, Math.round(Number(opts.formWaitMs)));
         }
         if (opts.openGapMs != null && Number(opts.openGapMs) >= 0) {
             patch.bidderOpenGapMs = Math.min(10000, Math.round(Number(opts.openGapMs)));
@@ -3344,10 +3345,13 @@ async function processReadyQueue(opts = {}) {
                     ).trim();
                 } catch (_) { /* ignore */ }
             }
-            // Apply-gate wait — ATS-aware (slow SPAs need longer; still capped).
+            // Apply-gate wait — keep the full ATS budget so required fields can mount.
             const formWaitMs = Math.min(
-                formWaitMsForAts(itemAts, Number(prefs.formWaitMs) || BIDDER_DEFAULTS.formWaitMs),
-                16000
+                Math.max(
+                    formWaitMsForAts(itemAts, Number(prefs.formWaitMs) || BIDDER_DEFAULTS.formWaitMs),
+                    20000
+                ),
+                45000
             );
             const formDeadline = Date.now() + formWaitMs;
             const bidLimitMs = bidLimitMsForAts(itemAts, { pageCount: 0 });
@@ -4316,25 +4320,30 @@ async function processReadyQueue(opts = {}) {
                         }).catch(() => {});
                         try { await chrome.tabs.update(opened.tabId, { active: true }); } catch (_) { /* ignore */ }
 
+                        // Greenhouse security codes expire in ~10m — do not use short CAPTCHA grace.
                         const otpTimeout = Math.min(
-                            Number(prefs.captchaGraceMs) > 0 ? Number(prefs.captchaGraceMs) : 180000,
-                            5 * 60 * 1000
+                            Math.max(Number(prefs.emailOtpWaitMs) || 9 * 60 * 1000, 3 * 60 * 1000),
+                            10 * 60 * 1000
                         );
+                        await setQueueState({
+                            coachStatus: `Watching mailbox for security code (~${Math.round(otpTimeout / 60000)}m)…`,
+                            coachAt: Date.now()
+                        }).catch(() => {});
                         let otp = await tryFillOutlookEmailOtp(opened.tabId, {
                             timeoutMs: otpTimeout,
                             applicationId: item.id
                         }).catch((err) => ({ ok: false, error: err?.message || String(err) }));
 
-                        // If Outlook/IMAP miss, hold tab open and wait for Instruct / manual paste.
+                        // Keep polling the mailbox + allow Instruct paste until the code window ends.
                         if (!otp?.ok) {
                             await notify(
                                 'Lumi — Security code',
-                                'Paste the email code in Instruct Lumi (e.g. wFY53Ht3). Tab stays open for second Submit.'
+                                'Still waiting for the email code. Mailbox keeps syncing; you can also paste it in Instruct Lumi.'
                             );
                             await playBidderSound(prefs.soundEnabled);
                             const instructHoldMs = Math.min(
                                 Math.max(otpTimeout, 3 * 60 * 1000),
-                                12 * 60 * 1000
+                                10 * 60 * 1000
                             );
                             const holdStart = Date.now();
                             let secondSubmitTried = false;
@@ -4358,11 +4367,11 @@ async function processReadyQueue(opts = {}) {
                                     otp = { ok: true, via: 'manual_or_instruct' };
                                     break;
                                 }
-                                // Periodic mailbox retry (Graph may connect mid-hold).
-                                if (Date.now() - holdStart > 20000 && Date.now() - lastMailboxRetryAt > 45000) {
+                                // Retry mailbox every ~12s so a late Graph/IMAP deliver can still AFK-pass.
+                                if (Date.now() - lastMailboxRetryAt > 12000) {
                                     lastMailboxRetryAt = Date.now();
                                     const retry = await tryFillOutlookEmailOtp(opened.tabId, {
-                                        timeoutMs: 25000,
+                                        timeoutMs: 20000,
                                         applicationId: item.id
                                     }).catch(() => null);
                                     if (retry?.ok) {
@@ -4370,8 +4379,9 @@ async function processReadyQueue(opts = {}) {
                                         break;
                                     }
                                 }
+                                const leftSec = Math.max(0, Math.round((instructHoldMs - (Date.now() - holdStart)) / 1000));
                                 await setQueueState({
-                                    coachStatus: 'Awaiting email security code — Instruct Lumi or paste in form',
+                                    coachStatus: `Awaiting email security code (${leftSec}s left) — auto mailbox + Instruct`,
                                     coachAt: Date.now()
                                 }).catch(() => {});
                                 await new Promise((r) => setTimeout(r, 2000));
@@ -5058,7 +5068,11 @@ async function runCaptchaPassEngine({
             phase,
             engine: 'captcha-pass-v9'
         }).catch(() => {});
-        const otpWait = Math.min(graceMs || helperWait || 180000, 5 * 60 * 1000);
+        // Email OTP is not a CAPTCHA widget — wait almost the full Greenhouse 10m window.
+        const otpWait = Math.min(
+            Math.max(Number(prefs?.emailOtpWaitMs) || graceMs || helperWait || 9 * 60 * 1000, 3 * 60 * 1000),
+            10 * 60 * 1000
+        );
         const otp = await tryFillOutlookEmailOtp(tabId, {
             timeoutMs: otpWait,
             applicationId
@@ -6909,8 +6923,8 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         requireIdentity: true,
         profileFill: false,
         stableReads: 1,
-        pollMs: 100,
-        maxMs: 2000
+        pollMs: 200,
+        maxMs: 12000
     }).catch(() => ({ ok: false, fieldCount: 0, reason: 'wait_failed' }));
     const earlyCount = Number(earlyReady?.fieldCount || 0);
     if (
@@ -6934,14 +6948,14 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 profileOnly: true
             }
         });
-        // Short second pass for late-mounted fields (was up to 4.5s).
+        // Second pass for late-mounted required fields (phone, city, essays).
         await waitForFormReady(tabId, {
             minFields: 4,
             requireIdentity: true,
             profileFill: true,
             stableReads: 1,
-            pollMs: 100,
-            maxMs: 1800
+            pollMs: 200,
+            maxMs: 8000
         }).catch(() => {});
         const gap = await sendTabMessage(tabId, {
             type: 'FILL_FORM',
@@ -7102,12 +7116,17 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             questions: questions.length,
             duration_ms: 0,
             remainingMs: remainingTotal,
-            reason: 'answers_budget_short'
+            reason: 'answers_budget_short_continue_fill'
         }).catch(() => {});
-        // Park for checkout instead of profile-only then TIME LIMIT kill.
-        const budgetErr = new Error('bid_time_budget_exceeded');
-        budgetErr.code = 'answers_budget_short';
-        throw budgetErr;
+        // Do not park here. Required gaps still get fallback answers in the engine.
+        const shortBudget = Math.max(4000, remainingForAi);
+        answersPromise = remainingForAi >= 4000
+            ? generateBidderAnswersForItem(item, app, questions, engineLabel, shortBudget)
+                .catch((err) => {
+                    console.warn('[bidder] answers failed; continue profile-only', err);
+                    return [];
+                })
+            : Promise.resolve([]);
     } else if (!questions.length) {
         answersPromise = Promise.resolve([]);
     } else {
@@ -7169,6 +7188,9 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 skipFiles: false
             }
         }).catch(() => null);
+        if (resumeFile?.base64) {
+            await setFileInputViaDebugger(tabId, resumeFile).catch(() => null);
+        }
         uploadScreenshot(item.id, 'mid_fill', tabId, shotOpts({ settleMs: 200 })).catch(() => {});
     } catch (err) {
         console.warn('[bidder] file/profile fill', err);
@@ -7272,12 +7294,71 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         }
 
         if (!run?.ok) throw new Error(run?.error || 'Bidder engine run failed');
-        const result = run.result || {};
+        let result = run.result || {};
 
-        // Soft handoff when Greenhouse engine declines a non-GH page
-        // (legacy greenhouse_only or explicit useAutofill).
-        const softHandoff = !!result.useAutofill
-            || /greenhouse[_-]?only|use_autofill/i.test(String(result.reason || ''));
+        // Required fields still empty — one more full pass before we give up.
+        if (
+            result.requiredComplete === false
+            && !result.blocked
+            && !result.timeout
+            && !/bid_time_budget|budget_exceeded/i.test(String(result.reason || ''))
+        ) {
+            await setAutofillPanelStatus(tabId, 'Filling required fields…', 80);
+            const again = await sendTabMessage(tabId, {
+                type: 'BIDDER_ENGINE_RUN',
+                payload: {
+                    profile: { ...profile, ...payload.profile },
+                    answers,
+                    autoSubmit: false,
+                    applicationId: item.id,
+                    jobDescription: app.job_description || '',
+                    bidDeadline: Date.now() + 45000,
+                    resume: resumeFile,
+                    coverLetter: coverLetterFile,
+                    skipCoverLetter: !coverLetterFile,
+                    filename: resumeFile?.filename,
+                    base64: resumeFile?.base64,
+                    mimeType: resumeFile?.mimeType
+                }
+            }).catch(() => null);
+            if (again?.ok && again.result) {
+                run = again;
+                result = again.result;
+            }
+        }
+
+        // Explicit CV upload — content-script change events are untrusted, so
+        // Greenhouse ignores them. CDP setFileInputFiles is the attach that sticks.
+        if (resumeFile?.base64) {
+            try {
+                await setAutofillPanelStatus(tabId, 'Uploading resume…', 84);
+                const up = await sendTabMessage(tabId, {
+                    type: 'FILL_FORM',
+                    payload: {
+                        ...filePayload,
+                        profile: { ...profile, ...payload.profile },
+                        answers: [],
+                        autoSubmit: false,
+                        skipQuestions: true,
+                        uploadOnly: true,
+                        skipFiles: false
+                    }
+                }).catch(() => null);
+                const trusted = await setFileInputViaDebugger(tabId, resumeFile).catch((err) => ({
+                    ok: false,
+                    reason: err?.message || String(err)
+                }));
+                await logCourseEvent(item.id, trusted?.ok ? 'cv_upload_ok' : 'cv_upload_retry', {
+                    contentUploaded: Number(up?.uploadStats?.uploadedResume || 0),
+                    debugger: !!trusted?.ok,
+                    reason: trusted?.reason || null,
+                    filename: resumeFile.filename || trusted?.filename || null
+                }).catch(() => {});
+            } catch (err) {
+                console.warn('[bidder] greenhouse resume upload', err);
+            }
+        }
+
         if (result.timeout || /bid_time_budget|budget_exceeded/i.test(String(result.reason || ''))) {
             await logCourseEvent(item.id, 'bid_budget_exceeded', {
                 via: 'greenhouse_engine',
@@ -7287,6 +7368,8 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             }).catch(() => {});
             throw new Error('bid_time_budget_exceeded');
         }
+        const softHandoff = !!result.useAutofill
+            || /greenhouse[_-]?only|use_autofill/i.test(String(result.reason || ''));
         if (softHandoff) {
             useGreenhouseEngine = false;
             ats = resolveBidderAts({

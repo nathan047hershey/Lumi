@@ -59,8 +59,8 @@ async function bidderRequest(path, opts) {
 export const BIDDER_DEFAULTS = {
     maxTabs: 3,
     openGapMs: 500,
-    /** Base form wait; ATS-specific bumps applied via formWaitMsForAts. */
-    formWaitMs: 6000,
+    /** Base form wait. Do not shorten — required fields mount after the first paint. */
+    formWaitMs: 20000,
     autoSubmit: false,
     autoNext: false,
     soundEnabled: true,
@@ -179,7 +179,7 @@ export async function getBidderPrefs() {
             : BIDDER_DEFAULTS.screenshotSettleSec,
         formWaitMs: (() => {
             const n = Number(data.bidderFormWaitMs);
-            if (Number.isFinite(n) && n >= 3000) return Math.min(30000, Math.round(n));
+            if (Number.isFinite(n) && n >= 3000) return Math.min(45000, Math.round(n));
             return BIDDER_DEFAULTS.formWaitMs;
         })(),
         openGapMs: (() => {
@@ -524,6 +524,101 @@ export async function releaseAllPageDebuggers() {
     await Promise.all(ids.map((id) => chrome.debugger.detach({ tabId: id }).catch(() => {})));
 }
 
+/**
+ * Greenhouse ignores untrusted change events on input[type=file].
+ * Write the CV to disk and set it with CDP so the Attach slot actually updates.
+ */
+export async function setFileInputViaDebugger(tabId, file) {
+    const filename = String(file?.filename || 'Candidate.docx').replace(/[\\/:*?"<>|]+/g, '_');
+    const base64 = String(file?.base64 || '');
+    if (!tabId || !base64 || !filename) return { ok: false, reason: 'missing_file' };
+    const attached = await attachPageDebugger(tabId);
+    if (!attached) return { ok: false, reason: 'no_debugger' };
+    if (!chrome.downloads?.download) return { ok: false, reason: 'no_downloads' };
+
+    let objectUrl = '';
+    try {
+        const binary = atob(base64);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+        const blob = new Blob([bytes], {
+            type: file.mimeType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+        });
+        objectUrl = URL.createObjectURL(blob);
+        const downloadId = await chrome.downloads.download({
+            url: objectUrl,
+            filename: `lumi-upload/${filename}`,
+            saveAs: false,
+            conflictAction: 'uniquify'
+        });
+        const absPath = await new Promise((resolve, reject) => {
+            const finish = (path) => {
+                clearTimeout(timer);
+                try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
+                if (path) resolve(path);
+                else reject(new Error('cv_download_no_path'));
+            };
+            const timer = setTimeout(() => {
+                try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
+                reject(new Error('cv_download_timeout'));
+            }, 20000);
+            const onChange = (delta) => {
+                if (delta.id !== downloadId) return;
+                if (delta.state?.current === 'interrupted') {
+                    clearTimeout(timer);
+                    try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
+                    reject(new Error(delta.error?.current || 'cv_download_interrupted'));
+                    return;
+                }
+                if (delta.state?.current !== 'complete') return;
+                chrome.downloads.search({ id: downloadId }, (items) => finish(items?.[0]?.filename || ''));
+            };
+            chrome.downloads.onChanged.addListener(onChange);
+            chrome.downloads.search({ id: downloadId }, (items) => {
+                if (items?.[0]?.state === 'complete' && items[0].filename) finish(items[0].filename);
+            });
+        });
+
+        const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', {
+            depth: 4,
+            pierce: true
+        });
+        const rootId = doc?.root?.nodeId;
+        if (!rootId) return { ok: false, reason: 'no_document' };
+        const selectors = [
+            'input#resume',
+            'input[name="resume"]',
+            'input[type="file"][id*="resume" i]',
+            'input[type="file"][name*="resume" i]',
+            'input[type="file"][id*="cv" i]',
+            'input[type="file"]'
+        ];
+        let nodeId = 0;
+        for (const selector of selectors) {
+            const found = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
+                nodeId: rootId,
+                selector
+            });
+            if (found?.nodeId) {
+                nodeId = found.nodeId;
+                break;
+            }
+        }
+        if (!nodeId) return { ok: false, reason: 'no_file_input', filename };
+        await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
+            files: [absPath],
+            nodeId
+        });
+        return { ok: true, filename, path: absPath };
+    } catch (err) {
+        return { ok: false, reason: err?.message || String(err), filename };
+    } finally {
+        if (objectUrl) {
+            try { URL.revokeObjectURL(objectUrl); } catch (_) { /* ignore */ }
+        }
+    }
+}
+
 async function captureTabScreenshot(tabId, opts = {}) {
     const stayInApp = opts.stayInApp !== false;
     let tab;
@@ -583,19 +678,21 @@ async function captureTabScreenshot(tabId, opts = {}) {
     };
 
     if (stayInApp) {
-        await attachPageDebugger(tabId);
-        try {
-            const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', {
-                format: 'png',
-                fromSurface: true
-            });
-            return `data:image/png;base64,${result.data}`;
-        } catch (err) {
-            const msg = String(err?.message || err || '');
-            if (/showing error page|chrome-error/i.test(msg)) {
-                throw new Error('cannot capture Chrome error page (site failed to load)');
+        const attached = await attachPageDebugger(tabId);
+        if (attached) {
+            try {
+                const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', {
+                    format: 'png',
+                    fromSurface: true
+                });
+                if (result?.data) return `data:image/png;base64,${result.data}`;
+            } catch (err) {
+                const msg = String(err?.message || err || '');
+                if (/showing error page|chrome-error/i.test(msg)) {
+                    throw new Error('cannot capture Chrome error page (site failed to load)');
+                }
+                console.warn('[bidder] debugger screenshot failed, using visible tab', err);
             }
-            throw err;
         }
     }
 
@@ -816,6 +913,9 @@ export async function uploadScreenshot(applicationId, stage, tabId, opts = {}) {
             method: 'POST',
             body: { application_id: applicationId, stage, image_base64: dataUrl }
         });
+        if (/^(live|opened|mid_fill|after_fill|after_fill_done|no_form|pre_submit|captcha|login_wall)$/.test(String(stage))) {
+            await setQueueState({ liveShotAt: Date.now() }).catch(() => {});
+        }
         return true;
     } catch (err) {
         console.warn('[bidder] screenshot failed', err);
@@ -1597,14 +1697,15 @@ export async function fillEmailSecurityCode(tabId, code) {
 }
 
 /**
- * Poll Outlook inbox via API and fill the email OTP on the apply tab.
+ * Poll Outlook/Gmail via API and fill the Greenhouse email security code.
+ * Codes expire in ~10 minutes — wait almost that long and sync often.
  */
-export async function tryFillOutlookEmailOtp(tabId, { timeoutMs = 180000, applicationId = null } = {}) {
+export async function tryFillOutlookEmailOtp(tabId, { timeoutMs = 540000, applicationId = null } = {}) {
     try {
-        const afterIso = new Date(Date.now() - 90 * 1000).toISOString();
+        const afterIso = new Date(Date.now() - 5 * 60 * 1000).toISOString();
         const hit = await waitOutlookOtp({
-            timeoutMs,
-            pollMs: 5000,
+            timeoutMs: Math.min(Math.max(30_000, Number(timeoutMs) || 540000), 10 * 60 * 1000),
+            pollMs: 2000,
             afterIso,
             fromHint: 'greenhouse'
         });
@@ -1612,7 +1713,7 @@ export async function tryFillOutlookEmailOtp(tabId, { timeoutMs = 180000, applic
             return { ok: false, error: hit?.error || 'no_code' };
         }
         const filled = await fillEmailSecurityCode(tabId, hit.code);
-        return { ok: !!filled?.filled, code: hit.code, filled, subject: hit.subject };
+        return { ok: !!filled?.filled, code: hit.code, filled, subject: hit.subject, via: hit.via || 'mailbox' };
     } catch (err) {
         return { ok: false, error: err?.message || String(err) };
     }

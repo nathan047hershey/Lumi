@@ -196,7 +196,8 @@ export default function OutlookMailbox() {
             }
         };
         pull();
-        const timer = setInterval(pull, 30000);
+        // Greenhouse security codes expire in ~10m — pull often while this page is open.
+        const timer = setInterval(pull, 10000);
         return () => {
             cancelled = true;
             clearInterval(timer);

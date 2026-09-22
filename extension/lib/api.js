@@ -507,17 +507,17 @@ export function resumeDownloadUrl(apiBaseUrl, filename) {
     return `${normalizeBaseUrl(apiBaseUrl)}/resumes/${encodeURIComponent(filename)}`;
 }
 
-/** Outlook inbox — wait for Greenhouse-style email security code. */
+/** Outlook inbox — wait for Greenhouse email security code (~10m lifetime). */
 export async function waitOutlookOtp(opts = {}) {
     return request('/user/outlook/wait-otp', {
         method: 'POST',
         body: {
-            timeoutMs: opts.timeoutMs ?? 180000,
-            pollMs: opts.pollMs ?? 5000,
+            timeoutMs: opts.timeoutMs ?? 540000,
+            pollMs: opts.pollMs ?? 2000,
             afterIso: opts.afterIso || null,
             fromHint: opts.fromHint || 'greenhouse'
         },
-        timeout: Math.max(60000, (opts.timeoutMs || 180000) + 30000)
+        timeout: Math.max(90000, (opts.timeoutMs || 540000) + 60000)
     });
 }
 

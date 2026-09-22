@@ -4743,16 +4743,16 @@ router.post('/outlook/messages/:id/read', (req, res) => {
     }
 });
 
-/** Block until a security-code email arrives (used by Auto Bidder AFK). */
+/** Block until a Greenhouse security-code email arrives (AFK Auto Bidder). Codes expire ~10m. */
 router.post('/outlook/wait-otp', async (req, res) => {
     try {
         const timeoutMs = Math.min(
             10 * 60 * 1000,
-            Math.max(15_000, Number(req.body?.timeoutMs) || 180_000)
+            Math.max(30_000, Number(req.body?.timeoutMs) || 540_000)
         );
         const result = await outlookMail.waitForOtp(req.user.id, {
             timeoutMs,
-            pollMs: Math.max(3000, Number(req.body?.pollMs) || 5000),
+            pollMs: Math.max(1500, Number(req.body?.pollMs) || 2000),
             afterIso: req.body?.afterIso || null,
             fromHint: req.body?.fromHint || 'greenhouse'
         });
