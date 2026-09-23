@@ -57,7 +57,7 @@ import {
 import { adminAPI } from '@/api';
 import { useAuth } from '@/context/AuthContext';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
-import { clientTzOffsetMinutes, jobLinksListQueryFromLocation, localYmd } from '@/lib/jobLinksListState';
+import { clientTzOffsetMinutes, jobLinksListQueryFromLocation, localDayUtcRange, localYmd } from '@/lib/jobLinksListState';
 import { openResume } from '@/lib/resumeUrl';
 import AppPage from '@/components/AppPage';
 import { PageLoader, Loader } from '@/components/Loader';
@@ -530,6 +530,11 @@ function listFiltersFromSearchParams(searchParams) {
     }
     if (filters.date_from || filters.date_to) {
         filters.tz_offset = clientTzOffsetMinutes();
+        const range = localDayUtcRange(filters.date_from, filters.date_to);
+        if (range) {
+            filters.created_after = range.created_after;
+            filters.created_before = range.created_before;
+        }
     }
     return filters;
 }

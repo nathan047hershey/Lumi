@@ -83,6 +83,7 @@ import {
     clientTzOffsetMinutes,
     dateInputValue,
     jobLinksListStateToQuery,
+    localDayUtcRange,
     localYmd,
     resolveJobLinksListState,
     writeSavedJobLinksListState
@@ -1764,6 +1765,33 @@ function JobLinks({ embedded = false }) {
 
     // Data fetch ----------------------------------------------------------
     const loadRequestRef = useRef(0);
+    const justCreatedRef = useRef(new Map());
+    const rememberCreated = useCallback((row) => {
+        if (!row?.id) return;
+        const next = {
+            ...row,
+            available_profiles: Array.isArray(row.available_profiles) ? row.available_profiles : []
+        };
+        justCreatedRef.current.set(row.id, next);
+    }, []);
+    const mergeJustCreated = useCallback((apiRows) => {
+        const incoming = Array.isArray(apiRows) ? apiRows : [];
+        const byId = new Map(incoming.map((r) => [r.id, r]));
+        for (const [id, row] of justCreatedRef.current) {
+            if (byId.has(id)) {
+                const merged = {
+                    ...row,
+                    ...byId.get(id),
+                    available_profiles: byId.get(id).available_profiles ?? row.available_profiles ?? []
+                };
+                justCreatedRef.current.set(id, merged);
+                byId.set(id, merged);
+            } else {
+                byId.set(id, row);
+            }
+        }
+        return [...byId.values()].sort((a, b) => (Number(b.id) || 0) - (Number(a.id) || 0));
+    }, []);
     const load = useCallback(async (opts = {}) => {
         const silent = !!opts.silent;
         const requestId = ++loadRequestRef.current;
@@ -1777,6 +1805,11 @@ function JobLinks({ embedded = false }) {
             if (debouncedDateTo)     filters.date_to = debouncedDateTo;
             if (debouncedDateFrom || debouncedDateTo) {
                 filters.tz_offset = clientTzOffsetMinutes();
+                const range = localDayUtcRange(debouncedDateFrom, debouncedDateTo);
+                if (range) {
+                    filters.created_after = range.created_after;
+                    filters.created_before = range.created_before;
+                }
             }
             if (hasGeneratedResumeFilter) filters.has_generated_resume = 1;
             if (bidStateFilter && bidStateFilter !== 'all') filters.bid_state = bidStateFilter;
@@ -1810,8 +1843,12 @@ function JobLinks({ embedded = false }) {
             }
             const { listRes, cronRes } = await attemptLoad(1);
             if (requestId !== loadRequestRef.current) return;
-            setRows(Array.isArray(listRes.data?.data) ? listRes.data.data : []);
-            setTotal(listRes.data?.pagination?.total || 0);
+            const apiRows = Array.isArray(listRes.data?.data) ? listRes.data.data : [];
+            const merged = mergeJustCreated(apiRows);
+            setRows(merged);
+            const apiTotal = listRes.data?.pagination?.total || 0;
+            const extra = Math.max(0, merged.length - apiRows.length);
+            setTotal(apiTotal + extra);
             if (cronRes?.data) setCronStatus(cronRes.data);
         } catch (err) {
             if (requestId !== loadRequestRef.current) return;
@@ -1827,7 +1864,7 @@ function JobLinks({ embedded = false }) {
                 if (!silent) setTableLoading(false);
             }
         }
-    }, [page, limit, debouncedSearch, techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo]);
+    }, [page, limit, debouncedSearch, techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, mergeJustCreated]);
 
     useEffect(() => {
         load();
@@ -2163,7 +2200,7 @@ function JobLinks({ embedded = false }) {
                                         <SelectItem value="company">Company</SelectItem>
                                     </SelectContent>
                                 </Select>
-                                <div className="w-[9rem]">
+                                <div className="w-[11rem]">
                                     <DatePicker
                                         value={typeof dateFrom === 'string' ? dateFrom : ''}
                                         onChange={(e) => {
@@ -2174,7 +2211,7 @@ function JobLinks({ embedded = false }) {
                                         placeholder="From"
                                     />
                                 </div>
-                                <div className="w-[9rem]">
+                                <div className="w-[11rem]">
                                     <DatePicker
                                         value={typeof dateTo === 'string' ? dateTo : ''}
                                         onChange={(e) => {
@@ -2313,19 +2350,9 @@ function JobLinks({ embedded = false }) {
                 onOpenChange={setShowAdd}
                 onCreated={(row) => {
                     if (row?.id) {
-                        setRows((prev) => {
-                            if (prev.some((r) => r.id === row.id)) {
-                                return prev.map((r) => (r.id === row.id
-                                    ? { ...r, ...row, available_profiles: row.available_profiles ?? r.available_profiles ?? [] }
-                                    : r));
-                            }
-                            return [{
-                                ...row,
-                                available_profiles: Array.isArray(row.available_profiles)
-                                    ? row.available_profiles
-                                    : []
-                            }, ...prev];
-                        });
+                        rememberCreated(row);
+                        setRows((prev) => mergeJustCreated(prev));
+                        setTotal((t) => (justCreatedRef.current.has(row.id) ? Math.max(t, 1) : t));
                     }
                     if (page !== 1) setPage(1);
                     load({ silent: true });

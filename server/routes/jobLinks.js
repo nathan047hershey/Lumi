@@ -93,6 +93,17 @@ adminWriteRouter.use(requireAuth, requireAdmin);
 // the UI doesn't blow up the INSERT.
 const VALID_TECHSTACKS = ['python', 'java', 'dotnet', 'golang', 'nodejs', 'frontend'];
 
+/** Normalize an ISO or sqlite UTC stamp to `YYYY-MM-DD HH:MM:SS`. */
+function sqliteUtcStamp(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return '';
+    const iso = raw.includes('T') ? raw : raw.replace(' ', 'T');
+    const withZ = /Z$|[+-]\d{2}:?\d{2}$/.test(iso) ? iso : `${iso}Z`;
+    const dt = new Date(withZ);
+    if (Number.isNaN(dt.getTime())) return '';
+    return dt.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 /** Attach `created_by_username` for list/detail rows (batch lookup). */
 function decorateJobLinksWithCreators(rows) {
     if (!Array.isArray(rows) || rows.length === 0) return rows || [];
@@ -127,13 +138,16 @@ function buildJobLinkListFilters(query = {}) {
     const dateTo = /^\d{4}-\d{2}-\d{2}$/.test((query.date_to || '').trim())
         ? (query.date_to || '').trim()
         : '';
+    const createdAfter = sqliteUtcStamp(query.created_after);
+    const createdBefore = sqliteUtcStamp(query.created_before);
     const tzOffsetRaw = parseInt(query.tz_offset, 10);
     const tzOffsetMin = Number.isFinite(tzOffsetRaw) && tzOffsetRaw >= -14 * 60 && tzOffsetRaw <= 14 * 60
         ? tzOffsetRaw
         : 0;
     const tzAbs = Math.abs(tzOffsetMin);
     const tzSign = tzOffsetMin >= 0 ? '-' : '+';
-    const createdLocalDate = `DATE(datetime(created_at, '${tzSign}${tzAbs} minutes'))`;
+    const createdLocalDate = `DATE(datetime(replace(created_at, 'T', ' '), '${tzSign}${tzAbs} minutes'))`;
+    const createdAtExpr = `datetime(replace(created_at, 'T', ' '))`;
     const fetchStatus = (query.fetch_status || 'all').trim();
     const hasGeneratedResumeRaw = (query.has_generated_resume || '').trim().toLowerCase();
     const hasGeneratedResume = ['1', 'true', 'yes'].includes(hasGeneratedResumeRaw);
@@ -181,13 +195,24 @@ function buildJobLinkListFilters(query = {}) {
         conds.push('is_available = 0');
     }
 
-    if (dateFrom) {
-        conds.push(`${createdLocalDate} >= ?`);
-        params.push(dateFrom);
-    }
-    if (dateTo) {
-        conds.push(`${createdLocalDate} <= ?`);
-        params.push(dateTo);
+    if (createdAfter || createdBefore) {
+        if (createdAfter) {
+            conds.push(`${createdAtExpr} >= datetime(?)`);
+            params.push(createdAfter);
+        }
+        if (createdBefore) {
+            conds.push(`${createdAtExpr} < datetime(?)`);
+            params.push(createdBefore);
+        }
+    } else {
+        if (dateFrom) {
+            conds.push(`${createdLocalDate} >= ?`);
+            params.push(dateFrom);
+        }
+        if (dateTo) {
+            conds.push(`${createdLocalDate} <= ?`);
+            params.push(dateTo);
+        }
     }
     if (fetchStatus && fetchStatus !== 'all'
         && ['pending', 'fetching', 'success', 'failed'].includes(fetchStatus)) {

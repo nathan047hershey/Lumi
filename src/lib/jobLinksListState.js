@@ -28,6 +28,36 @@ export function dateInputValue(e) {
     return '';
 }
 
+function ymdToLocalMidnight(ymd) {
+    const [y, m, d] = String(ymd).split('-').map((n) => parseInt(n, 10));
+    if (!y || !m || !d) return null;
+    return new Date(y, m - 1, d, 0, 0, 0, 0);
+}
+
+function toSqliteUtc(d) {
+    if (!(d instanceof Date) || Number.isNaN(d.getTime())) return '';
+    return d.toISOString().slice(0, 19).replace('T', ' ');
+}
+
+/**
+ * Inclusive local calendar-day window as UTC sqlite datetimes.
+ * Today 2026-09-22 in EDT is [2026-09-22 04:00:00, 2026-09-23 04:00:00).
+ */
+export function localDayUtcRange(fromYmd, toYmd) {
+    const from = asYmd(fromYmd);
+    const to = asYmd(toYmd) || from;
+    const startYmd = from || to;
+    if (!startYmd) return null;
+    const start = ymdToLocalMidnight(startYmd);
+    const end = ymdToLocalMidnight(to || startYmd);
+    if (!start || !end) return null;
+    end.setDate(end.getDate() + 1);
+    const created_after = toSqliteUtc(start);
+    const created_before = toSqliteUtc(end);
+    if (!created_after || !created_before) return null;
+    return { created_after, created_before };
+}
+
 export const EMPTY_JOB_LINKS_LIST_STATE = {
     page: 1,
     search: '',
