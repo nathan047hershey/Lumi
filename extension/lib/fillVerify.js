@@ -123,7 +123,7 @@ export function canAutoSubmit(stats, prefs = {}) {
 export function bidLimitMsForAts(ats, { pageCount = 0 } = {}) {
     const id = String(ats || '').toLowerCase();
     let ms = FILL_VERIFY_BASE_LIMIT_MS;
-    if (id === 'greenhouse') ms = 150000;
+    if (id === 'greenhouse') ms = 90000;
     else if (id === 'oracle' || id === 'workday') ms = 120000;
     else if (id === 'icims' || id === 'smartrecruiters') ms = 110000;
     else if (id === 'ashby' || id === 'lever') ms = 100000;

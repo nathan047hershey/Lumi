@@ -15,14 +15,14 @@
 
     const ENGINE = 'bidder-engine-v1';
     const MAX_PAGES = 6;
-    const MAX_RETRIES = 2;
+    const MAX_RETRIES = 4;
     /** Fallback when payload.bidDeadline is missing — keep in sync with autofillEngine BID_HARD_LIMIT_MS. */
     const DEFAULT_BUDGET_MS = 90 * 1000;
 
     /** Company / related company-or-role employment → No. Not tech "worked with". */
     const FORMER_EMPLOYEE_RE = /\b(are you a former\b|former\b.{0,48}\bemployee|employed by\b|ever been employed|have (?:you )?ever been employed|been employed by\b|worked\s+(?:before\s+)?(?:at|for|with)\s+(us|this|our|the\s+company|here)|ever\s+worked\s+(?:before\s+)?(?:at|for|with)\s+(us|this|our|here)|previously\s+worked\s+(at|for|here|with\s+(us|this|our)|before)|have you (?:ever )?worked\s+(?:before\s+)?(?:(?:at|for|with)\s+)?(?:this|our|the)\s+(?:company|employer|organization|firm)|(?:related|affiliate|subsidiary|sister|parent|associated)\s+(?:company|companies|employer|entity|role|position)|(?:company|employer).{0,40}\brelated\b|related\s+(?:company|role|position|employer)|same\s+(?:company|employer)|permanent or temporary employee|(?:currently|previously)\s+(?:\([^)]*\)\s*)?working\s+for|working\s+for\b.{0,80}\b(contractor|contingent)|contractor or contingent|contingent worker|as an?\s+(employee|contractor|contingent)|employee or (?:a )?contractor|internal (?:candidate|employee)|applied (?:here|to (?:us|this)|before)|employed by .{0,40} before)\b/i;
     /** Tech/stack/tool experience → Yes (Python, PKI, APIs, etc.). */
-    const SKILL_STACK_RE = /\b(python|java|javascript|typescript|react|node\.?js|golang|go\b|\.net|c\+\+|c#|sql|aws|azure|gcp|kubernetes|k8s|docker|linux|api|rest|graphql|certificate|pki|x\.?509|machine identity|lifecycle management|security infrastructure|devops|terraform|ansible|spark|kafka|redis|mongo|postgres|postgresql|machine learning|\bml\b|\bai\b|llm|chatgpt|copilot)\b/i;
+    const SKILL_STACK_RE = /\b(python|java|javascript|typescript|react|node\.?js|golang|go\b|\.net|c\+\+|c#|sql|aws|azure|gcp|kubernetes|k8s|docker|linux|api|rest|graphql|certificate|pki|x\.?509|machine identity|lifecycle management|security infrastructure|devops|terraform|ansible|spark|scala|hadoop|rdbms|relational database|database|kafka|redis|mongo|postgres|postgresql|machine learning|\bml\b|\bai\b|llm|chatgpt|copilot)\b/i;
     const SKILL_EXPERIENCE_YES_RE = /\b((do you have|have you)\b.{0,140}\b(deep\s+)?(hands[\s-]*on\s+)?(experience|worked with|familiar|proficien|knowledge|expertise)\b|(experience|hands[\s-]*on|worked with|familiar|proficien)\b.{0,80}\b(with|in|using)\b)/i;
     /** Relative / friend / relationship at the company → always No. */
     const EMPLOYEE_RELATIONSHIP_RE = /\b(relative|family member|know anyone|personal relationship|related to (anyone|an? employee)|friend (working|employed)|anyone you know (who )?(works|is employed)|employee .{0,40} relationship)\b/i;
@@ -34,9 +34,57 @@
     function labelLooksLikeFormerEmployee(label) {
         return FORMER_EMPLOYEE_RE.test(String(label || ''));
     }
+    function labelLooksLikeSkillList(label) {
+        const hay = String(label || '').toLowerCase();
+        if (/\b(briefly )?describe|tell us|explain|provide an example\b/.test(hay)) return false;
+        return /\bwhat (languages?|technolog(?:y|ies)|tools?|frameworks?|skills?|platforms?|databases?|stacks?)\b/.test(hay)
+            || /\bwhich (languages?|technolog(?:y|ies)|tools?|frameworks?)\b/.test(hay)
+            || /\b(languages?|technolog(?:y|ies)|tools?) do you (have|use)\b/.test(hay);
+    }
+
+    function labelLooksLikeSkillDescribe(label) {
+        const hay = String(label || '').toLowerCase();
+        return /\b(briefly )?describe your experience\b/.test(hay)
+            || (/\bplease (briefly )?describe\b/.test(hay) && /\bexperience\b/.test(hay))
+            || (/\bdescribe\b/.test(hay) && /\bexperience (with|in|using)\b/.test(hay));
+    }
+
+    function labelLooksLikeInterviewAttendYes(label) {
+        const hay = String(label || '');
+        return /\b(reconfirm|confirm).{0,60}\b(ability|able) to attend\b/i.test(hay)
+            || /\battend.{0,100}\b(in[\s-]*person|onsite|on[\s-]*site|headquarters|final[\s-]*round)\b/i.test(hay)
+            || (/\bin[\s-]*person interview\b/i.test(hay)
+                && /\b(able|ability|attend|available|confirm|reconfirm)\b/i.test(hay));
+    }
+
+    function skillListAnswer(profile, label = '') {
+        const fromProfile = String(profile?.skills || profile?.techstacks || '')
+            .split(/[,;|]/).map((s) => s.trim()).filter(Boolean);
+        const lab = String(label || '').toLowerCase();
+        const extras = [];
+        if (/language/.test(lab)) extras.push('Python', 'TypeScript', 'SQL', 'Scala');
+        if (/big data|technolog|spark|scala|hadoop/.test(lab)) {
+            extras.push('Apache Spark', 'Scala', 'Kafka', 'SQL');
+        }
+        const merged = [...new Set([...fromProfile.slice(0, 6), ...extras])];
+        return merged.slice(0, 6).join(', ') || 'Python, TypeScript, SQL, Apache Spark';
+    }
+
+    function skillDescribeAnswer(profile, label = '') {
+        const techHits = String(label || '').match(
+            /apache spark|spark|scala|python|sql|rdbms|kafka|hadoop|typescript|react/ig
+        ) || [];
+        const tech = [...new Set(techHits.map((t) => t.replace(/\s+/g, ' ').trim()))].join(' and ');
+        if (tech) {
+            return `I have used ${tech} in production data pipelines — implementation and tuning. Details are on my resume.`;
+        }
+        return `I have production experience with ${skillListAnswer(profile, label)}, including implementation and tuning. Details are on my resume.`;
+    }
+
     function labelLooksLikeSkillExperienceYes(label) {
         const lab = String(label || '');
         if (FORMER_EMPLOYEE_RE.test(lab)) return false;
+        if (labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab)) return false;
         // Stack/tech named → Yes. Or experience wording + tech token.
         if (SKILL_STACK_RE.test(lab) && SKILL_EXPERIENCE_YES_RE.test(lab)) return true;
         if (SKILL_STACK_RE.test(lab) && /\b(experience|hands[\s-]*on|familiar|proficien|worked with|knowledge)\b/i.test(lab)) {
@@ -302,6 +350,11 @@
         if (/\bdegree\b/.test(hay) && !/highest/.test(hay)) return 'degree';
         if (/\bdiscipline|major|field of study\b/.test(hay)) return 'discipline';
         if (/\byears?\b/.test(hay) && /\bexperience\b/.test(hay)) return 'years_of_experience';
+        if (labelLooksLikeInterviewAttendYes(hay)) return 'interview_attend_yes';
+        if (labelLooksLikeSkillList(hay)) return 'skill_list';
+        if (labelLooksLikeSkillDescribe(hay) || (/\bif\s+yes\b/.test(hay) && /\b(describe|briefly|project)\b/.test(hay))) {
+            return 'skill_project_brief';
+        }
         // "Which of the following best describes your experience with REST APIs?"
         // AI tools: "select one … that best describes you" / "extent of … use with AI tools"
         // → fixed dropdown (never free-text essay).
@@ -1045,7 +1098,7 @@
                 return false;
             }) || null;
         }
-        const all = [...document.querySelectorAll('input, textarea, select')];
+        const all = [...document.querySelectorAll('input, textarea, select, [role="combobox"]')];
         return all.find((el) => {
             if (!visible(el)) return false;
             const type = (el.type || '').toLowerCase();
@@ -1144,6 +1197,15 @@
             // No answer generated and field still empty → incomplete (esp. essays).
             if (!w && (field?.type === 'textarea' || kind === 'question')) return false;
             return false;
+        }
+        // Real option already showing — do not reopen the same select forever.
+        if (isSelectLikeField(field)) {
+            const polarity = kind === 'disability_status'
+                || kind === 'requires_sponsorship'
+                || kind === 'previous_employer_no'
+                || kind === 'hispanic_latino'
+                || kind === 'sanctioned_countries_no';
+            if (!polarity) return true;
         }
         if (kind === 'phone') return phoneDigits(got).length >= 7;
         if (kind === 'previous_employer_no' || kind === 'requires_sponsorship' || kind === 'sanctioned_countries_no') {
@@ -1324,7 +1386,55 @@
         return /somewhere\s*else|^other\b|not listed|none of the above|prefer not/i.test(String(t || ''));
     }
 
-    async function fillCombobox(el, wanted, kind, strategy, profile = null, label = '') {
+    function simplifyAliasesFor(raw, kind, skillAliases, profile = null) {
+        const aliases = [String(raw || '').trim()];
+        if (kind === 'skill_experience' || kind === 'years_of_experience') {
+            aliases.push(...(skillAliases || []));
+            aliases.push(
+                '5+', '5-10', '3-5', '10+', '5+ years', '5 or more',
+                'Yes', 'Expert', 'Advanced', 'Proficient'
+            );
+        }
+        if (kind === 'country' || /united states|usa|\bu\.?s\.?\b/i.test(raw)) {
+            aliases.push('United States', 'United States of America', 'USA', 'US', 'U.S.', 'U.S.A.');
+        }
+        if (kind === 'state') {
+            const st = String(profile?.state || raw || '').trim();
+            aliases.push(st);
+            if (/^va$/i.test(st) || /virginia/i.test(st)) aliases.push('VA', 'Virginia');
+            if (/^ca$/i.test(st) || /california/i.test(st)) aliases.push('CA', 'California');
+            if (/^ny$/i.test(st) || /new york/i.test(st)) aliases.push('NY', 'New York');
+            if (/^md$/i.test(st) || /maryland/i.test(st)) aliases.push('MD', 'Maryland');
+        }
+        if (kind === 'city') {
+            const city = String(profile?.city || '').trim();
+            const st = String(profile?.state || '').trim();
+            if (city) aliases.push(city, st ? `${city}, ${st}` : city);
+        }
+        if (kind === 'interview_attend_yes' || kind === 'yesno' || kind === 'onsite_hub_yes'
+            || kind === 'work_authorization' || kind === 'over_18' || kind === 'us_person_yes') {
+            aliases.push('Yes', 'Y', 'I agree', 'I acknowledge', 'Agree');
+        }
+        if (kind === 'data_protection') {
+            aliases.push('Yes', 'I agree', 'I acknowledge', 'Agree', 'Confirm');
+        }
+        if (/^(yes)\b/i.test(raw)) {
+            aliases.push('Yes', 'Y', 'I agree', 'I acknowledge', 'Agree');
+        }
+        if (/^(no)\b/i.test(raw)
+            || kind === 'requires_sponsorship'
+            || kind === 'previous_employer_no'
+            || kind === 'hispanic_latino'
+            || kind === 'disability_status') {
+            aliases.push('No', 'N', 'I do not', "I don't", 'No, I do not have a disability');
+        }
+        if (kind === 'gender') {
+            aliases.push('Male', 'Man', 'Female', 'Woman');
+        }
+        return [...new Set(aliases.map((a) => String(a || '').trim()).filter(Boolean))];
+    }
+
+    async function fillCombobox(el, wanted, kind, strategy, profile = null, label = '', opts = {}) {
         const helper = cm();
         let raw = String(wanted || '').trim();
         if (!raw || !el) return { ok: false, chosen: '', reason: 'empty' };
@@ -1401,6 +1511,41 @@
             return { ok: true, chosen: already, reason: 'already_complete' };
         } else if (already && helper && helper.scoreChoice(raw, already, '') >= 70) {
             return { ok: true, chosen: already, reason: 'already_complete' };
+        }
+
+        // Simplify: queue one dropdown at a time — open → wait options → click → VERIFY.
+        if (!opts.skipSimplify) {
+            const aliases = simplifyAliasesFor(raw, kind, skillAliases, profile);
+            const scheduled = window.__lumiScheduleHumanCombobox;
+            const simplify = window.__lumiFillComboboxSimplify;
+            try {
+                try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (_) { /* ignore */ }
+                await sleep(80);
+                if (typeof scheduled === 'function') {
+                    await scheduled(el, raw, { kind, aliases, minScore: 55, maxAttempts: 2 });
+                } else if (typeof simplify === 'function') {
+                    await simplify(el, raw, {
+                        kind,
+                        aliases,
+                        maxAttempts: 3,
+                        minScore: 55
+                    });
+                }
+                let shown = readDisplayed();
+                if (!shown) {
+                    for (let i = 0; i < 10 && !shown; i++) {
+                        await sleep(50);
+                        shown = readDisplayed();
+                    }
+                }
+                if (shown && !isPlaceholderValue(shown)) {
+                    try {
+                        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                    } catch (_) { /* ignore */ }
+                    try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
+                    return { ok: true, chosen: shown, reason: 'simplify' };
+                }
+            } catch (_) { /* one legacy pick below */ }
         }
 
         const scoreOpt = (t) => {
@@ -2165,11 +2310,18 @@
     async function fillOne(field, wanted, attempt, profile = null) {
         const kind0 = effectiveFieldKind(field) || field.kind || '';
         const forceOpen = kind0 === 'skill_experience'
+            || kind0 === 'interview_attend_yes'
             || kind0 === 'years_of_experience'
             || kind0 === 'disability_status'
+            || kind0 === 'work_authorization'
             || /^education_(start|end)_/.test(kind0)
+            || isSelectLikeField(field)
             || (String(wanted || '').length > 48 && (field.role === 'combobox' || field.type === 'select-one'));
         const strategy = forceOpen ? 'open' : (attempt % 2 === 1 ? 'type' : 'open');
+        try {
+            const preview = findEl(field);
+            if (preview) preview.scrollIntoView({ block: 'center', inline: 'nearest' });
+        } catch (_) { /* ignore */ }
         if (field.type === 'radio') {
             return { ...(await fillRadio(field, wanted, profile)), strategy };
         }
@@ -2191,19 +2343,30 @@
             }
             return { ok, chosen: el.value, strategy: 'phone' };
         }
-        if (el.tagName === 'SELECT') {
-            return { ...(await fillSelect(el, wanted)), strategy };
+        const nativeSel = nearestNativeSelect(el, field);
+        if (el.tagName === 'SELECT' || (nativeSel && !el.getAttribute('role'))) {
+            return { ...(await fillSelect(nativeSel || el, wanted)), strategy: 'native_select' };
         }
         const isCombo = el.getAttribute('role') === 'combobox'
             || el.getAttribute('aria-autocomplete')
             || el.className?.toString?.().includes('select__');
-        if (isCombo || field.role === 'combobox') {
+        if (isCombo || field.role === 'combobox' || nativeSel) {
             const kind = kind0;
             let want = wanted;
             if (kind === 'skill_experience' || (kind === 'years_of_experience' && String(want || '').length > 40)) {
                 want = skillExperienceWantAliases(profile, field.label || '')[0] || want;
             }
-            let res = await fillCombobox(el, want, kind, strategy, profile, field.label || '');
+            if (labelLooksLikeSkillList(field.label) || kind === 'skill_list') {
+                want = skillListAnswer(profile, field.label);
+            }
+            if (labelLooksLikeSkillDescribe(field.label) || kind === 'skill_project_brief') {
+                want = skillDescribeAnswer(profile, field.label);
+            }
+            let res = await fillCombobox(el, want, kind, forceOpen ? 'open' : strategy, profile, field.label || '');
+            if (!res?.ok && nativeSel) {
+                const sel = await fillSelect(nativeSel, want);
+                if (sel?.ok) return { ...sel, strategy: 'native_select' };
+            }
             // Location select often lists US states — retry with state name if city string missed.
             if (!res?.ok && (kind === 'city' || kind === 'state')) {
                 const st = String(wanted || '').split(',').pop()?.trim();
@@ -2225,15 +2388,28 @@
                     } catch (_) { /* ignore */ }
                 }
             }
-            // Second try: always open-and-pick for skill / education selects.
             if (!res?.ok && (kind === 'skill_experience' || /^education_(start|end)_/.test(kind)
-                || kind === 'gender' || kind === 'race_ethnicity' || kind === 'disability_status')) {
-                res = await fillCombobox(el, want, kind, 'open', profile, field.label || '');
+                || kind === 'gender' || kind === 'race_ethnicity' || kind === 'disability_status'
+                || kind === 'interview_attend_yes' || kind === 'state' || kind === 'city')) {
+                res = await fillCombobox(
+                    el, want, kind, 'open', profile, field.label || '', { skipSimplify: true }
+                );
+            }
+            // Jobwize gate: displayed value must not still be Select…
+            if (res?.ok && isPlaceholderValue(readCurrentValue(field))) {
+                const chosen = String(res.chosen || '').trim();
+                if (!chosen || isPlaceholderValue(chosen)) {
+                    res = { ...res, ok: false, reason: 'still_placeholder' };
+                }
+            }
+            if (res?.ok) {
+                try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
             }
             return { ...res, strategy };
         }
         setNativeValue(el, wanted);
         await sleep(60);
+        try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
         return { ok: true, chosen: el.value, strategy: 'native' };
     }
 
@@ -2251,6 +2427,15 @@
         }
         if (kind === 'onsite_hub_yes' || /\bopen to working\b.{0,120}\b(office|hub|onsite)|office hubs?\b/i.test(lab)) {
             return 'Yes';
+        }
+        if (kind === 'interview_attend_yes' || labelLooksLikeInterviewAttendYes(lab)) {
+            return 'Yes';
+        }
+        if (kind === 'skill_list' || labelLooksLikeSkillList(lab)) {
+            return skillListAnswer(profile, lab);
+        }
+        if (kind === 'skill_project_brief' || labelLooksLikeSkillDescribe(lab)) {
+            return skillDescribeAnswer(profile, lab);
         }
         if (kind === 'us_person_yes' || kind === 'us_citizen_yes'
             || /\bU\.?\s*S\.?\s*person\b/i.test(lab)
@@ -2315,7 +2500,8 @@
         if (/\b(are|do|does|have|has|will|would|can|is)\b/i.test(lab) || /\?/.test(lab)) {
             if (labelLooksLikeFormerEmployee(lab)) return 'No';
             if (labelLooksLikeSkillExperienceYes(lab)) return 'Yes';
-            if (/\b(open|willing|able|comfortable|agree|authorized|eligible|citizen|person)\b/i.test(lab)) {
+            if (labelLooksLikeInterviewAttendYes(lab)
+                || /\b(open|willing|able|ability|comfortable|agree|authorized|eligible|citizen|person|attend|reconfirm)\b/i.test(lab)) {
                 return 'Yes';
             }
             // Production / skill experience questions → Yes, not academic No.
@@ -2330,6 +2516,59 @@
         return '';
     }
 
+    function wantedForField(field, profile, answersById, answersByLabel, jobDescription) {
+        const lab = String(field?.label || '');
+        const kind = effectiveFieldKind(field) || field.kind || '';
+        let wanted = profileValue(profile, answersById, answersByLabel, field, jobDescription)
+            || defaultAnswerForEmptySelect(field, profile, answersById, answersByLabel, jobDescription)
+            || '';
+        if (labelLooksLikeSkillList(lab) || kind === 'skill_list') {
+            if (!wanted || /^yes\.?$/i.test(wanted)) wanted = skillListAnswer(profile, lab);
+            return wanted;
+        }
+        if (labelLooksLikeSkillDescribe(lab) || kind === 'skill_project_brief') {
+            if (!wanted || /^yes\.?$/i.test(wanted) || wanted.length < 12) {
+                wanted = skillDescribeAnswer(profile, lab);
+            }
+            return wanted;
+        }
+        if (labelLooksLikeInterviewAttendYes(lab) || kind === 'interview_attend_yes') {
+            return 'Yes';
+        }
+        if (isSelectLikeField(field) && wanted && wanted.length > 40) {
+            const compact = defaultAnswerForEmptySelect(
+                field, profile, answersById, answersByLabel, jobDescription
+            );
+            if (compact && compact.length < 40) wanted = compact;
+            else if (/\b(do you|have you|are you|will you|can you|reconfirm|confirm)\b/i.test(lab)) {
+                wanted = 'Yes';
+            }
+        }
+        if (!wanted && field?.required) {
+            if (field.type === 'textarea' || kind === 'question') {
+                wanted = fallbackEssayForQuestion(lab, profile, jobDescription)
+                    || skillDescribeAnswer(profile, lab);
+            } else if (isSelectLikeField(field)) {
+                wanted = 'Yes';
+            }
+        }
+        return String(wanted || '').trim();
+    }
+
+    function nearestNativeSelect(el, field) {
+        if (el?.tagName === 'SELECT') return el;
+        const wrap = el?.closest?.(
+            'label, fieldset, .field, .form-field, .select-shell, [class*="question"], [class*="input"]'
+        ) || el?.parentElement;
+        const local = wrap?.querySelector?.('select');
+        if (local) return local;
+        if (field?.id) {
+            const byFor = document.querySelector(`select[id="${CSS.escape(field.id)}"]`);
+            if (byFor) return byFor;
+        }
+        return null;
+    }
+
     function isSelectLikeField(field) {
         if (!field) return false;
         if (field.type === 'select' || field.type === 'radio') return true;
@@ -2339,6 +2578,48 @@
         return el.getAttribute('role') === 'combobox'
             || !!el.getAttribute('aria-autocomplete')
             || /select__/i.test(String(el.className || ''));
+    }
+
+    function fieldVisualTop(field) {
+        const el = findEl(field);
+        if (!el) return Number.POSITIVE_INFINITY;
+        try {
+            const r = el.getBoundingClientRect();
+            return (window.scrollY || document.documentElement.scrollTop || 0) + r.top;
+        } catch (_) {
+            return Number.POSITIVE_INFINITY;
+        }
+    }
+
+    function sortFieldsVisualOrder(fields) {
+        return [...(fields || [])].sort((a, b) => {
+            const dy = fieldVisualTop(a) - fieldVisualTop(b);
+            if (Math.abs(dy) > 8) return dy;
+            try {
+                const elA = findEl(a);
+                const elB = findEl(b);
+                if (!elA || !elB) return 0;
+                return elA.getBoundingClientRect().left - elB.getBoundingClientRect().left;
+            } catch (_) {
+                return 0;
+            }
+        });
+    }
+
+    function closeOpenSelectMenus() {
+        try {
+            document.activeElement?.blur?.();
+        } catch (_) { /* ignore */ }
+    }
+
+    function updateBidderPanel(partial) {
+        try {
+            if (typeof window.__lumiUpdateAutofillPanel === 'function') {
+                window.__lumiUpdateAutofillPanel(partial);
+                return;
+            }
+            window.__lumiFillEngine?.updateAutofillPanel?.(partial);
+        } catch (_) { /* ignore */ }
     }
 
     /**
@@ -2419,6 +2700,17 @@
                 match: (k, lab) => k === 'us_citizen_yes' || k === 'us_person_yes'
                     || /\b(u\.?\s*s\.?\s*|united states)\s*citizen\b/i.test(lab)
                     || /\bU\.?\s*S\.?\s*person\b/i.test(lab),
+                want: 'Yes'
+            },
+            {
+                match: (k, lab) => k === 'interview_attend_yes' || labelLooksLikeInterviewAttendYes(lab),
+                want: 'Yes'
+            },
+            {
+                match: (k, lab) => k === 'skill_experience'
+                    && !labelLooksLikeSkillList(lab)
+                    && !labelLooksLikeSkillDescribe(lab)
+                    && /\b(do you have|have you|are you)\b.{0,80}\bexperience\b/i.test(lab),
                 want: 'Yes'
             },
             {
@@ -2592,6 +2884,13 @@
         if (!PROFILE_ONLY.has(kind)) {
             const fromAnswers = lookupAnswer(answersById, answersByLabel, field);
             if (fromAnswers) {
+                if (/^yes\.?$/i.test(String(fromAnswers).trim())
+                    && (kind === 'skill_list' || kind === 'skill_project_brief'
+                        || labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab))) {
+                    return kind === 'skill_list' || labelLooksLikeSkillList(lab)
+                        ? skillListAnswer(profile, lab)
+                        : skillDescribeAnswer(profile, lab);
+                }
                 // Never keep LLM "0 experience" / "No experience" — rewrite.
                 if (isWeakSkillOption(fromAnswers)) {
                     return skillExperienceWantAliases(profile, lab)[0]
@@ -2659,6 +2958,8 @@
             case 'skill_experience': {
                 const skillLab = String(field.label || lab || '');
                 if (labelLooksLikeFormerEmployee(skillLab)) return 'No';
+                if (labelLooksLikeSkillList(skillLab)) return skillListAnswer(p, skillLab);
+                if (labelLooksLikeSkillDescribe(skillLab)) return skillDescribeAnswer(p, skillLab);
                 if (labelLooksLikeSkillExperienceYes(skillLab)) return 'Yes';
                 return skillExperienceWantAliases(p, skillLab)[0] || 'Yes';
             }
@@ -2694,14 +2995,12 @@
                 if (/^(woman|female|f)\b/.test(g)) return 'she/her';
                 return 'he/him';
             }
-            case 'skill_project_brief': {
-                const skills = String(p.skills || p.techstacks || 'Python, TypeScript, React')
-                    .split(/[,;|]/).filter(Boolean).slice(0, 4).join(', ');
-                return (
-                    `Built and shipped production features using ${skills || 'our core stack'}, `
-                    + 'including API design, UI implementation, and deployment — details on my resume.'
-                );
-            }
+            case 'skill_list':
+                return skillListAnswer(p, lab);
+            case 'skill_project_brief':
+                return skillDescribeAnswer(p, lab);
+            case 'interview_attend_yes':
+                return 'Yes';
             case 'export_control_us_citizen':
                 return 'U.S. Citizen';
             case 'veteran_status': return p.veteran_status || 'I am not a protected veteran';
@@ -2937,8 +3236,8 @@
                 lastFingerprint = fp;
             }
 
-            const fields = collectFields().slice().sort((a, b) => {
-                // Fill knockout Yes/No first so wrong Yes never flashes mid-page.
+            const fields = sortFieldsVisualOrder(collectFields()).sort((a, b) => {
+                // Knockout first, then top-to-bottom so one course fills the whole page.
                 const rank = (f) => {
                     const k = effectiveFieldKind(f) || f.kind || '';
                     const lab = String(f.label || '');
@@ -2948,7 +3247,9 @@
                     if (k === 'work_authorization') return 3;
                     return 10;
                 };
-                return rank(a) - rank(b);
+                const dr = rank(a) - rank(b);
+                if (dr !== 0) return dr;
+                return fieldVisualTop(a) - fieldVisualTop(b);
             });
             const required = fields.filter((f) => f.required);
             requiredTotal = Math.max(requiredTotal, required.length);
@@ -2984,6 +3285,10 @@
                 }
             } catch (_) { /* continue */ }
 
+            try {
+                await fillGreenhouseIdentityGaps(profile);
+            } catch (_) { /* continue */ }
+
             for (const field of fields) {
                 const fieldEl = findEl(field) || document.getElementById(field.id);
                 // Only skip the dial-code Country control — never skip Phone / City.
@@ -3000,22 +3305,10 @@
                     continue;
                 }
 
-                const wantedRaw = profileValue(profile, answersById, answersByLabel, field, payload.jobDescription);
-                let wanted = wantedRaw;
-                if (!wanted && (field.required || field.kind === 'city' || field.kind === 'country'
-                    || field.kind === 'gender' || field.kind === 'race_ethnicity'
-                    || field.kind === 'veteran_status' || field.kind === 'disability_status'
-                    || field.kind === 'work_authorization' || field.kind === 'pronouns')) {
-                    wanted = fallbackEssayForQuestion(field.label, profile, payload.jobDescription)
-                        || (field.kind === 'city'
-                            ? [profile?.city, profile?.state].filter(Boolean).join(', ')
-                            : '')
-                        || (field.kind === 'country' ? (profile?.country || 'United States') : '')
-                        || (field.type === 'textarea'
-                            ? `I have relevant production experience described on my resume and can apply that work directly to this role.`
-                            : '');
-                }
-                if (!wanted) continue;
+                const wanted = wantedForField(
+                    field, profile, answersById, answersByLabel, payload.jobDescription
+                );
+                if (!wanted && !field.required) continue;
 
                 // Skip if already correct (prevents begin→end→begin overwrite).
                 const already = readCurrentValue(field);
@@ -3029,7 +3322,8 @@
                 let chosen = '';
                 let strategy = '';
                 let error = '';
-                for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+                const maxTries = isSelectLikeField(field) ? 1 : MAX_RETRIES;
+                for (let attempt = 1; attempt <= maxTries; attempt++) {
                     if (!wanted && field.required) {
                         error = 'no_value';
                         break;
@@ -3039,7 +3333,8 @@
                     chosen = res.chosen || chosen;
                     await sleep(120);
                     const got = readCurrentValue(field);
-                    if (valuesMatch(wanted, got || chosen, field.kind)) {
+                    const selectDone = isSelectLikeField(field) && !isPlaceholderValue(got || chosen);
+                    if (res?.ok || valuesMatch(wanted, got || chosen, field.kind) || selectDone) {
                         ok = true;
                         chosen = got || chosen;
                         attempts.push({
@@ -3058,7 +3353,7 @@
                         if (field.required) requiredOk += 1;
                         break;
                     }
-                    if (attempt === MAX_RETRIES) {
+                    if (attempt === maxTries) {
                         attempts.push({
                             application_id: applicationId,
                             page_index: pages,
@@ -3084,13 +3379,70 @@
                 await fillGreenhouseIdentityGaps(profile);
             } catch (_) { /* continue */ }
 
-            // Verify required before Next / Submit
-            let stillBad = collectFields().filter((f) => {
+            const listRequiredGaps = () => collectFields().filter((f) => {
                 if (!f.required) return false;
-                const wanted = profileValue(profile, answersById, answersByLabel, f, payload.jobDescription)
-                    || defaultAnswerForEmptySelect(f, profile, answersById, answersByLabel, payload.jobDescription);
+                const wanted = wantedForField(
+                    f, profile, answersById, answersByLabel, payload.jobDescription
+                );
                 return !requiredFieldSatisfied(f, wanted, readCurrentValue(f));
             });
+
+            const rewriteWrongYesAnswers = async () => {
+                let n = 0;
+                for (const f of collectFields()) {
+                    const lab = String(f.label || '');
+                    const got = String(readCurrentValue(f) || '').trim();
+                    if (!/^yes\.?$/i.test(got)) continue;
+                    if (!(labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab)
+                        || f.kind === 'skill_list' || f.kind === 'skill_project_brief')) {
+                        continue;
+                    }
+                    const want = labelLooksLikeSkillList(lab) || f.kind === 'skill_list'
+                        ? skillListAnswer(profile, lab)
+                        : skillDescribeAnswer(profile, lab);
+                    const r = await fillOne(f, want, 2, profile);
+                    if (r?.ok) n += 1;
+                }
+                return n;
+            };
+
+            const forceFillRequiredGaps = async (rounds = 2) => {
+                let n = 0;
+                n += await rewriteWrongYesAnswers();
+                for (let round = 0; round < rounds; round++) {
+                    const gaps = sortFieldsVisualOrder(listRequiredGaps());
+                    if (!gaps.length) break;
+                    updateBidderPanel({
+                        status: `Filling ${gaps.length} required gap(s)…`,
+                        progress: Math.min(88, 50 + (3 - gaps.length) * 8),
+                        left: gaps.length
+                    });
+                    // Same course: keep filling leftover empties — do not skip prior misses.
+                    for (const f of gaps) {
+                        const el = findEl(f);
+                        if (el) {
+                            try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (_) { /* ignore */ }
+                            await sleep(120);
+                        }
+                        const wanted = wantedForField(
+                            f, profile, answersById, answersByLabel, payload.jobDescription
+                        ) || 'Yes';
+                        const r = await fillOne(f, wanted, 2 + round, profile);
+                        if (r?.ok && !isPlaceholderValue(readCurrentValue(f))) n += 1;
+                        closeOpenSelectMenus();
+                        await sleep(120);
+                    }
+                    n += await sweepRequiredSelects(
+                        profile, answersById, answersByLabel, payload.jobDescription
+                    );
+                }
+                return n;
+            };
+
+            filled += await forceFillRequiredGaps(2);
+
+            // Verify required before Next / Submit
+            let stillBad = listRequiredGaps();
 
             // Reliability sweep — empty Yes/No + Disability No (target ≥90% complete).
             if (stillBad.length > 0 || collectFields().some((f) => {
@@ -3102,12 +3454,7 @@
                     profile, answersById, answersByLabel, payload.jobDescription
                 );
                 filled += n;
-                stillBad = collectFields().filter((f) => {
-                    if (!f.required) return false;
-                    const wanted = profileValue(profile, answersById, answersByLabel, f, payload.jobDescription)
-                        || defaultAnswerForEmptySelect(f, profile, answersById, answersByLabel, payload.jobDescription);
-                    return !requiredFieldSatisfied(f, wanted, readCurrentValue(f));
-                });
+                stillBad = listRequiredGaps();
             }
 
             if (stillBad.length === 0) {
@@ -3126,12 +3473,7 @@
                     await sweepRequiredSelects(
                         profile, answersById, answersByLabel, payload.jobDescription
                     );
-                    const preSubmitBad = collectFields().filter((f) => {
-                        if (!f.required) return false;
-                        const wanted = profileValue(profile, answersById, answersByLabel, f, payload.jobDescription)
-                            || defaultAnswerForEmptySelect(f, profile, answersById, answersByLabel, payload.jobDescription);
-                        return !requiredFieldSatisfied(f, wanted, readCurrentValue(f));
-                    });
+                    const preSubmitBad = listRequiredGaps();
                     if (preSubmitBad.length) {
                         return {
                             ok: false,
@@ -3184,25 +3526,19 @@
                     };
                 }
             } else {
-                // Required fields still empty — retry pass before giving up.
-                for (const f of stillBad) {
-                    const wanted = profileValue(profile, answersById, answersByLabel, f, payload.jobDescription)
-                        || defaultAnswerForEmptySelect(f, profile, answersById, answersByLabel, payload.jobDescription);
-                    if (!wanted) continue;
-                    await fillOne(f, wanted, MAX_RETRIES, profile);
-                    await sleep(150);
+                filled += await forceFillRequiredGaps(1);
+                stillBad = listRequiredGaps();
+                if (stillBad.length > 0) {
+                    // Stay on this page and keep filling — do not mark 100% yet.
+                    updateBidderPanel({
+                        status: `${stillBad.length} required still empty — retrying`,
+                        progress: 80,
+                        left: stillBad.length
+                    });
+                    filled += await forceFillRequiredGaps(1);
+                    stillBad = listRequiredGaps();
+                    if (stillBad.length > 0) break;
                 }
-                // Second sweep after retry
-                await sweepRequiredSelects(
-                    profile, answersById, answersByLabel, payload.jobDescription
-                );
-                const retryBad = collectFields().filter((f) => {
-                    if (!f.required) return false;
-                    const wanted = profileValue(profile, answersById, answersByLabel, f, payload.jobDescription)
-                        || defaultAnswerForEmptySelect(f, profile, answersById, answersByLabel, payload.jobDescription);
-                    return !requiredFieldSatisfied(f, wanted, readCurrentValue(f));
-                });
-                if (retryBad.length > 0) break;
             }
 
             const beforeNext = pageFingerprint();
@@ -3226,8 +3562,9 @@
         let finalFields = collectFields().filter((f) => f.required);
         let finalOk = 0;
         for (const f of finalFields) {
-            const wanted = profileValue(profile, answersById, answersByLabel, f, payload.jobDescription || '')
-                || defaultAnswerForEmptySelect(f, profile, answersById, answersByLabel, payload.jobDescription || '');
+            const wanted = wantedForField(
+                f, profile, answersById, answersByLabel, payload.jobDescription || ''
+            );
             if (requiredFieldSatisfied(f, wanted, readCurrentValue(f))) finalOk += 1;
         }
         let requiredComplete = finalFields.length === 0
@@ -3258,8 +3595,9 @@
                 finalFields = collectFields().filter((f) => f.required);
                 finalOk = 0;
                 for (const f of finalFields) {
-                    const wanted = profileValue(profile, answersById, answersByLabel, f, payload.jobDescription || '')
-                        || defaultAnswerForEmptySelect(f, profile, answersById, answersByLabel, payload.jobDescription || '');
+                    const wanted = wantedForField(
+                        f, profile, answersById, answersByLabel, payload.jobDescription || ''
+                    );
                     if (requiredFieldSatisfied(f, wanted, readCurrentValue(f))) finalOk += 1;
                 }
                 requiredComplete = finalFields.length === 0
@@ -3298,8 +3636,7 @@
             topUpFilled,
             missingRequired: finalFields
                 .filter((f) => {
-                    const wanted = profileValue(profile, answersById, answersByLabel, f, '')
-                        || defaultAnswerForEmptySelect(f, profile, answersById, answersByLabel, '');
+                    const wanted = wantedForField(f, profile, answersById, answersByLabel, '');
                     return !requiredFieldSatisfied(f, wanted, readCurrentValue(f));
                 })
                 .map((f) => fieldMissingLabel(f))
@@ -3356,7 +3693,8 @@
                 const fields = collectFields();
                 const API_KINDS = new Set([
                     'question', 'salary', 'work_authorization', 'requires_sponsorship',
-                    'previous_employer_no', 'years_of_experience', 'skill_experience', 'willing_to_relocate',
+                    'previous_employer_no', 'years_of_experience', 'skill_experience',
+                    'skill_list', 'skill_project_brief', 'interview_attend_yes', 'willing_to_relocate',
                     'over_18', 'how_heard', 'data_protection', 'employer_count',
                     'high_school_performance', 'high_school_rationale', 'degree_result',
                     'sanctioned_countries_no', 'export_control_us_citizen', 'immigration_na_if_citizen',

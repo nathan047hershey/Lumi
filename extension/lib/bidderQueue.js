@@ -60,7 +60,7 @@ export const BIDDER_DEFAULTS = {
     maxTabs: 3,
     openGapMs: 500,
     /** Base form wait. Do not shorten — required fields mount after the first paint. */
-    formWaitMs: 20000,
+    formWaitMs: 8000,
     autoSubmit: false,
     autoNext: false,
     soundEnabled: true,

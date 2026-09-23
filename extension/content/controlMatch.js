@@ -470,15 +470,9 @@
         for (const combo of document.querySelectorAll('[role="combobox"][aria-expanded="true"]')) {
             if (combo === activeCombo || combo.contains?.(activeEl)) continue;
             try {
-                combo.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
                 combo.blur?.();
             } catch (_) { /* ignore */ }
         }
-        try {
-            document.activeElement?.dispatchEvent?.(
-                new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
-            );
-        } catch (_) { /* ignore */ }
     };
 
     api.isDialCodeOptionText = (t) => {

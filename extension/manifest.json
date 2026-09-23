@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lumi Auto Bidder",
-    "version": "2.1.33",
+    "version": "2.1.40",
   "description": "Connect to Lumi to autofill job applications, sync Outlook mail OTPs, and run guided auto-bid fills.",
   "permissions": [
     "storage",

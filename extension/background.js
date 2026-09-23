@@ -3369,13 +3369,13 @@ async function processReadyQueue(opts = {}) {
                     ).trim();
                 } catch (_) { /* ignore */ }
             }
-            // Apply-gate wait — keep the full ATS budget so required fields can mount.
+            // Apply-gate wait — start fill as soon as the form paints (do not sit 20–45s).
             const formWaitMs = Math.min(
                 Math.max(
-                    formWaitMsForAts(itemAts, Number(prefs.formWaitMs) || BIDDER_DEFAULTS.formWaitMs),
-                    20000
+                    formWaitMsForAts(itemAts, Number(prefs.formWaitMs) || 8000),
+                    4000
                 ),
-                45000
+                10000
             );
             const formDeadline = Date.now() + formWaitMs;
             const bidLimitMs = bidLimitMsForAts(itemAts, { pageCount: 0 });
@@ -3788,12 +3788,12 @@ async function processReadyQueue(opts = {}) {
             // before fill (was a second full 8s wait that delayed typing).
             await ensureApplyFormVisible(opened.tabId);
             const ready = await waitForFormReady(opened.tabId, {
-                minFields: 4,
-                requireIdentity: true,
-                profileFill: true,
+                minFields: 2,
+                requireIdentity: false,
+                profileFill: false,
                 stableReads: 1,
-                pollMs: 100,
-                maxMs: 2500
+                pollMs: 80,
+                maxMs: 1500
             });
             void uploadScreenshot(item.id, 'opened', opened.tabId, { settleMs: 0, stayInApp: true })
                 .catch(() => {});
@@ -3804,48 +3804,6 @@ async function processReadyQueue(opts = {}) {
                 reason: ready.reason || null,
                 waitedMs: ready.waitedMs || 0
             });
-
-            // P2: do not burn Groq/files on a skeleton form (name/email only after timeout).
-            const thinCount = Number(ready.fieldCount || 0);
-            const thinForm = thinCount > 0 && thinCount < 4
-                && (/timeout_partial|timeout_empty/i.test(String(ready.reason || '')) || !ready.ok);
-            if (thinForm) {
-                await captureFailEvidence(
-                    item.id,
-                    opened.tabId,
-                    'form_too_thin',
-                    {
-                        phase: 'form_ready',
-                        error: `Only ${thinCount} field(s) mounted — waiting for full form`,
-                        url: applyUrl || opened.url || null
-                    }
-                ).catch(() => {});
-                await setAppRunState(item.id, 'incomplete', {
-                    tabId: opened.tabId,
-                    url: applyUrl || opened.url || null,
-                    eventType: 'form_too_thin'
-                }).catch(() => {});
-                await notify(
-                    'Bidder',
-                    `Form not ready (${thinCount} fields) — tab kept for review`
-                );
-                await playBidderSound(prefs.soundEnabled);
-                if (opened?.tabId) {
-                    manualReviewTabs.set(opened.tabId, item);
-                    openTabs.delete(opened.tabId);
-                    await focusBidderTabForReview(opened.tabId).catch(() => {});
-                    await setQueueState({
-                        status: 'awaiting_manual_submit',
-                        captchaTabId: opened.tabId,
-                        captchaApplicationId: item.id,
-                        captchaKind: 'manual_review',
-                        ownedTabAlive: true,
-                        coachStatus: 'Form still mounting — wait, then Re-fill or Reject',
-                        coachAt: Date.now()
-                    }).catch(() => {});
-                }
-                continue;
-            }
 
             await setAppRunState(item.id, 'filling', {
                 tabId: opened.tabId,
@@ -6015,8 +5973,8 @@ async function generateBidderAnswersForItem(item, app, questions, engineLabel, b
     const requested = Number(budgetMs);
     // Always give Groq enough time — empty essays are worse than a few extra seconds.
     const ANSWERS_BUDGET_MS = Math.min(
-        60000,
-        Math.max(25000, Number.isFinite(requested) ? requested : 50000)
+        15000,
+        Math.max(8000, Number.isFinite(requested) ? requested : 12000)
     );
     const profileId = app.profile_id || item.profile_id;
     if (!profileId) {
@@ -7005,23 +6963,14 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
     await setAutofillPanelStatus(tabId, 'Filling profile (name, email, phone)…', 12);
     await ensureApplyFormVisible(tabId).catch(() => {});
     const earlyReady = await waitForFormReady(tabId, {
-        minFields: 3,
-        requireIdentity: true,
+        minFields: 2,
+        requireIdentity: false,
         profileFill: false,
         stableReads: 1,
-        pollMs: 200,
-        maxMs: 12000
+        pollMs: 120,
+        maxMs: 2500
     }).catch(() => ({ ok: false, fieldCount: 0, reason: 'wait_failed' }));
     const earlyCount = Number(earlyReady?.fieldCount || 0);
-    if (
-        earlyCount > 0 && earlyCount < 3
-        && (/timeout_partial|timeout_empty|wait_failed/i.test(String(earlyReady?.reason || '')) || !earlyReady?.ok)
-    ) {
-        const thinErr = new Error(`form_too_thin:${earlyCount}`);
-        thinErr.code = 'form_too_thin';
-        thinErr.fieldCount = earlyCount;
-        throw thinErr;
-    }
     try {
         let early = await sendTabMessage(tabId, {
             type: 'FILL_FORM',
@@ -7036,12 +6985,12 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         });
         // Second pass for late-mounted required fields (phone, city, essays).
         await waitForFormReady(tabId, {
-            minFields: 4,
-            requireIdentity: true,
-            profileFill: true,
+            minFields: 3,
+            requireIdentity: false,
+            profileFill: false,
             stableReads: 1,
-            pollMs: 200,
-            maxMs: 8000
+            pollMs: 120,
+            maxMs: 1500
         }).catch(() => {});
         const gap = await sendTabMessage(tabId, {
             type: 'FILL_FORM',
@@ -7203,7 +7152,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         await logCourseEvent(item.id, 'autofill_engine', { ats, engine: engineLabel });
     }
     if (!questions.length) {
-        await new Promise((r) => setTimeout(r, 1600));
+        await new Promise((r) => setTimeout(r, 200));
         await ensureApplyFormVisible(tabId).catch(() => {});
         collectedPack = await loadQs().catch(() => collectedPack);
         if (collectedPack.formSnap) formSnap = collectedPack.formSnap;
@@ -7248,7 +7197,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             reason: 'no_questions_collected'
         }).catch(() => {});
     } else {
-        const answersBudgetMs = Math.max(25000, Math.min(60000, remainingTotal || 50000));
+        const answersBudgetMs = Math.max(8000, Math.min(15000, remainingTotal || 12000));
         answersPromise = generateBidderAnswersForItem(
             item,
             app,
@@ -7322,11 +7271,15 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
 
     let answers = [];
     try {
-        await setAutofillPanelStatus(tabId, 'Waiting for AI answers…', 65);
-        const ans = await answersPromise;
-        answers = Array.isArray(ans) ? ans : [];
+        await setAutofillPanelStatus(tabId, 'Filling now — answers join if ready…', 65);
+        const raced = await Promise.race([
+            answersPromise.then((a) => ({ ready: true, a })).catch(() => ({ ready: true, a: [] })),
+            new Promise((resolve) => setTimeout(() => resolve({ ready: false, a: [] }), 5000))
+        ]);
+        answers = Array.isArray(raced?.a) ? raced.a : [];
     } catch (err) {
-        throw err;
+        console.warn('[bidder] answers race', err);
+        answers = [];
     }
 
     // Studying / fill lessons — merge AFTER AI so lesson priority wins (mergeAnswers).
@@ -7467,14 +7420,27 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             }
         }).catch(() => {});
 
-        // Required fields still empty — one more full pass before we give up.
-        if (
-            result.requiredComplete === false
-            && !result.blocked
-            && !result.timeout
-            && !/bid_time_budget|budget_exceeded/i.test(String(result.reason || ''))
-        ) {
-            await setAutofillPanelStatus(tabId, 'Filling required fields…', 80);
+        // Required fields still empty — keep the engine running (do not stop at 100%).
+        for (let pass = 0; pass < 1; pass++) {
+            if (
+                result.requiredComplete !== false
+                || result.blocked
+                || result.timeout
+                || /bid_time_budget|budget_exceeded/i.test(String(result.reason || ''))
+            ) {
+                break;
+            }
+            const missingN = Array.isArray(result.missingRequired) ? result.missingRequired.length : 0;
+            await setAutofillPanelStatus(
+                tabId,
+                missingN ? `Filling ${missingN} required gap(s)…` : 'Filling required fields…',
+                80
+            );
+            await setQueueState({
+                lastStatusEvent: 'required_gaps_retry',
+                lastStatusAt: Date.now(),
+                lastStatusMeta: { missing: result.missingRequired || [], pass: pass + 1 }
+            }).catch(() => {});
             const again = await sendTabMessage(tabId, {
                 type: 'BIDDER_ENGINE_RUN',
                 payload: {
@@ -7495,6 +7461,26 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             if (again?.ok && again.result) {
                 run = again;
                 result = again.result;
+            }
+            const extraGap = await fillAndUpload(tabId, {
+                ...filePayload,
+                profile: { ...profile, ...payload.profile },
+                answers,
+                jobDescription: app.job_description || '',
+                autoSubmit: false,
+                skipQuestions: false,
+                skipFiles: !resumeFile?.base64,
+                engine: AUTOFILL_ENGINE
+            }).catch(() => null);
+            if (extraGap?.fillStats) {
+                result = {
+                    ...result,
+                    filled: Number(result.filled || 0) + Number(extraGap.fillStats.filled || 0),
+                    requiredComplete: extraGap.fillStats.requiredComplete ?? result.requiredComplete,
+                    requiredOk: extraGap.fillStats.requiredOk ?? result.requiredOk,
+                    requiredTotal: extraGap.fillStats.requiredTotal ?? result.requiredTotal,
+                    missingRequired: extraGap.fillStats.missingRequired || result.missingRequired
+                };
             }
         }
 
