@@ -413,6 +413,53 @@ export function buildUploadResumeFilename(profileOrNames, ext = '.docx') {
     return `${base}${safeExt}`;
 }
 
+function safeDownloadSegment(value, fallback = 'Candidate') {
+    const s = String(value || '')
+        .replace(/[\\/:*?"<>|]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    return s || fallback;
+}
+
+/** Person folder in Downloads/CVs — "Vinh Ly" (spaces, not underscores). */
+export function personCvLibraryFolderName(profile) {
+    const first = String(profile?.first_name || profile?.firstName || 'Candidate').trim();
+    const last = String(profile?.last_name || profile?.lastName || '').trim();
+    return safeDownloadSegment([first, last].filter(Boolean).join(' '), 'Candidate');
+}
+
+export function localCvStamp(d = new Date()) {
+    const when = d instanceof Date ? d : new Date(d);
+    const x = Number.isFinite(when.getTime()) ? when : new Date();
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${x.getFullYear()}-${pad(x.getMonth() + 1)}-${pad(x.getDate())}_${pad(x.getHours())}${pad(x.getMinutes())}${pad(x.getSeconds())}`;
+}
+
+/**
+ * Relative pieces under the chosen root (or Downloads/CVs):
+ *   Vinh Ly / Vinh_Ly_CV_2026-09-23_020815 / Vinh_Ly.docx
+ */
+export function buildLocalCvRelParts(profile, filename, when = new Date()) {
+    const person = personCvLibraryFolderName(profile);
+    const file = String(filename || buildUploadResumeFilename(profile) || 'Candidate.docx')
+        .split(/[/\\]/)
+        .pop()
+        .replace(/[\\/:*?"<>|]+/g, '_');
+    const stem = file.replace(/\.[^.]+$/, '') || 'Candidate';
+    const pack = `${stem}_CV_${localCvStamp(when)}`;
+    return {
+        person,
+        pack,
+        file,
+        relPath: `${person}/${pack}/${file}`
+    };
+}
+
+/** Default Chrome Downloads path when no root folder is chosen. */
+export function buildLocalCvLibraryRelPath(profile, filename, when = new Date()) {
+    return `CVs/${buildLocalCvRelParts(profile, filename, when).relPath}`;
+}
+
 /** Derive First_Last.docx from archive resume_First_Last_Company_ts.docx when needed. */
 export function cleanResumeUploadName(filename, profile = null) {
     if (profile?.first_name || profile?.last_name) {

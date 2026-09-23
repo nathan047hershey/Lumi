@@ -4,7 +4,8 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from '@/next/router';
-import { Loader2, Save, Zap } from 'lucide-react';
+import { FolderOpen, Loader2, Save, Zap } from 'lucide-react';
+import { sendBidderExtensionCommand } from '@/lib/bidderExtensionBridge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -64,11 +65,27 @@ export default function LumiBidderSettings({
     const [saving, setSaving] = useState(false);
     const [msg, setMsg] = useState('');
     const [err, setErr] = useState('');
+    const [cvFolder, setCvFolder] = useState({ chosen: false, name: '', fallback: 'Downloads/CVs' });
+    const [folderBusy, setFolderBusy] = useState(false);
+
+    const refreshCvFolder = useCallback(async () => {
+        try {
+            const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_CV_FOLDER_STATUS', 4000);
+            if (res?.ok) {
+                setCvFolder({
+                    chosen: !!res.chosen,
+                    name: res.name || '',
+                    fallback: res.fallback || 'Downloads/CVs'
+                });
+            }
+        } catch (_) { /* extension not connected */ }
+    }, []);
 
     useEffect(() => {
         const next = withoutPaidCaptchaKeys(persistLumiBidderPrefs(withoutPaidCaptchaKeys(loadLumiBidderPrefs())));
         setPrefs(next);
         onChange?.(next);
+        refreshCvFolder();
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const patch = useCallback((partial) => {
@@ -269,6 +286,70 @@ export default function LumiBidderSettings({
                     : null}
                 {row('lumi-cover', prefs.uploadCoverLetter, (v) => patch({ uploadCoverLetter: v }), 'Upload cover letter')}
                 {row('lumi-sound', prefs.soundEnabled, (v) => patch({ soundEnabled: v }), 'Alert sound')}
+                <div className={`space-y-1.5 rounded-md border border-white/10 bg-black/20 ${compact ? 'px-2.5 py-2' : 'px-3 py-2.5'}`}>
+                    <div className={`flex items-center gap-1.5 font-semibold ${compact ? 'text-[11px]' : 'text-xs'}`}>
+                        <FolderOpen className="h-3.5 w-3.5 text-primary" />
+                        CV root folder
+                    </div>
+                    <p className={compact ? 'text-[10px] text-muted-foreground' : 'text-xs text-muted-foreground'}>
+                        {cvFolder.chosen && cvFolder.name
+                            ? `Saving under “${cvFolder.name}” / Vinh Ly / Vinh_Ly_CV_time / Vinh_Ly.docx`
+                            : `Default: ${cvFolder.fallback || 'Downloads/CVs'} / Vinh Ly / Vinh_Ly_CV_time / Vinh_Ly.docx`}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="secondary"
+                            disabled={folderBusy}
+                            className={compact ? 'h-7 text-[11px]' : 'h-8'}
+                            onClick={async () => {
+                                setFolderBusy(true);
+                                setErr('');
+                                try {
+                                    const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_CHOOSE_CV_FOLDER', 5000);
+                                    if (!res?.ok) throw new Error(res?.error || 'Could not open folder picker');
+                                    setMsg('Pick the folder in the Lumi popup, then it is remembered');
+                                    const started = Date.now();
+                                    const poll = setInterval(async () => {
+                                        await refreshCvFolder();
+                                        if (Date.now() - started > 45000) clearInterval(poll);
+                                    }, 800);
+                                    setTimeout(() => clearInterval(poll), 45000);
+                                } catch (e) {
+                                    setErr(e.message || 'Choose folder failed — reload Lumi');
+                                } finally {
+                                    setFolderBusy(false);
+                                }
+                            }}
+                        >
+                            Choose folder
+                        </Button>
+                        {cvFolder.chosen ? (
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={folderBusy}
+                                className={compact ? 'h-7 text-[11px]' : 'h-8'}
+                                onClick={async () => {
+                                    setFolderBusy(true);
+                                    try {
+                                        await sendBidderExtensionCommand('JOB_APPLY_BIDDER_CLEAR_CV_FOLDER', 4000);
+                                        await refreshCvFolder();
+                                        setMsg('CV root reset to Downloads/CVs');
+                                    } catch (e) {
+                                        setErr(e.message || 'Could not reset folder');
+                                    } finally {
+                                        setFolderBusy(false);
+                                    }
+                                }}
+                            >
+                                Use Downloads/CVs
+                            </Button>
+                        ) : null}
+                    </div>
+                </div>
                 {numField(
                     'lumi-human-wait',
                     'Human help wait (seconds)',

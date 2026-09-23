@@ -46,7 +46,7 @@ const {
 } = require('../services/scraper/jobLinkUrl');
 const jobMatchService = require('../services/jobMatchService');
 const { platformFilterSql } = require('../services/scraper/jobLinkPlatform');
-const { easternDayUtcRange, easternYmd } = require('../utils/time');
+const { easternDayUtcRange, easternYmd, nowSqliteUtc, sqliteUtcToIso } = require('../utils/time');
 
 const router = express.Router();
 const adminWriteRouter = express.Router();
@@ -120,6 +120,9 @@ function decorateJobLinksWithCreators(rows) {
     }
     return rows.map((row) => ({
         ...row,
+        created_at: sqliteUtcToIso(row.created_at) || row.created_at || null,
+        updated_at: sqliteUtcToIso(row.updated_at) || row.updated_at || null,
+        last_fetched_at: sqliteUtcToIso(row.last_fetched_at) || row.last_fetched_at || null,
         created_by_username: row.created_by ? (byId.get(row.created_by) || null) : null
     }));
 }
@@ -556,12 +559,13 @@ async function createHandler(req, res) {
         // until the detail-fetch worker scrapes the source URL.
         const initialFetchStatus = hasPastedDescription ? 'success' : 'pending';
 
+        const createdAt = nowSqliteUtc();
         const { lastInsertRowid } = runQuery(
             `INSERT INTO job_links (
                 techstack, source_url, job_apply_url,
                 job_description, location, is_available, fetch_status, created_by,
-                location_flag, comment, last_fetched_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${hasPastedDescription ? 'CURRENT_TIMESTAMP' : 'NULL'})`,
+                location_flag, comment, last_fetched_at, created_at, updated_at
+             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
             [
                 techstack,
                 source || null,
@@ -580,11 +584,27 @@ async function createHandler(req, res) {
                 locationFlag,
                 (req.body?.comment != null && String(req.body.comment).trim() !== '')
                     ? String(req.body.comment).trim()
-                    : null
+                    : null,
+                hasPastedDescription ? createdAt : null,
+                createdAt,
+                createdAt
             ]
         );
 
-        const row = getOne('SELECT * FROM job_links WHERE id = ?', [lastInsertRowid]);
+        let row = getOne(
+            `SELECT * FROM job_links WHERE job_apply_url = ? ORDER BY id DESC LIMIT 1`,
+            [applyUrl]
+        );
+        if (!row && lastInsertRowid) {
+            row = getOne('SELECT * FROM job_links WHERE id = ?', [lastInsertRowid]);
+        }
+        if (row && !row.created_at) {
+            row.created_at = createdAt;
+            row.updated_at = row.updated_at || createdAt;
+        }
+        if (!row) {
+            return res.status(500).json({ error: 'Job link was saved but could not be reloaded' });
+        }
 
         // Enqueue detail fetch when we still need a JD. resolveStoredJobUrls
         // often nulls source_url when it matches apply — scrape still uses

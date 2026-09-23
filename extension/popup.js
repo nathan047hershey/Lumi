@@ -95,6 +95,12 @@ async function refresh() {
     $('frontendBaseUrl').value = settings.frontendBaseUrl;
     $('autoSubmit').checked = !!settings.autoSubmit;
     try {
+        const folder = await chrome.storage.local.get(['cvRootFolderName']);
+        const name = String(folder.cvRootFolderName || '').trim();
+        const hint = $('cvFolderHint');
+        if (hint) hint.textContent = name ? `CV root: ${name}` : 'CV root: Downloads/CVs';
+    } catch (_) { /* ignore */ }
+    try {
         const live = await chrome.storage.local.get(['lumiLiveStatus', 'lumiServerVersion', 'lumiUpdateAvailable']);
         const hint = document.querySelector('#viewLogin .hint');
         if (hint) {
@@ -523,6 +529,20 @@ function settingsPathForRole(role) {
     if (r === 'developer') return '/developer/settings';
     return '/user/bidder-settings';
 }
+
+$('btnChooseCvFolder')?.addEventListener('click', async () => {
+    try {
+        await chrome.windows.create({
+            url: chrome.runtime.getURL('cv-folder.html'),
+            type: 'popup',
+            width: 460,
+            height: 300,
+            focused: true
+        });
+    } catch (err) {
+        $('mainError').textContent = err?.message || 'Could not open folder picker';
+    }
+});
 
 $('btnOpenLumiSettings')?.addEventListener('click', async () => {
     const settings = await getSettings();

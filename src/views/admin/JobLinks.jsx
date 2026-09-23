@@ -79,7 +79,8 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { DatePicker } from '@/components/DatePicker';
 import { cn } from '@/lib/utils';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
-import { formatEasternDateTime } from '@/lib/easternTime';
+import { formatAddedTimeLabel } from '@/lib/easternTime';
+import { parseSqliteUtcMs } from '@/lib/sqliteDate';
 import {
     clientTzOffsetMinutes,
     dateInputValue,
@@ -201,8 +202,8 @@ function jdStatusMeta(row) {
         : { label: 'JD empty', variant: 'destructive' };
 }
 
-function formatJobLinkTimestamp(value) {
-    return formatEasternDateTime(value);
+function formatJobLinkTimestamp(value, now) {
+    return formatAddedTimeLabel(value, now);
 }
 
 /**
@@ -1340,7 +1341,7 @@ function JobLinkDetailModal({ row, open, onOpenChange, onAvailabilityToggled }) 
                             </div>
                             <div>
                                 <div className="text-[10px] uppercase text-muted-foreground">Added</div>
-                                <div className="font-medium">{formatJobLinkTimestamp(row.created_at)}</div>
+                                <div className="font-medium">{formatJobLinkTimestamp(row.created_at, Date.now())}</div>
                             </div>
                             <div>
                                 <div className="text-[10px] uppercase text-muted-foreground">Last fetched</div>
@@ -1529,6 +1530,11 @@ function JobLinks({ embedded = false }) {
 
     // Data + UI state
     const [rows, setRows] = useState([]);
+    const addedClockLive = rows.some((r) => {
+        const ms = parseSqliteUtcMs(r?.created_at);
+        return Number.isFinite(ms) && Date.now() - ms < 60 * 60 * 1000;
+    });
+    const addedNow = useNowTick(addedClockLive, 30000);
     const [loading, setLoading] = useState(true);
     const [tableLoading, setTableLoading] = useState(false);
     const [syncingCvs, setSyncingCvs] = useState(false);
@@ -2335,7 +2341,7 @@ function JobLinks({ embedded = false }) {
                                         onView={() => { setViewRow(row); setViewOpen(true); }}
                                         onEdit={() => { setEditRow(row); setEditOpen(true); }}
                                         onDelete={() => handleDelete(row)}
-                                        addedLabel={formatJobLinkTimestamp(row.created_at)}
+                                        addedLabel={formatJobLinkTimestamp(row.created_at, addedNow)}
                                     />
                                 );
                             })

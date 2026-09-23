@@ -1,3 +1,5 @@
+import { parseSqliteUtcMs } from '@/lib/sqliteDate';
+
 /** App-wide wall clock. Winter EST / summer EDT. */
 export const EASTERN_TZ = 'America/New_York';
 
@@ -88,15 +90,18 @@ export function easternTzOffsetMinutes(d = new Date()) {
     return Math.round((asIfUtc - d.getTime()) / 60000);
 }
 
+function parseDisplayMs(value) {
+    if (value instanceof Date) {
+        const t = value.getTime();
+        return Number.isFinite(t) ? t : NaN;
+    }
+    return parseSqliteUtcMs(value);
+}
+
 export function formatEasternDateTime(value) {
-    if (!value) return '—';
-    const raw = String(value).trim();
-    const iso = /[zZ]|[+-]\d{2}:?\d{2}$/.test(raw)
-        ? raw
-        : `${raw.includes('T') ? raw : raw.replace(' ', 'T')}Z`;
-    const dt = new Date(iso);
-    if (Number.isNaN(dt.getTime())) return '—';
-    return dt.toLocaleString('en-US', {
+    const ms = parseDisplayMs(value);
+    if (!Number.isFinite(ms)) return '—';
+    return new Date(ms).toLocaleString('en-US', {
         timeZone: EASTERN_TZ,
         month: 'short',
         day: 'numeric',
@@ -105,4 +110,28 @@ export function formatEasternDateTime(value) {
         minute: '2-digit',
         timeZoneName: 'short'
     });
+}
+
+function formatRelativeAge(deltaMs) {
+    const sec = Math.max(0, Math.round(deltaMs / 1000));
+    if (sec < 45) return 'just now';
+    const min = Math.round(sec / 60);
+    if (min < 60) return `${min} min ago`;
+    const hr = Math.round(min / 60);
+    if (hr < 36) return `${hr} hr ago`;
+    const day = Math.round(hr / 24);
+    return `${day} day${day === 1 ? '' : 's'} ago`;
+}
+
+/** Added-time label: recent rows show age so a stale calendar date is obvious. */
+export function formatAddedTimeLabel(value, now = Date.now()) {
+    const ms = parseDisplayMs(value);
+    if (!Number.isFinite(ms)) return '—';
+    const abs = formatEasternDateTime(new Date(ms));
+    const delta = Number(now) - ms;
+    if (!Number.isFinite(delta) || delta < 0) return abs;
+    if (delta < 36 * 60 * 60 * 1000) {
+        return `${formatRelativeAge(delta)} · ${abs}`;
+    }
+    return abs;
 }

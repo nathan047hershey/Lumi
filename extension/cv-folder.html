@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Choose CV folder</title>
+  <style>
+    :root { color-scheme: dark; }
+    body {
+      margin: 0;
+      font: 14px/1.45 system-ui, sans-serif;
+      background: #0f141c;
+      color: #e8edf5;
+      padding: 20px 22px;
+    }
+    h1 { font-size: 16px; margin: 0 0 8px; }
+    p { margin: 0 0 14px; color: #9aa6b8; font-size: 13px; }
+    .path { color: #d7e2f2; font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 8px;
+      padding: 9px 14px;
+      font: inherit;
+      cursor: pointer;
+      background: #3b82f6;
+      color: #fff;
+      margin-right: 8px;
+    }
+    button.ghost { background: #243044; color: #d7e2f2; }
+    #status { margin-top: 14px; font-size: 12px; color: #86efac; min-height: 1.2em; }
+    #status.err { color: #fca5a5; }
+  </style>
+</head>
+<body>
+  <h1>CV root folder</h1>
+  <p>
+    Bids save as
+    <span class="path">{this folder}/Vinh Ly/Vinh_Ly_CV_time/Vinh_Ly.docx</span>
+  </p>
+  <button id="pick" type="button">Choose folder</button>
+  <button id="clear" type="button" class="ghost">Use Downloads/CVs</button>
+  <div id="status"></div>
+  <script type="module" src="cv-folder.js"></script>
+</body>
+</html>

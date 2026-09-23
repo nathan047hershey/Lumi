@@ -67,6 +67,33 @@ function toSqlDateTime(d) {
     return d.toISOString().slice(0, 19).replace('T', ' ');
 }
 
+/** UTC wall clock for SQLite DATETIME columns (`YYYY-MM-DD HH:MM:SS`). */
+function nowSqliteUtc(now = new Date()) {
+    const d = now instanceof Date ? now : new Date(now);
+    if (Number.isNaN(d.getTime())) return toSqlDateTime(new Date());
+    return toSqlDateTime(d);
+}
+
+/** Treat sqlite CURRENT_TIMESTAMP (no zone) as UTC and return ISO-8601. */
+function sqliteUtcToIso(value) {
+    if (value == null || value === '') return null;
+    if (value instanceof Date) {
+        return Number.isNaN(value.getTime()) ? null : value.toISOString();
+    }
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+        const ms = value < 1e12 ? value * 1000 : value;
+        return new Date(ms).toISOString();
+    }
+    const raw = String(value).trim();
+    if (!raw) return null;
+    const iso = /[zZ]|[+-]\d{2}:\d{2}$/.test(raw)
+        ? raw
+        : `${raw.includes('T') ? raw : raw.replace(' ', 'T')}Z`;
+    const dt = new Date(iso);
+    if (Number.isNaN(dt.getTime())) return null;
+    return dt.toISOString();
+}
+
 /**
  * Format a stored timestamp for display. The picker / write path no
  * longer applies ANY timezone conversion — what the user picked is
@@ -221,6 +248,8 @@ module.exports = {
     getCurrentWorkdayEST,
     nowAsESTISOString,
     toSqlDateTime,
+    nowSqliteUtc,
+    sqliteUtcToIso,
     formatGMT4,
     localPickerToUTCIso,
     utcIsoToLocalPicker,

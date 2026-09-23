@@ -9,7 +9,10 @@ import {
     getBidderApplication,
     markApplicationApplied,
     logBidCourseFill,
-    waitOutlookOtp
+    waitOutlookOtp,
+    buildLocalCvLibraryRelPath,
+    buildLocalCvRelParts,
+    buildUploadResumeFilename
 } from './api.js';
 import {
     classifyCaptchaOrLogin,
@@ -524,18 +527,43 @@ export async function releaseAllPageDebuggers() {
     await Promise.all(ids.map((id) => chrome.debugger.detach({ tabId: id }).catch(() => {})));
 }
 
-/**
- * Greenhouse ignores untrusted change events on input[type=file].
- * Write the CV to disk and set it with CDP so the Attach slot actually updates.
- */
-export async function setFileInputViaDebugger(tabId, file) {
-    const filename = String(file?.filename || 'Candidate.docx').replace(/[\\/:*?"<>|]+/g, '_');
-    const base64 = String(file?.base64 || '');
-    if (!tabId || !base64 || !filename) return { ok: false, reason: 'missing_file' };
-    const attached = await attachPageDebugger(tabId);
-    if (!attached) return { ok: false, reason: 'no_debugger' };
-    if (!chrome.downloads?.download) return { ok: false, reason: 'no_downloads' };
+const localCvByApp = new Map();
 
+function waitForDownloadPath(downloadId) {
+    return new Promise((resolve, reject) => {
+        const finish = (path) => {
+            clearTimeout(timer);
+            try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
+            if (path) resolve(path);
+            else reject(new Error('cv_download_no_path'));
+        };
+        const timer = setTimeout(() => {
+            try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
+            reject(new Error('cv_download_timeout'));
+        }, 20000);
+        const onChange = (delta) => {
+            if (delta.id !== downloadId) return;
+            if (delta.state?.current === 'interrupted') {
+                clearTimeout(timer);
+                try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
+                reject(new Error(delta.error?.current || 'cv_download_interrupted'));
+                return;
+            }
+            if (delta.state?.current !== 'complete') return;
+            chrome.downloads.search({ id: downloadId }, (items) => finish(items?.[0]?.filename || ''));
+        };
+        chrome.downloads.onChanged.addListener(onChange);
+        chrome.downloads.search({ id: downloadId }, (items) => {
+            if (items?.[0]?.state === 'complete' && items[0].filename) finish(items[0].filename);
+        });
+    });
+}
+
+async function writeBlobToDownloads(file, relPath) {
+    const filename = String(relPath || file?.filename || 'Candidate.docx').replace(/^[\\/]+/, '');
+    const base64 = String(file?.base64 || '');
+    if (!base64 || !filename) return '';
+    if (!chrome.downloads?.download) throw new Error('no_downloads');
     let objectUrl = '';
     try {
         const binary = atob(base64);
@@ -547,37 +575,140 @@ export async function setFileInputViaDebugger(tabId, file) {
         objectUrl = URL.createObjectURL(blob);
         const downloadId = await chrome.downloads.download({
             url: objectUrl,
-            filename: `lumi-upload/${filename}`,
+            filename,
             saveAs: false,
             conflictAction: 'uniquify'
         });
-        const absPath = await new Promise((resolve, reject) => {
-            const finish = (path) => {
-                clearTimeout(timer);
-                try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
-                if (path) resolve(path);
-                else reject(new Error('cv_download_no_path'));
-            };
-            const timer = setTimeout(() => {
-                try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
-                reject(new Error('cv_download_timeout'));
-            }, 20000);
-            const onChange = (delta) => {
-                if (delta.id !== downloadId) return;
-                if (delta.state?.current === 'interrupted') {
-                    clearTimeout(timer);
-                    try { chrome.downloads.onChanged.removeListener(onChange); } catch (_) { /* ignore */ }
-                    reject(new Error(delta.error?.current || 'cv_download_interrupted'));
-                    return;
-                }
-                if (delta.state?.current !== 'complete') return;
-                chrome.downloads.search({ id: downloadId }, (items) => finish(items?.[0]?.filename || ''));
-            };
-            chrome.downloads.onChanged.addListener(onChange);
-            chrome.downloads.search({ id: downloadId }, (items) => {
-                if (items?.[0]?.state === 'complete' && items[0].filename) finish(items[0].filename);
-            });
+        return await waitForDownloadPath(downloadId);
+    } finally {
+        if (objectUrl) {
+            try { URL.revokeObjectURL(objectUrl); } catch (_) { /* ignore */ }
+        }
+    }
+}
+
+async function ensureOffscreenWriter() {
+    if (!chrome.offscreen?.createDocument) return false;
+    try {
+        if (await chrome.offscreen.hasDocument()) return true;
+    } catch (_) { /* create below */ }
+    try {
+        await chrome.offscreen.createDocument({
+            url: 'offscreen.html',
+            reasons: ['BLOBS'],
+            justification: 'Write bid CVs into the folder you selected'
         });
+        await new Promise((r) => setTimeout(r, 80));
+        return true;
+    } catch (err) {
+        if (/already exists|Only a single offscreen/i.test(String(err?.message || err))) return true;
+        console.warn('[bidder] offscreen CV writer', err);
+        return false;
+    }
+}
+
+async function writeCvToChosenRoot(file, profile) {
+    const stored = await chrome.storage.local.get(['cvRootFolderName']);
+    if (!String(stored.cvRootFolderName || '').trim()) return null;
+    if (!(await ensureOffscreenWriter())) return null;
+    const parts = buildLocalCvRelParts(profile, file?.filename);
+    const res = await chrome.runtime.sendMessage({
+        type: 'OFFSCREEN_WRITE_CV',
+        relParts: [parts.person, parts.pack],
+        filename: parts.file,
+        base64: file?.base64 || ''
+    }).catch(() => null);
+    if (!res?.ok) return null;
+    return {
+        ok: true,
+        folder: res.folder,
+        relPath: res.rel,
+        filename: parts.file
+    };
+}
+
+/**
+ * Save the CV under {chosenRoot or Downloads/CVs}/{First Last}/{First_Last}_CV_{time}/{First_Last}.docx
+ */
+export async function downloadResumeToCvLibrary(file, profile = {}, applicationId = null) {
+    const appKey = applicationId != null ? String(applicationId) : '';
+    const cached = appKey ? localCvByApp.get(appKey) : null;
+    if (cached?.path && Date.now() - cached.at < 30 * 60 * 1000) {
+        return cached;
+    }
+    const filename = String(file?.filename || buildUploadResumeFilename(profile) || 'Candidate.docx')
+        .replace(/[\\/:*?"<>|]+/g, '_');
+    const chosen = await writeCvToChosenRoot(file, profile).catch((err) => {
+        console.warn('[bidder] chosen CV folder write', err);
+        return null;
+    });
+    if (chosen?.ok) {
+        const attachPath = await writeBlobToDownloads(file, `lumi-upload/${filename}`).catch(() => '');
+        const saved = {
+            ok: true,
+            path: attachPath || '',
+            relPath: chosen.relPath,
+            filename,
+            folderName: chosen.folder,
+            via: 'chosen_folder',
+            at: Date.now()
+        };
+        if (appKey) localCvByApp.set(appKey, saved);
+        return saved;
+    }
+    const relPath = file?.localRelPath || buildLocalCvLibraryRelPath(profile, filename);
+    const path = await writeBlobToDownloads(file, relPath);
+    const saved = { ok: !!path, path, relPath, filename, via: 'downloads', at: Date.now() };
+    if (appKey && path) localCvByApp.set(appKey, saved);
+    return saved;
+}
+
+export async function openCvFolderPicker() {
+    await chrome.windows.create({
+        url: chrome.runtime.getURL('cv-folder.html'),
+        type: 'popup',
+        width: 460,
+        height: 300,
+        focused: true
+    });
+    return { ok: true, opened: true };
+}
+
+export async function getCvFolderStatus() {
+    const data = await chrome.storage.local.get(['cvRootFolderName', 'cvRootFolderSetAt']);
+    const name = String(data.cvRootFolderName || '').trim();
+    return {
+        ok: true,
+        chosen: !!name,
+        name: name || '',
+        setAt: data.cvRootFolderSetAt || null,
+        fallback: 'Downloads/CVs'
+    };
+}
+
+/**
+ * Greenhouse ignores untrusted change events on input[type=file].
+ * Write the CV to Downloads/CVs/... and set it with CDP so the Attach slot updates.
+ */
+export async function setFileInputViaDebugger(tabId, file) {
+    const filename = String(file?.filename || 'Candidate.docx').replace(/[\\/:*?"<>|]+/g, '_');
+    const base64 = String(file?.base64 || '');
+    if (!tabId || !filename) return { ok: false, reason: 'missing_file' };
+    const attached = await attachPageDebugger(tabId);
+    if (!attached) return { ok: false, reason: 'no_debugger' };
+
+    try {
+        let absPath = String(file?.localPath || '').trim();
+        if (!absPath) {
+            if (!base64) return { ok: false, reason: 'missing_file' };
+            const saved = await downloadResumeToCvLibrary(file, file.profile || {}, file.applicationId);
+            absPath = saved?.path || '';
+            if (file && saved?.path) {
+                file.localPath = saved.path;
+                file.localRelPath = saved.relPath;
+            }
+        }
+        if (!absPath) return { ok: false, reason: 'cv_download_no_path', filename };
 
         const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', {
             depth: 4,
@@ -612,10 +743,6 @@ export async function setFileInputViaDebugger(tabId, file) {
         return { ok: true, filename, path: absPath };
     } catch (err) {
         return { ok: false, reason: err?.message || String(err), filename };
-    } finally {
-        if (objectUrl) {
-            try { URL.revokeObjectURL(objectUrl); } catch (_) { /* ignore */ }
-        }
     }
 }
 

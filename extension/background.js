@@ -59,6 +59,9 @@ import {
     logCourseEvent,
     uploadScreenshot,
     setFileInputViaDebugger,
+    downloadResumeToCvLibrary,
+    openCvFolderPicker,
+    getCvFolderStatus,
     savePackage,
     detectSubmitSuccess,
     detectSubmitSuccessDetail,
@@ -2902,6 +2905,34 @@ async function openReadyApplication(item, { fromQueue = false } = {}) {
     // Wait for CV if somehow not ready
     if (!item.resume_filename) {
         throw new Error('CV not ready yet — wait for generation');
+    }
+
+    // Production has no local disk — pull the CV into Downloads as soon as
+    // Start Bid fires: CVs/Vinh Ly/Vinh_Ly_CV_<time>/Vinh_Ly.docx
+    try {
+        const profileHint = {
+            first_name: item.first_name,
+            last_name: item.last_name
+        };
+        const resumeFile = await fetchResumeBase64(
+            settings.apiBaseUrl,
+            item.resume_filename,
+            settings.token,
+            {
+                profile: profileHint,
+                uploadFilename: item.resume_upload_filename || null
+            }
+        );
+        if (resumeFile) {
+            resumeFile.profile = profileHint;
+            resumeFile.applicationId = item.id;
+            const saved = await downloadResumeToCvLibrary(resumeFile, profileHint, item.id);
+            if (saved?.relPath) {
+                await logCourseEvent(item.id, 'cv_downloaded', { path: saved.relPath }).catch(() => {});
+            }
+        }
+    } catch (err) {
+        console.warn('[bidder] start-bid CV download', err);
     }
 
     // Ashby Overview JD has no form — open .../application directly.
@@ -5885,6 +5916,22 @@ async function prepareBidderApplicationFiles(tabId, item, app, prefs, profile = 
             profile: profileHint,
             uploadFilename: app.resume_upload_filename || item.resume_upload_filename || null
         }).catch(() => null);
+        if (resumeFile) {
+            resumeFile.profile = profileHint;
+            resumeFile.applicationId = item.id || app.id || null;
+            const saved = await downloadResumeToCvLibrary(
+                resumeFile,
+                profileHint,
+                resumeFile.applicationId
+            ).catch((err) => {
+                console.warn('[bidder] local CV library download', err);
+                return null;
+            });
+            if (saved?.path) {
+                resumeFile.localPath = saved.path;
+                resumeFile.localRelPath = saved.relPath;
+            }
+        }
     }
     const detect = await chrome.tabs.sendMessage(tabId, { type: 'DETECT_APPLY_FORM' }).catch(() => null);
     const formSnap = detect?.data?.form || { fileInputs: [] };
@@ -8080,6 +8127,29 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             engine: 'bidder-engine-v1',
             autofillEngine: AUTOFILL_ENGINE
         });
+        return false;
+    }
+    if (msg?.type === 'BIDDER_CHOOSE_CV_FOLDER') {
+        openCvFolderPicker()
+            .then((data) => sendResponse({ ok: true, ...data }))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
+    if (msg?.type === 'BIDDER_CLEAR_CV_FOLDER') {
+        chrome.storage.local.remove(['cvRootFolderName', 'cvRootFolderSetAt'])
+            .then(() => getCvFolderStatus())
+            .then((data) => sendResponse({ ok: true, ...data }))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
+    if (msg?.type === 'BIDDER_CV_FOLDER_STATUS' || msg?.type === 'CV_FOLDER_PICKED' || msg?.type === 'CV_FOLDER_CLEARED') {
+        if (msg?.type === 'BIDDER_CV_FOLDER_STATUS') {
+            getCvFolderStatus()
+                .then((data) => sendResponse({ ok: true, ...data }))
+                .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+            return true;
+        }
+        sendResponse({ ok: true });
         return false;
     }
     if (msg?.type === 'BIDDER_PROBE_CAPTCHA_HELPERS') {

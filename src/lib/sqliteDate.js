@@ -5,6 +5,10 @@
  */
 export function parseSqliteUtcMs(value) {
     if (value == null || value === '') return NaN;
+    if (value instanceof Date) {
+        const t = value.getTime();
+        return Number.isFinite(t) ? t : NaN;
+    }
     if (typeof value === 'number') {
         if (!Number.isFinite(value) || value <= 0) return NaN;
         return value < 1e12 ? value * 1000 : value;

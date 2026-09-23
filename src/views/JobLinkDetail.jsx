@@ -57,6 +57,7 @@ import {
 import { adminAPI } from '@/api';
 import { useAuth } from '@/context/AuthContext';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
+import { formatAddedTimeLabel } from '@/lib/easternTime';
 import { clientTzOffsetMinutes, jobLinksListQueryFromLocation, localDayUtcRange, localYmd } from '@/lib/jobLinksListState';
 import { openResume } from '@/lib/resumeUrl';
 import AppPage from '@/components/AppPage';
@@ -106,12 +107,7 @@ const TECHSTACK_LABEL = {
 };
 
 function formatJobLinkTimestamp(value) {
-    if (!value) return '—';
-    const raw = String(value).trim();
-    const iso = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`;
-    const dt = new Date(iso);
-    if (Number.isNaN(dt.getTime())) return '—';
-    return dt.toLocaleString();
+    return formatAddedTimeLabel(value);
 }
 
 // Visual treatment per generation_status. Used by both the card
