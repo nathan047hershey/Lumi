@@ -37,8 +37,18 @@ export function scoreApplyLabel(raw) {
 export function looksLikeCreateAccountPage(text) {
     const t = String(text || '').toLowerCase().slice(0, 8000);
     if (!t) return false;
+    if (looksLikeLoginPage(t)) return false;
     if (/\b(create\s+(an?\s+)?account|sign\s*up|register\s+(to\s+)?apply|new\s+user|set\s+a\s+password|confirm\s+password)\b/.test(t)) {
-        // Prefer true when password fields are implied by copy
+        return true;
+    }
+    return false;
+}
+
+/** Existing-account sign-in wall — never create a second ATS login. */
+export function looksLikeLoginPage(text) {
+    const t = String(text || '').toLowerCase().slice(0, 8000);
+    if (!t) return false;
+    if (/\balready\s+have\s+an?\s+account\b|\bsign\s*in\b|\blog\s*in\b|\breturning\s+applicant\b/.test(t)) {
         return true;
     }
     return false;

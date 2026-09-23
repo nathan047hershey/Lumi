@@ -15,7 +15,7 @@ import {
     Search
 } from 'lucide-react';
 import { userAPI } from '../../api';
-import { openResume } from '@/lib/resumeUrl';
+import { openResume, downloadResumeAuthenticated } from '@/lib/resumeUrl';
 import { PageLoader, Loader } from '@/components/Loader';
 import AppPage from '@/components/AppPage';
 import PageCommandBar from '@/components/PageCommandBar';
@@ -1570,22 +1570,13 @@ const [assignedTemplate, setAssignedTemplate] = useState(null);
     const downloadResume = async (filename, meta = {}) => {
         if (!filename && !meta.application_id) return;
         try {
-            const params = {
-                filename: filename || undefined,
-                profile_id: meta.profile_id || profile?.id || profileId || undefined,
-                application_id: meta.application_id || result?.application_id || undefined,
-                company_name: meta.company_name || companyName || result?.company_name || '',
-                job_role: meta.job_role || jobRole || result?.job_role || '',
-                open: 1
-            };
-            await userAPI.downloadResumeFolder(params);
-            const qs = new URLSearchParams();
-            Object.entries(params).forEach(([k, v]) => {
-                if (v != null && v !== '' && k !== 'open') qs.set(k, String(v));
+            await downloadResumeAuthenticated(filename || result?.resume_filename, {
+                downloadAs: profile
+                    ? `${String(profile.first_name || '').replace(/\s+/g, '_')}_${String(profile.last_name || '').replace(/\s+/g, '_')}.docx`.replace(/^_|_$/g, '')
+                    : undefined
             });
-            window.open(`/api/user/resume-folder?${qs.toString()}`, '_blank');
         } catch (err) {
-            console.warn('Folder download failed, falling back to file:', err?.message || err);
+            console.warn('Authenticated CV download failed, falling back:', err?.message || err);
             if (filename) openResume(filename);
         }
     };

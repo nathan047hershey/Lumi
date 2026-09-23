@@ -32,7 +32,7 @@ import {
     DialogFooter
 } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
-import { openResume } from '@/lib/resumeUrl';
+import { downloadResumeAuthenticated } from '@/lib/resumeUrl';
 
 // ============== Debounce hook for filter inputs ==============
 //
@@ -110,7 +110,10 @@ function toIsoFromLocalInput(local) {
 // (per-row button + modal) and the InterviewRequestModal.
 function downloadResumeFile(filename) {
     if (!filename) return;
-    openResume(filename);
+    downloadResumeAuthenticated(filename).catch((err) => {
+        console.warn('CV download failed', err);
+        alert(err?.message || 'Could not download CV');
+    });
 }
 
 function slugify(s) {

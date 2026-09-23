@@ -616,19 +616,47 @@ async function ensureOffscreenWriter() {
 async function writeCvToChosenRoot(file, profile) {
     const stored = await chrome.storage.local.get(['cvRootFolderName']);
     if (!String(stored.cvRootFolderName || '').trim()) return null;
-    if (!(await ensureOffscreenWriter())) return null;
     const parts = buildLocalCvRelParts(profile, file?.filename);
-    const res = await chrome.runtime.sendMessage({
-        type: 'OFFSCREEN_WRITE_CV',
+    const payload = {
         relParts: [parts.person, parts.pack],
         filename: parts.file,
         base64: file?.base64 || ''
-    }).catch(() => null);
+    };
+    if (!payload.base64) return null;
+    await chrome.storage.session.set({
+        lumiPendingCvWrite: { ...payload, at: Date.now(), done: false }
+    }).catch(() => {});
+
+    let res = null;
+    if (await ensureOffscreenWriter()) {
+        res = await chrome.runtime.sendMessage({
+            type: 'OFFSCREEN_WRITE_CV',
+            ...payload
+        }).catch(() => null);
+    }
+    if (!res?.ok) {
+        await chrome.windows.create({
+            url: `${chrome.runtime.getURL('cv-folder.html')}?write=1`,
+            type: 'popup',
+            width: 480,
+            height: 340,
+            focused: true
+        }).catch(() => null);
+        const deadline = Date.now() + 25000;
+        while (Date.now() < deadline) {
+            await new Promise((r) => setTimeout(r, 400));
+            const { lumiPendingCvWrite } = await chrome.storage.session.get('lumiPendingCvWrite');
+            if (lumiPendingCvWrite?.done) {
+                res = lumiPendingCvWrite.result || null;
+                break;
+            }
+        }
+    }
     if (!res?.ok) return null;
     return {
         ok: true,
         folder: res.folder,
-        relPath: res.rel,
+        relPath: res.rel || `${parts.person}/${parts.pack}/${parts.file}`,
         filename: parts.file
     };
 }
@@ -639,7 +667,12 @@ async function writeCvToChosenRoot(file, profile) {
 export async function downloadResumeToCvLibrary(file, profile = {}, applicationId = null) {
     const appKey = applicationId != null ? String(applicationId) : '';
     const cached = appKey ? localCvByApp.get(appKey) : null;
-    if (cached?.path && Date.now() - cached.at < 30 * 60 * 1000) {
+    const folderChosen = !!(await chrome.storage.local.get(['cvRootFolderName'])).cvRootFolderName;
+    if (
+        cached?.path
+        && Date.now() - cached.at < 30 * 60 * 1000
+        && (!folderChosen || cached.via === 'chosen_folder')
+    ) {
         return cached;
     }
     const filename = String(file?.filename || buildUploadResumeFilename(profile) || 'Candidate.docx')

@@ -46,11 +46,23 @@ function formatDate(iso) {
 }
 
 function mergeMailAccounts(data) {
-    const outlook = (data?.accounts || []).map((a) => ({
-        ...a,
-        provider: 'outlook',
-        optionValue: String(a.id)
-    }));
+    const outlook = [];
+    const seen = new Set();
+    for (const a of (data?.accounts || [])) {
+        const email = String(a.email || '').trim().toLowerCase();
+        const local = email.split('@')[0];
+        const domain = email.split('@')[1] || '';
+        const key = /^(outlook|hotmail|live|msn)\.com$/.test(domain)
+            ? `${local}@microsoft-consumer`
+            : (email || String(a.id));
+        if (seen.has(key)) continue;
+        seen.add(key);
+        outlook.push({
+            ...a,
+            provider: 'outlook',
+            optionValue: String(a.id)
+        });
+    }
     const gmail = (data?.gmail || []).map((a) => ({
         ...a,
         provider: 'gmail',
@@ -185,14 +197,14 @@ export default function OutlookMailbox() {
             try {
                 await userAPI.syncOutlook({});
                 await userAPI.syncGmailImap({}).catch(() => {});
-                if (!cancelled) {
-                    await fetchMessages();
-                    await fetchStatus();
-                }
             } catch (err) {
                 if (!cancelled) {
                     setError(err?.response?.data?.error || err?.message || 'Sync failed');
                 }
+            }
+            if (!cancelled) {
+                await fetchMessages();
+                await fetchStatus();
             }
         };
         pull();

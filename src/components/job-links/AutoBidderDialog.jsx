@@ -701,10 +701,13 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     }, []);
 
     useEffect(() => {
-        if (!open || !showAdvanced) return undefined;
+        if (!open) return undefined;
         refreshOutlookStatus();
-        return undefined;
-    }, [open, showAdvanced, refreshOutlookStatus]);
+        const timer = setInterval(() => {
+            refreshOutlookStatus();
+        }, 8000);
+        return () => clearInterval(timer);
+    }, [open, refreshOutlookStatus]);
 
     const enableMailForward = useCallback(async (rotate = false) => {
         setOutlookBusy(true);
@@ -3288,15 +3291,23 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                                                     {detail.application.job_url}
                                                 </a>
                                             )}
-                                            {detail.application?.download_url && (
-                                                <a
+                                            {(detail.application?.resume_filename || detail.application?.download_url) && (
+                                                <button
+                                                    type="button"
                                                     className="block text-xs text-primary underline"
-                                                    href={detail.application.download_url}
-                                                    target="_blank"
-                                                    rel="noreferrer"
+                                                    onClick={() => {
+                                                        import('@/lib/resumeUrl').then(({ downloadResumeAuthenticated }) => {
+                                                            downloadResumeAuthenticated(
+                                                                detail.application.resume_filename
+                                                                || String(detail.application.download_url || '').split('/').pop()
+                                                            ).catch((err) => {
+                                                                alert(err?.message || 'Could not download CV');
+                                                            });
+                                                        });
+                                                    }}
                                                 >
                                                     Download CV
-                                                </a>
+                                                </button>
                                             )}
                                         </div>
 

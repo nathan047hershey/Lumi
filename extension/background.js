@@ -100,6 +100,7 @@ import {
 } from './lib/fillLessons.js';
 import {
     looksLikeCreateAccountPage,
+    looksLikeLoginPage,
     generateAtsPassword,
     upsertApplyLesson,
     lessonsForHost
@@ -1547,6 +1548,26 @@ async function autofillAfterGenerate({
             if (gapFillOnly) {
                 // Continue fill: attach CV + empty profile only. Never spend another API key.
                 await notify('Lumi', 'Continue — empty fields + CV only (no extra AI)');
+                let pageQa = [];
+                try {
+                    const live = await sendTabMessage(tabId, { type: 'COLLECT_FILLED_QA' });
+                    pageQa = Array.isArray(live?.items) ? live.items : [];
+                } catch (_) { /* ignore */ }
+                const pack = await saveCapturedQuestionsPack({
+                    applicationId: result.application_id || result.applicationId || null,
+                    company: job.company || result.company_name || '',
+                    jobRole: job.title || result.job_role || '',
+                    url: job.url || '',
+                    questions: writtenQuestions,
+                    answers: [...(cached?.answers || []), ...pageQa]
+                });
+                if (pack?.items?.length) {
+                    await sendTabMessage(tabId, {
+                        type: 'UPDATE_AUTOFILL_PANEL',
+                        qa: pack.items,
+                        status: `${pack.items.length} question(s) saved in panel`
+                    }).catch(() => {});
+                }
             } else if (cached?.answers?.length) {
                 await applyAiAnswers(cached);
                 await toastActiveTab(
@@ -1600,7 +1621,7 @@ async function autofillAfterGenerate({
             }
             try {
                 const latestAnswers = answersPayload?.answers || [];
-                await saveCapturedQuestionsPack({
+                const pack = await saveCapturedQuestionsPack({
                     applicationId: result.application_id || result.applicationId || null,
                     company: job.company || result.company_name || '',
                     jobRole: job.title || result.job_role || '',
@@ -1608,6 +1629,13 @@ async function autofillAfterGenerate({
                     questions: writtenQuestions,
                     answers: latestAnswers
                 });
+                if (pack?.items?.length) {
+                    await sendTabMessage(tabId, {
+                        type: 'UPDATE_AUTOFILL_PANEL',
+                        qa: pack.items,
+                        status: `${pack.items.length} question(s) saved in panel`
+                    }).catch(() => {});
+                }
             } catch (_) { /* ignore */ }
         } catch (err) {
             if (gapFillOnly) {
@@ -5615,8 +5643,8 @@ async function followApplyOpenedTab(openerTabId, beforeTabIds, waitMs = 5000) {
 }
 
 /**
- * Try to create an ATS account when Apply lands on sign-up.
- * Uses profile email + generated/saved password for this host.
+ * Sign in to an existing ATS account. Never click Create / Sign up —
+ * that opened a second Greenhouse login on top of the real apply form.
  */
 async function tryCreateAtsAccount(tabId, profileEmail) {
     const email = String(profileEmail || '').trim();
@@ -5632,14 +5660,15 @@ async function tryCreateAtsAccount(tabId, profileEmail) {
             target: { tabId },
             func: (emailAddr, pass) => {
                 const text = (document.body?.innerText || '').slice(0, 8000).toLowerCase();
-                const looksCreate = /\b(create\s+(an?\s+)?account|sign\s*up|register|set\s+a\s+password|confirm\s+password)\b/.test(text);
-                const passInputs = [...document.querySelectorAll('input[type="password"]')].filter((el) => {
-                    const r = el.getBoundingClientRect();
-                    return r.width > 2 && r.height > 2;
-                });
-                if (!looksCreate && passInputs.length < 1) {
-                    return { ok: false, reason: 'not_create_page' };
+                const formReady = !!(
+                    document.querySelector('#first_name, [name="first_name"], input[autocomplete="given-name"]')
+                    || document.querySelector('input#resume, input[name="resume"]')
+                );
+                if (formReady) {
+                    return { ok: true, skipped: 'form_already_open', created: false };
                 }
+                const looksLogin = /\balready\s+have\s+an?\s+account\b|\bsign\s*in\b|\blog\s*in\b|\breturning\s+applicant\b/.test(text);
+                const looksCreate = /\b(create\s+(an?\s+)?account|sign\s*up|register|set\s+a\s+password|confirm\s+password)\b/.test(text);
                 const isVisible = (el) => {
                     if (!el) return false;
                     const r = el.getBoundingClientRect();
@@ -5647,6 +5676,23 @@ async function tryCreateAtsAccount(tabId, profileEmail) {
                     const st = window.getComputedStyle(el);
                     return st.display !== 'none' && st.visibility !== 'hidden';
                 };
+                const passInputs = [...document.querySelectorAll('input[type="password"]')].filter(isVisible);
+                if (!looksLogin && !looksCreate && passInputs.length < 1) {
+                    return { ok: false, reason: 'not_auth_page', created: false };
+                }
+                const clickIf = (re) => {
+                    const btn = [...document.querySelectorAll('button, input[type="submit"], a[role="button"], a')]
+                        .find((el) => {
+                            if (!isVisible(el)) return false;
+                            const t = `${el.innerText || ''} ${el.value || ''}`.replace(/\s+/g, ' ').trim();
+                            return re.test(t);
+                        });
+                    if (!btn) return false;
+                    try { btn.click(); return true; } catch (_) { return false; }
+                };
+                if (looksLogin || looksCreate) {
+                    clickIf(/\balready\s+have\s+an?\s+account\b|\bsign\s*in\b|\blog\s*in\b/i);
+                }
                 const fill = (el, val) => {
                     if (!el || !isVisible(el)) return false;
                     try {
@@ -5664,28 +5710,16 @@ async function tryCreateAtsAccount(tabId, profileEmail) {
                 )].find(isVisible);
                 const filledEmail = fill(emailEl, emailAddr);
                 let filledPass = 0;
-                for (const p of passInputs.slice(0, 2)) {
+                for (const p of passInputs.slice(0, 1)) {
                     if (fill(p, pass)) filledPass += 1;
                 }
-                const createBtn = [...document.querySelectorAll('button, input[type="submit"], a[role="button"]')]
-                    .find((el) => {
-                        if (!isVisible(el)) return false;
-                        const t = `${el.innerText || ''} ${el.value || ''}`.replace(/\s+/g, ' ').trim();
-                        return /^(create(\s+account)?|sign\s*up|register|continue|next|submit)$/i.test(t)
-                            || /\bcreate\s+account\b/i.test(t);
-                    });
-                let clicked = false;
-                if (createBtn && (filledEmail || filledPass)) {
-                    try {
-                        createBtn.click();
-                        clicked = true;
-                    } catch (_) { /* ignore */ }
-                }
+                const signedIn = clickIf(/^(sign\s*in|log\s*in|continue|next)$/i);
                 return {
-                    ok: !!(filledEmail || filledPass),
+                    ok: !!(filledEmail || filledPass || signedIn),
                     filledEmail,
                     filledPass,
-                    clicked,
+                    clicked: signedIn,
+                    created: false,
                     passFields: passInputs.length
                 };
             },
@@ -5695,9 +5729,9 @@ async function tryCreateAtsAccount(tabId, profileEmail) {
             await new Promise((r) => setTimeout(r, 1800));
             try { await waitTabComplete(tabId, 8000); } catch (_) { /* ignore */ }
         }
-        return { ...(result || { ok: false }), host, passwordSaved: true };
+        return { ...(result || { ok: false }), host, passwordSaved: true, created: false };
     } catch (err) {
-        return { ok: false, reason: err?.message || String(err) };
+        return { ok: false, reason: err?.message || String(err), created: false };
     }
 }
 
@@ -5827,9 +5861,15 @@ async function ensureApplyFormVisible(tabId, opts = {}) {
                     }
                 }
 
+                const formAlreadyOpen = !!(
+                    document.querySelector('#first_name, [name="first_name"], input[autocomplete="given-name"]')
+                    || document.querySelector('input#resume, input[name="resume"]')
+                    || document.querySelector('#application-form, form#application-form, #greenhouse-job-application')
+                );
                 const applyFound = !!(apply && visible(apply));
                 let clicked = false;
-                if (applyFound) {
+                // Form is already on this page — do not click Apply (opens login/create walls).
+                if (applyFound && !formAlreadyOpen) {
                     try {
                         apply.scrollIntoView({ block: 'center', behavior: 'instant' });
                     } catch (_) { /* ignore */ }
@@ -5877,6 +5917,7 @@ async function ensureApplyFormVisible(tabId, opts = {}) {
                     applyFound,
                     applyLabel,
                     applySelector,
+                    formAlreadyOpen,
                     consentClicked: !!consent,
                     scrolled: !!form,
                     firstInView: !!(r && r.top >= -40 && r.top < (window.innerHeight || 800) * 0.9),
@@ -5914,14 +5955,19 @@ async function ensureApplyFormVisible(tabId, opts = {}) {
                         target: { tabId: activeTabId },
                         func: () => (document.body?.innerText || '').slice(0, 6000)
                     });
-                    if (looksLikeCreateAccountPage(probe) || result?.createAccountLikely) {
-                        const created = await tryCreateAtsAccount(activeTabId, opts.profileEmail);
-                        result.accountCreate = created;
-                        if (created?.ok) {
-                            await logCourseEvent(opts.applicationId, 'ats_account_create', {
+                    if (
+                        looksLikeLoginPage(probe)
+                        || looksLikeCreateAccountPage(probe)
+                        || result?.createAccountLikely
+                    ) {
+                        const signed = await tryCreateAtsAccount(activeTabId, opts.profileEmail);
+                        result.accountCreate = signed;
+                        if (signed?.ok) {
+                            await logCourseEvent(opts.applicationId, 'ats_account_signin', {
                                 host,
-                                clicked: !!created.clicked,
-                                filledEmail: !!created.filledEmail
+                                clicked: !!signed.clicked,
+                                filledEmail: !!signed.filledEmail,
+                                created: false
                             }).catch(() => {});
                         }
                     }
@@ -8217,6 +8263,55 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             gapFillOnly: true
         })
             .then((result) => sendResponse({ ok: true, result }))
+            .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
+    if (msg?.type === 'RUN_DOWNLOAD_CV_LIBRARY') {
+        (async () => {
+            const settings = await getSettings();
+            const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+            let filename = settings.lastResult?.resumeFilename || '';
+            let profile = null;
+            try {
+                const profiles = await listProfiles();
+                profile = (profiles || []).find((p) => String(p.id) === String(settings.selectedProfileId))
+                    || (profiles || [])[0];
+            } catch (_) { /* ignore */ }
+            if (!filename && settings.selectedProfileId) {
+                const latest = await getLatestBidderApplication(settings.selectedProfileId).catch(() => null);
+                filename = latest?.application?.resume_filename || '';
+                if (!profile && latest?.profile) profile = latest.profile;
+            }
+            if (!filename) throw new Error('No CV on file — Generate CV first');
+            const resumeFile = await fetchResumeBase64(settings.apiBaseUrl, filename, settings.token, {
+                profile,
+                uploadFilename: profile ? buildUploadResumeFilename(profile) : null
+            });
+            resumeFile.profile = profile;
+            resumeFile.applicationId = settings.lastResult?.applicationId || null;
+            const saved = await downloadResumeToCvLibrary(
+                resumeFile,
+                profile || {},
+                resumeFile.applicationId
+            );
+            if (!saved?.ok && !saved?.path && !saved?.relPath) {
+                throw new Error('Could not write CV — choose a folder in Lumi, or allow Downloads');
+            }
+            const folder = saved.folderName || (saved.via === 'chosen_folder' ? 'your folder' : 'Downloads/CVs');
+            await toastActiveTab(
+                saved.via === 'chosen_folder'
+                    ? `CV saved to ${folder}/${saved.relPath || ''}`
+                    : `CV saved to Downloads/${saved.relPath || 'CVs'}`,
+                'ok'
+            ).catch(() => {});
+            sendResponse({
+                ok: true,
+                folder,
+                path: saved.path || '',
+                relPath: saved.relPath || '',
+                via: saved.via
+            });
+        })()
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
     }

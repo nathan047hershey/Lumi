@@ -21,7 +21,7 @@ const {
     getLatestMilestonesForApplications
 } = require('../services/milestoneService');
 const { localPickerToUTCIso } = require('../utils/time');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, requireResumeAuth } = require('../middleware/auth');
 const { generateResume, generateCoverLetter, sanitizeForFilename, extractCompanyName } = require('../services/resumeService');
 const { generateValidatedDraft, finalizeDraftToDocx, resolveStyleSpecForGeneration } = require('../services/resumePipeline');
 const { getCurrentWorkdayEST, toSqlDateTime } = require('../utils/time');
@@ -51,8 +51,14 @@ if (!fs.existsSync(resumesDir)) {
     fs.mkdirSync(resumesDir, { recursive: true });
 }
 
-// Apply auth middleware to all user routes
-router.use(requireAuth);
+// Apply auth middleware to all user routes.
+// Resume file downloads also accept ?token= (window.open / Save As).
+router.use((req, res, next) => {
+    if (req.method === 'GET' && (req.path === '/resume-folder' || req.path.startsWith('/resumes/'))) {
+        return requireResumeAuth(req, res, next);
+    }
+    return requireAuth(req, res, next);
+});
 
 function userIsAdmin(req) {
     return req.user?.role === 'admin'
@@ -2543,7 +2549,32 @@ router.get('/resume-folder', async (req, res) => {
             return res.status(400).json({ error: 'resume filename required' });
         }
 
-        const srcPath = path.join(resumesDir, archiveName);
+        const safeArchive = path.basename(archiveName);
+        let srcPath = path.join(resumesDir, safeArchive);
+        if (!fs.existsSync(srcPath)) {
+            try {
+                const { buildResumeDocx, writeReadyResumeCopy } = require('../services/resumeService');
+                const { RESUMES_READY_DIR } = require('../config/paths');
+                const readyName = profile ? buildUploadResumeFilename(profile, '.docx') : '';
+                const readyPath = readyName ? path.join(RESUMES_READY_DIR, readyName) : '';
+                const app = Number.isInteger(applicationId) && applicationId > 0
+                    ? getAccessibleApplication(applicationId, req)
+                    : getOne(
+                        `SELECT * FROM job_applications WHERE resume_filename = ? ORDER BY id DESC LIMIT 1`,
+                        [safeArchive]
+                    );
+                if (readyPath && fs.existsSync(readyPath)) {
+                    srcPath = readyPath;
+                } else if (app?.draft_html && String(app.draft_html).trim() && profile) {
+                    const buf = await buildResumeDocx({ resumeHtml: app.draft_html, profile });
+                    fs.mkdirSync(resumesDir, { recursive: true });
+                    fs.writeFileSync(srcPath, buf);
+                    writeReadyResumeCopy(buf, profile).catch(() => {});
+                }
+            } catch (rebuildErr) {
+                console.warn('[resume-folder] rebuild skipped:', rebuildErr?.message || rebuildErr);
+            }
+        }
         if (!fs.existsSync(srcPath)) {
             return res.status(404).json({ error: 'Resume file not found' });
         }
@@ -3541,7 +3572,7 @@ router.get('/bid-courses/:id', (req, res) => {
                     generation_status: app.generation_status,
                     status: app.status,
                     download_url: app.resume_filename
-                        ? `/resumes/${encodeURIComponent(app.resume_filename)}`
+                        ? `/api/user/resumes/${encodeURIComponent(app.resume_filename)}`
                         : null
                 }
                 : null,

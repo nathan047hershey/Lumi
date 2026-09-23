@@ -7334,6 +7334,9 @@
                         + (left > 0 ? ` · ${left} left` : ''),
                     (filled + uploaded + answers) > 0 ? 'ok' : 'error'
                 );
+                safeRuntimeSend({ type: 'GET_CAPTURED_QUESTIONS' }, (packRes) => {
+                    if (packRes?.pack?.items) api.renderQa(packRes.pack.items);
+                });
             });
         });
 
@@ -7352,6 +7355,9 @@
                     ? `Continued — filled ${filled}. Review before submit.`
                     : 'No new fields filled', filled ? 100 : 0);
                 api.setStats({ filled, files: Number(f.uploaded || 0), left: 0 });
+                safeRuntimeSend({ type: 'GET_CAPTURED_QUESTIONS' }, (packRes) => {
+                    if (packRes?.pack?.items) api.renderQa(packRes.pack.items);
+                });
             });
         });
 
@@ -7374,6 +7380,9 @@
                     answers ? `Filled ${answers} AI answer(s)` : 'No AI answers returned',
                     answers > 0 ? 'ok' : 'error'
                 );
+                safeRuntimeSend({ type: 'GET_CAPTURED_QUESTIONS' }, (packRes) => {
+                    if (packRes?.pack?.items) api.renderQa(packRes.pack.items);
+                });
             });
         });
 
@@ -7381,12 +7390,47 @@
         Object.assign(hint.style, { fontSize: '10px', color: '#64748b', lineHeight: '1.35' });
         hint.textContent = 'You stay in control — Lumi fills; you submit. One panel only.';
 
+        const qaTitle = document.createElement('div');
+        Object.assign(qaTitle.style, {
+            fontSize: '11px', fontWeight: '700', color: '#94a3b8', marginTop: '4px'
+        });
+        qaTitle.textContent = 'Saved questions & answers';
+
+        const qaBox = document.createElement('div');
+        qaBox.setAttribute('data-lumi-qa', '1');
+        Object.assign(qaBox.style, {
+            maxHeight: '160px',
+            overflowY: 'auto',
+            borderRadius: '8px',
+            background: '#111827',
+            padding: '6px 8px',
+            fontSize: '11px',
+            color: '#cbd5e1',
+            lineHeight: '1.35'
+        });
+        qaBox.textContent = 'None yet — Autofill or Answer questions to save them here.';
+
+        const btnDownloadCv = mkBtn('Download CV to folder', false, () => {
+            api.setBusy(true, 'Downloading CV to your folder…', 20);
+            safeRuntimeSend({ type: 'RUN_DOWNLOAD_CV_LIBRARY' }, (res) => {
+                api.setBusy(false, res?.ok
+                    ? `CV saved: ${res.path || res.relPath || res.folder || 'folder'}`
+                    : (res?.error || 'CV download failed'), res?.ok ? 100 : 0);
+                showToast(res?.ok
+                    ? `CV saved to ${res.folder || res.relPath || 'your folder'}`
+                    : (res?.error || 'CV download failed'), res?.ok ? 'ok' : 'error');
+            });
+        });
+
         body.appendChild(progressWrap);
         body.appendChild(status);
         body.appendChild(stats);
         body.appendChild(btnAutofill);
         body.appendChild(btnContinue);
         body.appendChild(btnAnswers);
+        body.appendChild(btnDownloadCv);
+        body.appendChild(qaTitle);
+        body.appendChild(qaBox);
         body.appendChild(hint);
 
         let minimized = false;
@@ -7403,7 +7447,7 @@
 
         const api = {
             setBusy(busy, text, pct) {
-                [btnAutofill, btnContinue, btnAnswers].forEach((btn) => {
+                [btnAutofill, btnContinue, btnAnswers, btnDownloadCv].forEach((btn) => {
                     if (!btn) return;
                     btn.disabled = !!busy;
                     btn.style.opacity = busy ? '0.65' : '1';
@@ -7421,7 +7465,32 @@
                 set('files', files);
                 set('left', left);
             },
-            update({ ats, fieldCount, status: st, progress, filled, files, left } = {}) {
+            renderQa(items = []) {
+                const box = root.querySelector('[data-lumi-qa]');
+                if (!box) return;
+                const rows = Array.isArray(items) ? items.filter((r) => r && (r.label || r.answer)) : [];
+                if (!rows.length) {
+                    box.textContent = 'None yet — Autofill or Answer questions to save them here.';
+                    return;
+                }
+                box.innerHTML = '';
+                rows.slice(0, 40).forEach((row) => {
+                    const d = document.createElement('div');
+                    d.style.marginBottom = '7px';
+                    const q = document.createElement('div');
+                    q.style.color = '#e2e8f0';
+                    q.style.fontWeight = '650';
+                    q.textContent = String(row.label || row.id || 'Question').slice(0, 140);
+                    const a = document.createElement('div');
+                    a.style.color = '#94a3b8';
+                    a.style.whiteSpace = 'pre-wrap';
+                    a.textContent = String(row.answer || '—').slice(0, 400);
+                    d.appendChild(q);
+                    d.appendChild(a);
+                    box.appendChild(d);
+                });
+            },
+            update({ ats, fieldCount, status: st, progress, filled, files, left, qa } = {}) {
                 const atsEl = root.querySelector('[data-lumi-ats]');
                 if (atsEl && (ats || fieldCount != null)) {
                     atsEl.textContent = `${ats || snap.ats || 'apply form'} · ${fieldCount != null ? fieldCount : snap.count} fields`;
@@ -7435,9 +7504,13 @@
                         left: left != null ? left : 0
                     });
                 }
+                if (qa) api.renderQa(qa);
             }
         };
         root.__lumiApi = api;
+        safeRuntimeSend({ type: 'GET_CAPTURED_QUESTIONS' }, (res) => {
+            if (res?.pack?.items?.length) api.renderQa(res.pack.items);
+        });
     }
 
     // Fallback when Chrome does not deliver extension commands.
@@ -7612,6 +7685,28 @@
             }
             return true;
         }
+        if (msg?.type === 'COLLECT_FILLED_QA') {
+            try {
+                const form = collectForm();
+                const items = [];
+                for (const f of (form.fields || [])) {
+                    const el = findElByField(f);
+                    let answer = '';
+                    try { answer = String(readFieldCurrent(f, el) || '').trim(); } catch (_) { /* skip */ }
+                    if (!f.label || !answer || /select\.\.\.|choose|^-+$/i.test(answer)) continue;
+                    items.push({
+                        id: f.id,
+                        label: f.label,
+                        kind: f.kind,
+                        answer
+                    });
+                }
+                sendResponse({ ok: true, items, questions: form.questions || [] });
+            } catch (err) {
+                sendResponse({ ok: false, error: err?.message || String(err), items: [] });
+            }
+            return true;
+        }
         if (msg?.type === 'SELECT_ALL_QUESTIONS') {
             try {
                 sendResponse(selectAllQuestions());
@@ -7634,7 +7729,8 @@
                     progress: msg.progress,
                     filled: msg.filled,
                     files: msg.files,
-                    left: msg.left
+                    left: msg.left,
+                    qa: msg.qa
                 });
                 sendResponse({ ok: true });
             } catch (err) {

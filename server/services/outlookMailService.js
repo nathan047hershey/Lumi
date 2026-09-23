@@ -297,6 +297,29 @@ function listMailboxes(userId) {
     );
 }
 
+/** outlook.com / hotmail.com / live.com aliases are the same Microsoft mailbox. */
+function mailboxAliasKey(email) {
+    const e = String(email || '').trim().toLowerCase();
+    const at = e.lastIndexOf('@');
+    if (at < 1) return e;
+    const local = e.slice(0, at);
+    const domain = e.slice(at + 1);
+    if (/^(outlook|hotmail|live|msn)\.com$/.test(domain)) return `${local}@microsoft-consumer`;
+    return e;
+}
+
+function findMailboxByEmail(userId, email) {
+    const raw = String(email || '').trim();
+    if (!raw) return null;
+    const exact = getOne(
+        `SELECT * FROM outlook_mailboxes WHERE user_id = ? AND lower(email) = lower(?)`,
+        [userId, raw]
+    );
+    if (exact) return exact;
+    const key = mailboxAliasKey(raw);
+    return listMailboxes(userId).find((row) => mailboxAliasKey(row.email) === key) || null;
+}
+
 function accountPublic(row) {
     if (!row) return null;
     return {
@@ -317,7 +340,15 @@ function accountPublic(row) {
 }
 
 function listMailboxesPublic(userId) {
-    return listMailboxes(userId).map(accountPublic);
+    const seen = new Set();
+    const out = [];
+    for (const row of listMailboxes(userId)) {
+        const key = mailboxAliasKey(row.email) || String(row.id);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push(accountPublic(row));
+    }
+    return out;
 }
 
 function extractOtp(text) {
@@ -494,10 +525,7 @@ async function saveTokensForNewOrExisting(userId, tokenData) {
     const email = me.data?.mail || me.data?.userPrincipalName || `unknown-${Date.now()}@outlook.local`;
     const displayName = me.data?.displayName || null;
 
-    const existing = getOne(
-        `SELECT * FROM outlook_mailboxes WHERE user_id = ? AND lower(email) = lower(?)`,
-        [userId, email]
-    );
+    const existing = findMailboxByEmail(userId, email);
     if (existing) {
         runQuery(
             `UPDATE outlook_mailboxes SET
@@ -1324,10 +1352,7 @@ function restorePersistBundle(userId, bundle) {
     for (const box of list) {
         const email = String(box.email || '').trim();
         if (!email || (!box.access_token && !box.refresh_token)) continue;
-        const existing = getOne(
-            `SELECT id FROM outlook_mailboxes WHERE user_id = ? AND lower(email) = lower(?)`,
-            [uid, email]
-        );
+        const existing = findMailboxByEmail(uid, email);
         if (existing) {
             runQuery(
                 `UPDATE outlook_mailboxes SET

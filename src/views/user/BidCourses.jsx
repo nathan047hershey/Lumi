@@ -553,10 +553,23 @@ function BidCourses({ embedded = false }) {
                                                                 ? ` · ${detail.course.profile_name}`
                                                                 : null}
                                                         </div>
-                                                        {detail.application?.download_url && (
-                                                            <a className="inline-flex text-primary underline" href={detail.application.download_url} target="_blank" rel="noreferrer">
+                                                        {(detail.application?.resume_filename || detail.application?.download_url) && (
+                                                            <button
+                                                                type="button"
+                                                                className="inline-flex text-primary underline"
+                                                                onClick={() => {
+                                                                    import('@/lib/resumeUrl').then(({ downloadResumeAuthenticated }) => {
+                                                                        downloadResumeAuthenticated(
+                                                                            detail.application.resume_filename
+                                                                            || String(detail.application.download_url || '').split('/').pop()
+                                                                        ).catch((err) => {
+                                                                            alert(err?.message || 'Could not download CV');
+                                                                        });
+                                                                    });
+                                                                }}
+                                                            >
                                                                 Download CV
-                                                            </a>
+                                                            </button>
                                                         )}
                                                     </CardContent>
                                                 </Card>
