@@ -121,8 +121,19 @@ function buildJobLinkListFilters(query = {}) {
     const techstack = (query.techstack || 'all').trim();
     const platform = (query.platform || query.ats || 'all').trim();
     const available = (query.available || 'all').trim();
-    const dateFrom = (query.date_from || '').trim();
-    const dateTo = (query.date_to || '').trim();
+    const dateFrom = /^\d{4}-\d{2}-\d{2}$/.test((query.date_from || '').trim())
+        ? (query.date_from || '').trim()
+        : '';
+    const dateTo = /^\d{4}-\d{2}-\d{2}$/.test((query.date_to || '').trim())
+        ? (query.date_to || '').trim()
+        : '';
+    const tzOffsetRaw = parseInt(query.tz_offset, 10);
+    const tzOffsetMin = Number.isFinite(tzOffsetRaw) && tzOffsetRaw >= -14 * 60 && tzOffsetRaw <= 14 * 60
+        ? tzOffsetRaw
+        : 0;
+    const tzAbs = Math.abs(tzOffsetMin);
+    const tzSign = tzOffsetMin >= 0 ? '-' : '+';
+    const createdLocalDate = `DATE(datetime(created_at, '${tzSign}${tzAbs} minutes'))`;
     const fetchStatus = (query.fetch_status || 'all').trim();
     const hasGeneratedResumeRaw = (query.has_generated_resume || '').trim().toLowerCase();
     const hasGeneratedResume = ['1', 'true', 'yes'].includes(hasGeneratedResumeRaw);
@@ -171,11 +182,11 @@ function buildJobLinkListFilters(query = {}) {
     }
 
     if (dateFrom) {
-        conds.push('DATE(created_at) >= ?');
+        conds.push(`${createdLocalDate} >= ?`);
         params.push(dateFrom);
     }
     if (dateTo) {
-        conds.push('DATE(created_at) <= ?');
+        conds.push(`${createdLocalDate} <= ?`);
         params.push(dateTo);
     }
     if (fetchStatus && fetchStatus !== 'all'
@@ -561,20 +572,30 @@ async function createHandler(req, res) {
         // Enqueue detail fetch when we still need a JD. resolveStoredJobUrls
         // often nulls source_url when it matches apply — scrape still uses
         // job_apply_url via rowSourceUrl. Pasted JD rows are already success.
+        // Never block the create response on scrape / CV work. The
+        // list stays interactive and row badges (Scraping → Generating
+        // → Ready) update from the poller. RabbitMQ-down inline scrape
+        // used to make POST /job-links wait until the JD (and often
+        // CVs) finished.
         if ((source || applyUrl) && !hasPastedDescription) {
-            try {
-                const jobDetailFetchService = require('../services/jobDetailFetchService');
-                await jobDetailFetchService.enqueueJobDetailFetch(row.id, { source: 'create' });
-            } catch (err) {
-                // Soft-fail: if the broker is down we still want to
-                // return the row to the user. The recovery pass at
-                // boot + the periodic stale-fetching cleanup will
-                // pick it up next time around.
-                console.warn(
-                    `[jobLinks] enqueue detail-fetch failed for job_link=${row.id}:`,
-                    err.message
-                );
-            }
+            setImmediate(() => {
+                try {
+                    const jobDetailFetchService = require('../services/jobDetailFetchService');
+                    jobDetailFetchService
+                        .enqueueJobDetailFetch(row.id, { source: 'create' })
+                        .catch((err) => {
+                            console.warn(
+                                `[jobLinks] enqueue detail-fetch failed for job_link=${row.id}:`,
+                                err && err.message ? err.message : err
+                            );
+                        });
+                } catch (err) {
+                    console.warn(
+                        `[jobLinks] enqueue detail-fetch failed for job_link=${row.id}:`,
+                        err && err.message ? err.message : err
+                    );
+                }
+            });
         }
 
         // Auto-generate CVs for matching profiles as soon as a JD is ready.

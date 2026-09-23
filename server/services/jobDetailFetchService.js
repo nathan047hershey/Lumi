@@ -155,15 +155,17 @@ async function enqueueJobDetailFetch(jobLinkId, opts = {}) {
             console.warn('[jobDetailFetch] RabbitMQ unavailable, falling back to in-process scrape:', formatError(queueErr));
         }
         mode = 'inline';
-        try {
-            const result = await scrapeJobLinkById(jobLinkId);
-            lastError = result && result.error ? formatError({ message: result.error }) : null;
-            return { ok: !!(result && result.ok), jobLinkId, mode: 'inline', result };
-        } catch (scrapeErr) {
-            const errMsg = formatError(scrapeErr);
-            lastError = errMsg;
-            throw new Error('Scrape failed (RabbitMQ down + inline failed): ' + errMsg);
-        }
+        setImmediate(() => {
+            scrapeJobLinkById(jobLinkId)
+                .then((result) => {
+                    lastError = result && result.error ? formatError({ message: result.error }) : null;
+                })
+                .catch((scrapeErr) => {
+                    lastError = formatError(scrapeErr);
+                    console.warn('[jobDetailFetch] deferred inline scrape failed:', lastError);
+                });
+        });
+        return { ok: true, jobLinkId, mode: 'inline-deferred' };
     }
 }
 

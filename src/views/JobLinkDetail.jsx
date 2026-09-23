@@ -57,7 +57,7 @@ import {
 import { adminAPI } from '@/api';
 import { useAuth } from '@/context/AuthContext';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
-import { jobLinksListQueryFromLocation } from '@/lib/jobLinksListState';
+import { clientTzOffsetMinutes, jobLinksListQueryFromLocation, localYmd } from '@/lib/jobLinksListState';
 import { openResume } from '@/lib/resumeUrl';
 import AppPage from '@/components/AppPage';
 import { PageLoader, Loader } from '@/components/Loader';
@@ -524,9 +524,12 @@ function listFiltersFromSearchParams(searchParams) {
     if (dateTo) filters.date_to = dateTo;
     if (searchParams.get('has_generated_resume') === '1') filters.has_generated_resume = 1;
     if (searchParams.get('today') === '1') {
-        const today = new Date().toISOString().split('T')[0];
+        const today = localYmd();
         filters.date_from = today;
         filters.date_to = today;
+    }
+    if (filters.date_from || filters.date_to) {
+        filters.tz_offset = clientTzOffsetMinutes();
     }
     return filters;
 }

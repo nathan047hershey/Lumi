@@ -53,7 +53,7 @@ import {
 } from 'lucide-react';
 import { adminAPI } from '@/api';
 import { VALID_TECHSTACKS } from '@/lib/techstacks';
-import { PageLoader, Loader } from '@/components/Loader';
+import { Loader } from '@/components/Loader';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -80,7 +80,10 @@ import { DatePicker } from '@/components/DatePicker';
 import { cn } from '@/lib/utils';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
 import {
+    clientTzOffsetMinutes,
+    dateInputValue,
     jobLinksListStateToQuery,
+    localYmd,
     resolveJobLinksListState,
     writeSavedJobLinksListState
 } from '@/lib/jobLinksListState';
@@ -513,7 +516,11 @@ function useDebouncedValue(initial, delay = FILTER_DEBOUNCE_MS) {
         const t = setTimeout(() => setDebounced(value), delay);
         return () => clearTimeout(t);
     }, [value, delay]);
-    return [value, setValue, debounced];
+    const flush = useCallback((next) => {
+        setValue(next);
+        setDebounced(next);
+    }, []);
+    return [value, setValue, debounced, flush];
 }
 
 // -----------------------------------------------------------------------------
@@ -534,6 +541,7 @@ function AddJobLinkModal({ open, onOpenChange, onCreated }) {
     const [submitting, setSubmitting] = useState(false);
     const [error, setError] = useState(null);
     const [bulkProgress, setBulkProgress] = useState(null);
+    const addRunRef = useRef(0);
 
     const bulkPreview = useMemo(() => parseBulkJobLinkLines(bulkText), [bulkText]);
 
@@ -576,6 +584,7 @@ function AddJobLinkModal({ open, onOpenChange, onCreated }) {
                 setError('Apply URL is required');
                 return;
             }
+            const runId = ++addRunRef.current;
             setSubmitting(true);
             try {
                 const apply = applyUrl.trim();
@@ -589,9 +598,11 @@ function AddJobLinkModal({ open, onOpenChange, onCreated }) {
                     source_url: source,
                     job_apply_url: apply
                 });
+                if (runId !== addRunRef.current) return;
                 onCreated?.(res.data?.data);
                 onOpenChange(false);
             } catch (err) {
+                if (runId !== addRunRef.current) return;
                 const data = err.response?.data;
                 const existingId = data?.existing_id;
                 const baseMsg = data?.error || 'Failed to save job link';
@@ -601,7 +612,7 @@ function AddJobLinkModal({ open, onOpenChange, onCreated }) {
                     setError(baseMsg);
                 }
             } finally {
-                setSubmitting(false);
+                if (runId === addRunRef.current) setSubmitting(false);
             }
             return;
         }
@@ -612,11 +623,14 @@ function AddJobLinkModal({ open, onOpenChange, onCreated }) {
             return;
         }
 
+        const runId = ++addRunRef.current;
         setSubmitting(true);
         const created = [];
         const failed = [...parseErrors];
+        let closed = false;
         try {
             for (let i = 0; i < rows.length; i++) {
+                if (runId !== addRunRef.current) break;
                 const { apply, source } = rows[i];
                 setBulkProgress({ current: i + 1, total: rows.length });
                 try {
@@ -625,7 +639,16 @@ function AddJobLinkModal({ open, onOpenChange, onCreated }) {
                         source_url: source || null,
                         job_apply_url: apply
                     });
-                    created.push(res.data?.data || { job_apply_url: apply });
+                    const row = res.data?.data || { job_apply_url: apply };
+                    created.push(row);
+                    onCreated?.(row);
+                    // Close after the first successful insert so the list
+                    // stays usable while remaining URLs enqueue in the
+                    // background. Row badges show Scraping / Generating.
+                    if (!closed) {
+                        closed = true;
+                        onOpenChange(false);
+                    }
                 } catch (err) {
                     const data = err.response?.data;
                     const existingId = data?.existing_id;
@@ -637,21 +660,21 @@ function AddJobLinkModal({ open, onOpenChange, onCreated }) {
                     );
                 }
             }
-            if (created.length) {
-                onCreated?.(created[created.length - 1]);
-            }
-            if (!failed.length) {
-                onOpenChange(false);
-            } else {
+            if (created.length === 0 && failed.length && runId === addRunRef.current) {
                 setError(
-                    `Added ${created.length} of ${rows.length}. ` +
-                    (failed.length ? `Skipped/failed:\n${failed.slice(0, 8).join('\n')}` : '') +
+                    failed.slice(0, 8).join('\n') +
                     (failed.length > 8 ? `\n…and ${failed.length - 8} more` : '')
+                );
+            } else if (failed.length && created.length && typeof window !== 'undefined') {
+                console.warn(
+                    `[job-links] bulk add finished with ${failed.length} skip/fail(s) of ${rows.length}`
                 );
             }
         } finally {
-            setSubmitting(false);
-            setBulkProgress(null);
+            if (runId === addRunRef.current) {
+                setSubmitting(false);
+                setBulkProgress(null);
+            }
         }
     };
 
@@ -834,7 +857,7 @@ function AddJobLinkModal({ open, onOpenChange, onCreated }) {
                     </form>
                 </DialogBody>
                 <DialogFooter>
-                    <Button variant="ghost" type="button" onClick={() => onOpenChange(false)} disabled={submitting}>
+                    <Button variant="ghost" type="button" onClick={() => onOpenChange(false)}>
                         Cancel
                     </Button>
                     <Button type="submit" onClick={handleSubmit} disabled={submitting}>
@@ -1396,11 +1419,11 @@ function JobLinks({ embedded = false }) {
     // links restore the same view after navigation. If the URL is empty
     // (Back from a job, or the sidebar Job Links tab), restore the last
     // list view from sessionStorage so page + filters are not wiped.
-    const [searchParams, setSearchParams] = useSearchParams();
+    const [searchParams] = useSearchParams();
     const initialFiltersRef = useRef(resolveJobLinksListState(searchParams));
 
     // Filter state (text inputs are local; only debounced values drive the request).
-    const [search, setSearch, debouncedSearch] = useDebouncedValue(initialFiltersRef.current.search);
+    const [search, setSearch, debouncedSearch, flushSearch] = useDebouncedValue(initialFiltersRef.current.search);
     const [techstackFilter, setTechstackFilter] = useState(initialFiltersRef.current.techstack);
     const [platformFilter, setPlatformFilter] = useState(initialFiltersRef.current.platform);
     const [availableFilter, setAvailableFilter] = useState(initialFiltersRef.current.available);
@@ -1413,8 +1436,8 @@ function JobLinks({ embedded = false }) {
     const [hasGeneratedResumeFilter, setHasGeneratedResumeFilter] = useState(
         initialFiltersRef.current.hasGeneratedResume
     );
-    const [dateFrom, setDateFrom, debouncedDateFrom] = useDebouncedValue(initialFiltersRef.current.dateFrom);
-    const [dateTo, setDateTo, debouncedDateTo] = useDebouncedValue(initialFiltersRef.current.dateTo);
+    const [dateFrom, setDateFrom, debouncedDateFrom, flushDateFrom] = useDebouncedValue(initialFiltersRef.current.dateFrom);
+    const [dateTo, setDateTo, debouncedDateTo, flushDateTo] = useDebouncedValue(initialFiltersRef.current.dateTo);
     // "Today" is a quick-filter shortcut: when on, it sets both date
     // bounds to today's local date and pins them. Toggling off
     // clears both bounds so the user gets back to the unfiltered
@@ -1465,9 +1488,17 @@ function JobLinks({ embedded = false }) {
             dateFrom: debouncedDateFrom,
             dateTo: debouncedDateTo
         });
-        const next = new URLSearchParams(nextQuery.startsWith('?') ? nextQuery.slice(1) : nextQuery);
-        if (searchParams.toString() === next.toString()) return;
-        setSearchParams(next, { replace: true });
+        const nextStr = nextQuery.startsWith('?') ? nextQuery.slice(1) : nextQuery;
+        // replaceState keeps the address bar in sync without a Next
+        // navigation. router.replace remounts this view (Suspense +
+        // useSearchParams) and used to swap the whole page for PageLoader.
+        if (typeof window === 'undefined') return;
+        const current = window.location.search.startsWith('?')
+            ? window.location.search.slice(1)
+            : window.location.search;
+        if (current === nextStr) return;
+        const url = nextStr ? `${window.location.pathname}?${nextStr}` : window.location.pathname;
+        window.history.replaceState(window.history.state, '', url);
     }, [
         page,
         search,
@@ -1482,9 +1513,7 @@ function JobLinks({ embedded = false }) {
         debouncedDateFrom,
         debouncedDateTo,
         isTodayActive,
-        sortFilter,
-        searchParams,
-        setSearchParams
+        sortFilter
     ]);
     const [limit] = useState(DEFAULT_LIMIT);
     const [total, setTotal] = useState(0);
@@ -1628,25 +1657,31 @@ function JobLinks({ embedded = false }) {
                 onClear: () => changeHasGeneratedResumeFilter(false)
             });
         }
-        if (debouncedDateFrom) {
+        if (debouncedDateFrom && !isTodayActive) {
             out.push({
                 key: 'date_from',
                 label: `From: ${debouncedDateFrom}`,
-                onClear: () => setDateFrom('')
+                onClear: () => {
+                    flushDateFrom('');
+                    setIsTodayActive(false);
+                }
             });
         }
-        if (debouncedDateTo) {
+        if (debouncedDateTo && !isTodayActive) {
             out.push({
                 key: 'date_to',
                 label: `To: ${debouncedDateTo}`,
-                onClear: () => setDateTo('')
+                onClear: () => {
+                    flushDateTo('');
+                    setIsTodayActive(false);
+                }
             });
         }
         if (debouncedSearch) {
             out.push({
                 key: 'search',
                 label: `Search: ${debouncedSearch}`,
-                onClear: () => setSearch('')
+                onClear: () => flushSearch('')
             });
         }
         if (isTodayActive) {
@@ -1656,46 +1691,47 @@ function JobLinks({ embedded = false }) {
                 onClear: () => {
                     setPage(1);
                     setIsTodayActive(false);
-                    setDateFrom('');
-                    setDateTo('');
+                    flushDateFrom('');
+                    flushDateTo('');
                 }
             });
         }
         return out;
-    }, [techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, debouncedSearch, isTodayActive, changeTechstackFilter, changePlatformFilter, changeAvailableFilter, changeBidStateFilter, changeSortFilter, changeHasGeneratedResumeFilter]);
+    }, [techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, debouncedSearch, isTodayActive, changeTechstackFilter, changePlatformFilter, changeAvailableFilter, changeBidStateFilter, changeSortFilter, changeHasGeneratedResumeFilter, flushDateFrom, flushDateTo, flushSearch, setPage]);
 
     const resetFilters = () => {
-        setSearch('');
+        flushSearch('');
         setTechstackFilter('all');
         setPlatformFilter('all');
         setAvailableFilter('all');
         setBidStateFilter('all');
         setSortFilter('latest');
         setHasGeneratedResumeFilter(false);
-        setDateFrom('');
-        setDateTo('');
+        flushDateFrom('');
+        flushDateTo('');
         setIsTodayActive(false);
         setPage(1);
     };
 
+    const syncTodayFromDates = (from, to) => {
+        const today = localYmd();
+        setIsTodayActive(!!from && from === to && from === today);
+    };
+
     // "Today" is a shortcut for the date bounds. When toggled on,
-    // we pin both From and To to today's local date (YYYY-MM-DD)
-    // so the API's date_from/date_to range shrinks to a single day.
-    // Toggling off clears both bounds and lets the user pick
-    // manually again. We deliberately bypass resetting the
-    // debounced state directly — the debounced hook will mirror
-    // the raw value once it stabilises.
+    // we pin both From and To to today's local calendar day so the
+    // API range is that day in the user's timezone (not UTC).
     const handleToggleToday = () => {
         setPage(1);
         if (isTodayActive) {
             setIsTodayActive(false);
-            setDateFrom('');
-            setDateTo('');
+            flushDateFrom('');
+            flushDateTo('');
         } else {
-            const today = new Date().toISOString().split('T')[0];
+            const today = localYmd();
             setIsTodayActive(true);
-            setDateFrom(today);
-            setDateTo(today);
+            flushDateFrom(today);
+            flushDateTo(today);
         }
     };
 
@@ -1739,6 +1775,9 @@ function JobLinks({ embedded = false }) {
             if (availableFilter !== 'all') filters.available = availableFilter;
             if (debouncedDateFrom)   filters.date_from = debouncedDateFrom;
             if (debouncedDateTo)     filters.date_to = debouncedDateTo;
+            if (debouncedDateFrom || debouncedDateTo) {
+                filters.tz_offset = clientTzOffsetMinutes();
+            }
             if (hasGeneratedResumeFilter) filters.has_generated_resume = 1;
             if (bidStateFilter && bidStateFilter !== 'all') filters.bid_state = bidStateFilter;
             if (sortFilter && sortFilter !== 'latest') filters.sort = sortFilter;
@@ -1985,8 +2024,6 @@ function JobLinks({ embedded = false }) {
         )));
     };
 
-    if (loading) return <PageLoader message="Loading job links..." />;
-
     return (
         <>
             <AppPage
@@ -2127,10 +2164,26 @@ function JobLinks({ embedded = false }) {
                                     </SelectContent>
                                 </Select>
                                 <div className="w-[9rem]">
-                                    <DatePicker value={dateFrom} onChange={setDateFrom} placeholder="From" />
+                                    <DatePicker
+                                        value={typeof dateFrom === 'string' ? dateFrom : ''}
+                                        onChange={(e) => {
+                                            const v = dateInputValue(e);
+                                            flushDateFrom(v);
+                                            syncTodayFromDates(v, typeof dateTo === 'string' ? dateTo : '');
+                                        }}
+                                        placeholder="From"
+                                    />
                                 </div>
                                 <div className="w-[9rem]">
-                                    <DatePicker value={dateTo} onChange={setDateTo} placeholder="To" />
+                                    <DatePicker
+                                        value={typeof dateTo === 'string' ? dateTo : ''}
+                                        onChange={(e) => {
+                                            const v = dateInputValue(e);
+                                            flushDateTo(v);
+                                            syncTodayFromDates(typeof dateFrom === 'string' ? dateFrom : '', v);
+                                        }}
+                                        placeholder="To"
+                                    />
                                 </div>
                                 <Button
                                     type="button"
@@ -2202,8 +2255,8 @@ function JobLinks({ embedded = false }) {
                     />
 
                     <div className="relative space-y-2.5">
-                        {tableLoading && (
-                            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/50 backdrop-blur-sm">
+                        {(tableLoading || loading) && (
+                            <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center rounded-xl bg-background/50 backdrop-blur-sm">
                                 <Loader size="lg" />
                             </div>
                         )}
@@ -2258,11 +2311,24 @@ function JobLinks({ embedded = false }) {
             <AddJobLinkModal
                 open={showAdd}
                 onOpenChange={setShowAdd}
-                onCreated={() => {
-                    // Reload from page 1 so the user sees their new row
-                    // at the top of the list.
-                    setPage(1);
-                    load();
+                onCreated={(row) => {
+                    if (row?.id) {
+                        setRows((prev) => {
+                            if (prev.some((r) => r.id === row.id)) {
+                                return prev.map((r) => (r.id === row.id
+                                    ? { ...r, ...row, available_profiles: row.available_profiles ?? r.available_profiles ?? [] }
+                                    : r));
+                            }
+                            return [{
+                                ...row,
+                                available_profiles: Array.isArray(row.available_profiles)
+                                    ? row.available_profiles
+                                    : []
+                            }, ...prev];
+                        });
+                    }
+                    if (page !== 1) setPage(1);
+                    load({ silent: true });
                 }}
             />
 

@@ -1,4 +1,32 @@
 const STORAGE_KEY = 'lumi.jobLinks.listState';
+const YMD_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Local calendar day (YYYY-MM-DD). Do not use toISOString — that is UTC. */
+export function localYmd(d = new Date()) {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+}
+
+export function asYmd(value) {
+    if (typeof value !== 'string') return '';
+    const trimmed = value.trim();
+    return YMD_RE.test(trimmed) ? trimmed : '';
+}
+
+/** Minutes to add to local time to get UTC. Matches Date#getTimezoneOffset. */
+export function clientTzOffsetMinutes() {
+    return new Date().getTimezoneOffset();
+}
+
+/** DatePicker onChange may pass a native event or a YYYY-MM-DD string. */
+export function dateInputValue(e) {
+    if (e == null) return '';
+    if (typeof e === 'string') return asYmd(e);
+    if (typeof e?.target?.value === 'string') return asYmd(e.target.value);
+    return '';
+}
 
 export const EMPTY_JOB_LINKS_LIST_STATE = {
     page: 1,
@@ -28,8 +56,8 @@ export function parseJobLinksListState(searchParams) {
         available: searchParams?.get?.('available') || 'all',
         bidState: searchParams?.get?.('bid_state') || 'all',
         hasGeneratedResume: searchParams?.get?.('has_generated_resume') === '1',
-        dateFrom: searchParams?.get?.('date_from') || '',
-        dateTo: searchParams?.get?.('date_to') || '',
+        dateFrom: asYmd(searchParams?.get?.('date_from') || ''),
+        dateTo: asYmd(searchParams?.get?.('date_to') || ''),
         today: searchParams?.get?.('today') === '1',
         sort
     };
@@ -91,12 +119,24 @@ export function writeSavedJobLinksListState(state) {
     }
 }
 
+function pinTodayDates(state) {
+    if (!state?.today) {
+        return {
+            ...state,
+            dateFrom: asYmd(state?.dateFrom || ''),
+            dateTo: asYmd(state?.dateTo || '')
+        };
+    }
+    const today = localYmd();
+    return { ...state, dateFrom: today, dateTo: today };
+}
+
 export function resolveJobLinksListState(searchParams) {
     const fromUrl = parseJobLinksListState(searchParams);
-    if (jobLinksListStateHasMemory(fromUrl)) return fromUrl;
+    if (jobLinksListStateHasMemory(fromUrl)) return pinTodayDates(fromUrl);
     const saved = readSavedJobLinksListState();
-    if (saved && jobLinksListStateHasMemory(saved)) return saved;
-    return fromUrl;
+    if (saved && jobLinksListStateHasMemory(saved)) return pinTodayDates(saved);
+    return pinTodayDates(fromUrl);
 }
 
 export function jobLinksListQueryFromLocation(search) {
