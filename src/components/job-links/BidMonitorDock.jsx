@@ -436,7 +436,8 @@ export default function BidMonitorDock({
         ? missingFields.map((m) => (typeof m === 'string' ? m : (m?.label || m?.name || ''))).filter(Boolean).slice(0, 6)
         : [];
     const errSnippet = String(lastError || '').trim().slice(0, 160);
-    const showEvidence = stuck || tabClosed || missingList.length > 0 || !!errSnippet;
+    const isApplied = outcomeKind === 'success' || /applied/i.test(String(applicationStatus || ''));
+    const showEvidence = !isApplied && (stuck || tabClosed || missingList.length > 0 || !!errSnippet);
     const feedSlice = Array.isArray(notifFeed) ? notifFeed.slice(0, 6) : [];
 
     const btn = 'h-8 gap-1 px-2.5 text-[11px]';
@@ -779,7 +780,16 @@ export default function BidMonitorDock({
                                 <span className="ml-auto font-mono tabular-nums text-cyan-300/75">{timeChip}</span>
                             ) : null}
                         </div>
-                        {showEvidence ? (
+                        {isApplied ? (
+                            <div className="mt-2 rounded-lg border border-emerald-400/25 bg-emerald-500/[0.08] px-2.5 py-2">
+                                <p className="text-[10px] font-semibold uppercase tracking-wide text-emerald-200/85">
+                                    Outcome
+                                </p>
+                                <p className="text-[10px] leading-snug text-emerald-100/90">
+                                    APPLIED — site thank-you confirmed. This bid is complete.
+                                </p>
+                            </div>
+                        ) : showEvidence ? (
                             <div className="mt-2 space-y-1 rounded-lg border border-amber-400/20 bg-amber-500/[0.06] px-2.5 py-2">
                                 <p className="text-[10px] font-semibold uppercase tracking-wide text-amber-200/80">
                                     Checkout evidence

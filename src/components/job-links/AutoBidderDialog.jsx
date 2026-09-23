@@ -551,6 +551,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     const prevMonitorCourseRef = useRef('');
     /** Keep Control on SUCCESS after Update state / Submit until the server catches up. */
     const successLatchRef = useRef(false);
+    const autoAnalyzeSigRef = useRef('');
     const courseListScrollRef = useRef(null);
     const detailScrollRef = useRef(null);
     const savedScrollRef = useRef({ list: 0, detail: 0 });
@@ -1857,12 +1858,16 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             const submitClicked = !!(body.submitClicked ?? res?.submitClicked);
             const incomplete = !!(body.incomplete ?? res?.incomplete);
             const reopened = !!(body.reopened ?? res?.reopened);
+            const applied = !!(body.success ?? res?.success);
+            if (applied) successLatchRef.current = true;
             setStatus(
-                submitClicked
-                    ? `Re-autofill done — submit clicked (${filled} fields)${reopened ? ' · tab reopened' : ''}`
-                    : incomplete
-                        ? `Re-autofill finished — still incomplete (${filled} fields). Check Open tab.`
-                        : `Re-autofill filled ${filled} field(s)${reopened ? ' · tab reopened' : ''}`
+                applied
+                    ? 'Re-autofill — site thank-you detected (APPLIED)'
+                    : submitClicked
+                        ? `Re-autofill done — submit clicked (${filled} fields)${reopened ? ' · tab reopened' : ''}`
+                        : incomplete
+                            ? `Re-autofill finished — still incomplete (${filled} fields). Check Open tab.`
+                            : `Re-autofill filled ${filled} field(s)${reopened ? ' · tab reopened' : ''}`
             );
             setError('');
             setDockOpen(true);
@@ -1875,10 +1880,13 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         }
     };
 
-    const updateApplyState = async () => {
-        setBusy(true);
-        setError('');
-        setStatus('Updating state from apply tab…');
+    const updateApplyState = async (opts = {}) => {
+        const silent = opts === true || opts?.silent === true;
+        if (!silent) {
+            setBusy(true);
+            setError('');
+            setStatus('Updating state from apply tab…');
+        }
         try {
             const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_UPDATE_STATE', 45000, {
                 applicationId: detailAppId
@@ -1921,6 +1929,11 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                     setQueueState(qs?.result || qs?.data || null);
                 } catch (_) { /* ignore */ }
                 await loadList({ silent: true });
+            } else if (silent) {
+                try {
+                    const qs = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_QUEUE_STATE', 4000);
+                    setQueueState(qs?.result || qs?.data || null);
+                } catch (_) { /* ignore */ }
             } else if (body.incomplete) {
                 // Clear false SUCCESS from prior "customer success" regex / latch.
                 successLatchRef.current = false;
@@ -2004,26 +2017,68 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                     setQueueState(qs?.result || qs?.data || null);
                 } catch (_) { /* ignore */ }
             }
-            if (selectedId) {
+            if (selectedId && (body.success || !silent)) {
                 detailSigRef.current = '';
                 await loadDetail(selectedId, {
-                    silent: false,
+                    silent: !!silent,
                     bumpLive: true,
-                    clearFalseSuccess: !body.success
+                    clearFalseSuccess: !silent && !body.success
                 });
             }
             setLiveRefreshKey((k) => k + 1);
             setLastRefreshedAt(Date.now());
             setMonitorFrameFollowLive(true);
-            setDockOpen(true);
-            setMonitorActive(true);
+            if (!silent) {
+                setDockOpen(true);
+                setMonitorActive(true);
+            }
         } catch (err) {
-            setError(err.message || 'Update state failed');
-            setStatus('');
+            if (!silent) {
+                setError(err.message || 'Update state failed');
+                setStatus('');
+            }
         } finally {
-            setBusy(false);
+            if (!silent) setBusy(false);
         }
     };
+
+    // Re-classify the live apply tab when a course looks filled-but-not-applied
+    // (Greenhouse thank-you often arrives after reautofill_done).
+    useEffect(() => {
+        const watching = dockOpen || monitorActive || open;
+        if (!watching) return undefined;
+        const last = String(
+            queueState?.lastStatusEvent
+            || detail?.course?.last_event_type
+            || ''
+        );
+        const applied = detail?.course?.outcome === 'applied'
+            || detail?.application?.status === 'applied'
+            || isSuccessEvent(last)
+            || successLatchRef.current;
+        if (applied) return undefined;
+        if (!/reautofill_done|fill_done|ready_to_submit|awaiting_manual_submit|fill_incomplete|after_fill/i.test(last)) {
+            return undefined;
+        }
+        const sig = `${detailAppId || queueState?.currentId || ''}|${last}|${queueState?.lastStatusAt || ''}`;
+        if (autoAnalyzeSigRef.current === sig) return undefined;
+        autoAnalyzeSigRef.current = sig;
+        const t = setTimeout(() => {
+            updateApplyState({ silent: true }).catch(() => {});
+        }, 1800);
+        return () => clearTimeout(t);
+    }, [
+        dockOpen,
+        monitorActive,
+        open,
+        detailAppId,
+        queueState?.lastStatusEvent,
+        queueState?.lastStatusAt,
+        queueState?.currentId,
+        detail?.course?.outcome,
+        detail?.course?.last_event_type,
+        detail?.application?.status
+    ]);
 
     const submitApplyFromControl = async () => {
         setBusy(true);
@@ -2556,15 +2611,22 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             return { event_type: fromCourse.event_type, meta: fromCourse.meta };
         })()
         : null;
+    const resolvedMonitorEvent = (() => {
+        const q = String(queueState?.lastStatusEvent || '');
+        const e = String(lastEvent?.event_type || '');
+        if (isSuccessEvent(e) || isSuccessEvent(q)) {
+            return isSuccessEvent(e) ? e : q;
+        }
+        return q || e || String(detail?.course?.last_event_type || '');
+    })();
     const monitorStatusCommentRaw = liveStatusComment({
-        eventType: queueState?.lastStatusEvent
-            || lastEvent?.event_type
-            || detail?.course?.last_event_type
-            || '',
-        meta: queueState?.lastStatusMeta
-            || lastEvent?.meta
-            || detail?.course?.last_event_meta
-            || null,
+        eventType: resolvedMonitorEvent,
+        meta: isSuccessEvent(resolvedMonitorEvent)
+            ? (lastEvent?.meta || queueState?.lastStatusMeta || null)
+            : (queueState?.lastStatusMeta
+                || lastEvent?.meta
+                || detail?.course?.last_event_meta
+                || null),
         queueStatus: queueState?.status || '',
         captchaKind
     });
@@ -3455,17 +3517,27 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             }
             queueStatus={queueState?.status || ''}
             missingFields={
-                queueState?.missingRequired
-                || queueState?.lastStatusMeta?.missing
-                || queueState?.lastStatusMeta?.missingRequired
-                || []
+                (detailRun?.kind === 'success'
+                    || detail?.course?.outcome === 'applied'
+                    || isSuccessEvent(resolvedMonitorEvent)
+                    || successLatchRef.current)
+                    ? []
+                    : (queueState?.missingRequired
+                        || queueState?.lastStatusMeta?.missing
+                        || queueState?.lastStatusMeta?.missingRequired
+                        || [])
             }
             lastError={
-                queueState?.lastStatusMeta?.error
-                || queueState?.lastStatusMeta?.reason
-                || ''
+                (detailRun?.kind === 'success'
+                    || detail?.course?.outcome === 'applied'
+                    || isSuccessEvent(resolvedMonitorEvent)
+                    || successLatchRef.current)
+                    ? ''
+                    : (queueState?.lastStatusMeta?.error
+                        || queueState?.lastStatusMeta?.reason
+                        || '')
             }
-            lastEventType={queueState?.lastStatusEvent || ''}
+            lastEventType={resolvedMonitorEvent || queueState?.lastStatusEvent || ''}
             companyName={
                 detail
                     ? (displayCompanyName(detail.course, detail.application, jobLinkById) || '')

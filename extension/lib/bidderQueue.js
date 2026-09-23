@@ -25,6 +25,13 @@ import {
     probeCaptchaHelpers
 } from './captchaPass.js';
 import { assistCaptchaHelpers as assistCaptchaHelpersImpl } from './captchaAssist.js';
+import {
+    SUCCESS_RE,
+    SUCCESS_HEADING_RE,
+    SUCCESS_NEGATIVE_RE,
+    evaluateSubmitSuccessPage,
+    pickSubmitSuccessResult
+} from './submitSuccess.js';
 
 export {
     classifyCaptchaOrLogin,
@@ -1114,80 +1121,13 @@ export async function savePackage(applicationId, answers, meta) {
     }
 }
 
-/**
- * Thank-you / submitted confirmation only.
- * NEVER match bare "success" / "customer success" / "enterprise success".
- */
-const SUCCESS_RE = /\b(?:thank\s*you\s+for\s+(?:your\s+)?(?:application|applying|submitting)|thanks\s+for\s+(?:your\s+)?(?:application|applying|submitting)|application\s+(?:has\s+been\s+)?(?:received|submitted|complete(?:d)?)|your\s+application\s+(?:has\s+been\s+)?(?:submitted|received|sent|complete(?:d)?)|we\s*(?:['’]?ve|have)\s+received\s+(?:your\s+)?application|successfully\s+submitted(?:\s+your\s+application)?|application\s+submitted\s+successfully|submission\s+(?:was\s+)?successful|confirmation\s+of\s+your\s+application)\b/i;
-
-/** Short confirmation headings only — never bare "Success" (too many false positives). */
-const SUCCESS_HEADING_RE = /^(?:application\s+)?(?:submitted|received|complete(?:d)?)!?$|^(?:thank\s*you|thanks)(?:\s+for\s+(?:applying|your\s+application))?[!.,]?$/i;
-
-/**
- * Hard NO — validation / open-form copy must never count as submit SUCCESS.
- * Catches Ashby "Missing entry for required field: … enterprise success …".
- */
-const SUCCESS_NEGATIVE_RE = /\b(?:missing\s+entry\s+for\s+required\s+field|please\s+(?:complete|fill|answer)\s+(?:all\s+)?required|required\s+field(?:s)?\s+(?:are\s+)?missing|field\s+is\s+required|this\s+field\s+is\s+required|form\s+contain(?:s)?\s+errors?|fix\s+out\s+this\s+field|you\s+must\s+(?:select|answer|complete))\b/i;
-
-/**
- * Pure success classifier (unit-tested). Rejects open apply forms even if
- * the word "success" appears in a question label or validation error.
- */
-function evaluateSubmitSuccessPage({
-    text = '',
-    headings = [],
-    radioCount = 0,
-    visibleFieldCount = 0,
-    hasSubmitControl = false,
-    emptyVisibleFields = 0,
-    hasValidationErrors = false
-} = {}) {
-    const body = String(text || '');
-    if (hasValidationErrors || SUCCESS_NEGATIVE_RE.test(body)) {
-        return { ok: false, reason: 'validation_errors' };
-    }
-    const headingHit = (Array.isArray(headings) ? headings : [])
-        .some((h) => SUCCESS_HEADING_RE.test(String(h || '').replace(/\s+/g, ' ').trim()));
-    const bodyHit = SUCCESS_RE.test(body);
-    if (!bodyHit && !headingHit) return { ok: false, reason: 'no_match' };
-
-    // Greenhouse thank-you pages often keep leftover fields / "Track application"
-    // sign-in in the DOM. A real confirmation headline still means SUCCESS.
-    const strongThankYou = /thank\s*you\s+for\s+(?:your\s+)?application|application\s+submitted|we\s*(?:['’]?ve|have)\s+received\s+(?:your\s+)?application|your\s+application\s+has\s+been\s+routed/i.test(body)
-        || (Array.isArray(headings) ? headings : []).some((h) => (
-            /thank\s*you\s+for\s+(?:your\s+)?application|application\s+submitted/i.test(String(h || ''))
-        ));
-    if (strongThankYou) {
-        return { ok: true, reason: 'strong_thank_you' };
-    }
-
-    // Active multi-field apply form → never SUCCESS (even if a phrase matched).
-    const formOpen = (radioCount >= 2 || visibleFieldCount >= 2) && hasSubmitControl;
-    if (formOpen) {
-        return { ok: false, reason: 'form_still_open' };
-    }
-    // Extra guard: unanswered radios alone mean not submitted.
-    if (radioCount >= 2 && emptyVisibleFields >= 0 && hasSubmitControl) {
-        return { ok: false, reason: 'form_still_open' };
-    }
-    return { ok: true, reason: bodyHit ? 'body' : 'heading' };
-}
-
-function collectSubmitSuccessSignalsInPage(successReSource, headingReSource, negativeReSource) {
-    const successRe = new RegExp(successReSource, 'i');
-    const headingRe = new RegExp(headingReSource, 'i');
-    const negativeRe = new RegExp(negativeReSource, 'i');
+/** Collect page signals only — classify in the extension so all frames share one rule. */
+function collectSubmitSuccessSignalsInPage(negativeReSource) {
+    const negativeRe = negativeReSource ? new RegExp(negativeReSource, 'i') : null;
     const text = (document.body?.innerText || '').slice(0, 16000);
-    if (negativeRe.test(text)) {
-        return {
-            ok: false,
-            reason: 'validation_errors',
-            sample: text.slice(0, 200)
-        };
-    }
     const headings = [...document.querySelectorAll('h1, h2, h3, [role="heading"], [role="alert"], [role="status"]')]
         .map((el) => (el.innerText || '').replace(/\s+/g, ' ').trim())
-        .filter((t) => t.length >= 2 && t.length <= 120)
+        .filter((t) => t.length >= 2 && t.length <= 160)
         .slice(0, 20);
     const isVisible = (el) => {
         try {
@@ -1200,7 +1140,6 @@ function collectSubmitSuccessSignalsInPage(successReSource, headingReSource, neg
             return false;
         }
     };
-    // Ashby / modern ATS often use role=radio instead of input[type=radio].
     const radios = [...document.querySelectorAll(
         'input[type="radio"], [role="radio"], [aria-checked][role="radio"], button[aria-checked]'
     )].filter(isVisible);
@@ -1215,39 +1154,14 @@ function collectSubmitSuccessSignalsInPage(successReSource, headingReSource, neg
         const t = `${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase();
         return /submit|apply|send application|finish application/.test(t) || el.type === 'submit';
     });
-    const headingHit = headings.some((h) => headingRe.test(h));
-    const bodyHit = successRe.test(text);
-    if (!bodyHit && !headingHit) {
-        return { ok: false, reason: 'no_match', sample: text.slice(0, 160) };
-    }
-    const strongThankYou = /thank\s*you\s+for\s+(?:your\s+)?application|application\s+submitted|we\s*(?:['’]?ve|have)\s+received\s+(?:your\s+)?application|your\s+application\s+has\s+been\s+routed/i.test(text)
-        || headings.some((h) => /thank\s*you\s+for\s+(?:your\s+)?application|application\s+submitted/i.test(h));
-    if (strongThankYou) {
-        return {
-            ok: true,
-            reason: 'strong_thank_you',
-            sample: text.slice(0, 160),
-            radioCount: radios.length,
-            visibleFieldCount: fields.length
-        };
-    }
-    const formOpen = (radios.length >= 2 || fields.length >= 2) && hasSubmitControl;
-    if (formOpen || (radios.length >= 2 && hasSubmitControl)) {
-        return {
-            ok: false,
-            reason: 'form_still_open',
-            sample: text.slice(0, 160),
-            radioCount: radios.length,
-            visibleFieldCount: fields.length,
-            emptyVisibleFields
-        };
-    }
     return {
-        ok: true,
-        reason: bodyHit ? 'body' : 'heading',
-        sample: text.slice(0, 160),
+        text,
+        headings,
         radioCount: radios.length,
-        visibleFieldCount: fields.length
+        visibleFieldCount: fields.length,
+        hasSubmitControl,
+        emptyVisibleFields,
+        hasValidationErrors: !!(negativeRe && negativeRe.test(text))
     };
 }
 
@@ -1337,17 +1251,18 @@ export async function scrollSuccessMessageIntoView(tabId) {
     }
 }
 
+async function collectSubmitSuccessSignalsAllFrames(tabId) {
+    const injected = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: collectSubmitSuccessSignalsInPage,
+        args: [SUCCESS_NEGATIVE_RE.source]
+    });
+    return (injected || []).map((row) => row?.result).filter(Boolean);
+}
+
 export async function detectSubmitSuccess(tabId) {
-    try {
-        const [{ result }] = await chrome.scripting.executeScript({
-            target: { tabId },
-            func: collectSubmitSuccessSignalsInPage,
-            args: [SUCCESS_RE.source, SUCCESS_HEADING_RE.source, SUCCESS_NEGATIVE_RE.source]
-        });
-        return !!result?.ok;
-    } catch {
-        return false;
-    }
+    const detail = await detectSubmitSuccessDetail(tabId);
+    return !!detail?.ok;
 }
 
 /**
@@ -1397,15 +1312,51 @@ export async function pollDetectSubmitSuccess(tabId, {
 /** Full detect payload (reason) for Update state / revoke false SUCCESS. */
 async function detectSubmitSuccessDetail(tabId) {
     try {
-        const [{ result }] = await chrome.scripting.executeScript({
-            target: { tabId },
-            func: collectSubmitSuccessSignalsInPage,
-            args: [SUCCESS_RE.source, SUCCESS_HEADING_RE.source, SUCCESS_NEGATIVE_RE.source]
-        });
-        return result || { ok: false, reason: 'no_result' };
+        const frames = await collectSubmitSuccessSignalsAllFrames(tabId);
+        return pickSubmitSuccessResult(frames);
     } catch (err) {
         return { ok: false, reason: err?.message || 'detect_failed' };
     }
+}
+
+/**
+ * If the apply tab already shows a thank-you page, mark APPLIED and store proof.
+ * Used after re-autofill / leftover fill so a real submit is not left as incomplete.
+ */
+export async function finalizeSubmitSuccessIfDetected(tabId, applicationId, via = 'detect') {
+    if (!tabId) return { ok: false, reason: 'no_tab' };
+    const poll = await pollDetectSubmitSuccess(tabId, { totalMs: 6000, gapMs: 700 });
+    if (!poll.ok) return poll;
+    if (applicationId) {
+        try { await markApplicationApplied(applicationId); } catch (_) { /* ignore */ }
+        await logCourseEvent(applicationId, 'submit_success_detected', {
+            via,
+            reason: poll.reason,
+            attempts: poll.attempts,
+            elapsedMs: poll.elapsedMs
+        }).catch(() => {});
+        await logCourseEvent(applicationId, 'marked_applied', {
+            via,
+            success: true,
+            reason: poll.reason
+        }).catch(() => {});
+        await uploadSuccessProofScreenshot(applicationId, tabId, {
+            stayInApp: true,
+            waitMs: 600
+        }).catch(() =>
+            uploadScreenshot(applicationId, 'after_submit', tabId, {
+                settleMs: 200,
+                stayInApp: true
+            })
+        );
+    }
+    await setQueueState({
+        lastStatusEvent: 'submit_success_detected',
+        lastStatusAt: Date.now(),
+        lastStatusMeta: { via, success: true, detectReason: poll.reason },
+        missingRequired: []
+    }).catch(() => {});
+    return { ...poll, ok: true };
 }
 
 /** Clear leftover green false-SUCCESS outlines on the apply tab. */

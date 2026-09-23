@@ -66,6 +66,7 @@ import {
     detectSubmitSuccess,
     detectSubmitSuccessDetail,
     pollDetectSubmitSuccess,
+    finalizeSubmitSuccessIfDetected,
     clearFalseSuccessOutlines,
     uploadSuccessProofScreenshot,
     detectCaptchaOrLogin,
@@ -4698,6 +4699,8 @@ async function processReadyQueue(opts = {}) {
                         await refocusStayInAppHome();
                     }
                 }
+            } else if ((await finalizeSubmitSuccessIfDetected(opened.tabId, item.id, 'after_fill_late').catch(() => null))?.ok) {
+                processed += 1;
             } else if (fillIncomplete) {
                 await ensureApplyFormVisible(opened.tabId);
                 await uploadScreenshot(item.id, 'after_fill_done', opened.tabId, { stayInApp: true });
@@ -9612,17 +9615,23 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                     reopened
                 }).catch(() => {});
                 await uploadScreenshot(appId, 'reautofill_after', tabId, { stayInApp: true }).catch(() => {});
+                const confirmed = await finalizeSubmitSuccessIfDetected(tabId, appId, 'reautofill').catch(() => null);
+                const applied = !!confirmed?.ok;
                 const prevStatus = String(st?.status || '');
                 await setQueueState({
                     reautofilling: false,
-                    status: /awaiting_next/i.test(prevStatus) ? 'awaiting_next' : 'running',
-                    currentTabId: tabId
+                    status: applied
+                        ? 'running'
+                        : (/awaiting_next/i.test(prevStatus) ? 'awaiting_next' : 'running'),
+                    currentTabId: tabId,
+                    ...(applied ? { missingRequired: [] } : {})
                 });
                 sendResponse({
                     ok: true,
                     filled: result?.filled || 0,
                     submitClicked: !!result?.submitClicked,
-                    incomplete: !!result?.incomplete,
+                    incomplete: applied ? false : !!result?.incomplete,
+                    success: applied,
                     tabId,
                     applicationId: appId,
                     reopened
@@ -9826,9 +9835,10 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                         incomplete: incomplete == null ? undefined : !!incomplete,
                         requiredOk,
                         requiredTotal,
-                        missing,
+                        missing: success ? [] : missing,
                         detectReason: detect?.reason || null
                     },
+                    missingRequired: success ? [] : (missing || []),
                     liveShotAt: Date.now(),
                     currentTabId: tabId,
                     currentId: appId || st?.currentId,
