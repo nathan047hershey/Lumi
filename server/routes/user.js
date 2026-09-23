@@ -2400,10 +2400,78 @@ router.delete('/interview-requests/:applicationId', (req, res) => {
 });
 
 // GET /api/user/resumes/:filename - Download resume
-router.get('/resumes/:filename', (req, res) => {
+router.get('/resumes/:filename', async (req, res) => {
     try {
         const { filename } = req.params;
-        const filepath = path.join(resumesDir, filename);
+        const safeName = path.basename(String(filename || ''));
+        if (!safeName || safeName !== String(filename)) {
+            return res.status(400).json({ error: 'Invalid resume filename' });
+        }
+        let filepath = path.join(resumesDir, safeName);
+
+        if (!fs.existsSync(filepath)) {
+            // Vercel /tmp loses generated files across instances — rebuild from draft_html.
+            try {
+                const {
+                    buildResumeDocx,
+                    buildUploadResumeFilename,
+                    writeReadyResumeCopy
+                } = require('../services/resumeService');
+                const { RESUMES_READY_DIR } = require('../config/paths');
+                let app = getOne(
+                    `SELECT * FROM job_applications WHERE resume_filename = ? ORDER BY id DESC LIMIT 1`,
+                    [safeName]
+                );
+                if (!app) {
+                    const readyKey = String(safeName).replace(/\.docx$/i, '').toLowerCase();
+                    if (userIsAdmin(req)) {
+                        app = getOne(
+                            `SELECT a.* FROM job_applications a
+                             JOIN candidate_profiles p ON p.id = a.profile_id
+                             WHERE a.draft_html IS NOT NULL AND TRIM(a.draft_html) != ''
+                               AND (
+                                 LOWER(a.resume_filename) = LOWER(?)
+                                 OR INSTR(LOWER(a.resume_filename), ?) > 0
+                                 OR LOWER(REPLACE(p.first_name,' ','_') || '_' || REPLACE(p.last_name,' ','_') || '.docx') = LOWER(?)
+                               )
+                             ORDER BY a.id DESC LIMIT 1`,
+                            [safeName, readyKey, safeName]
+                        );
+                    } else {
+                        app = getOne(
+                            `SELECT a.* FROM job_applications a
+                             JOIN user_profile_assignments ua ON ua.profile_id = a.profile_id
+                             JOIN candidate_profiles p ON p.id = a.profile_id
+                             WHERE ua.user_id = ?
+                               AND a.draft_html IS NOT NULL AND TRIM(a.draft_html) != ''
+                               AND (
+                                 LOWER(a.resume_filename) = LOWER(?)
+                                 OR INSTR(LOWER(a.resume_filename), ?) > 0
+                                 OR LOWER(REPLACE(p.first_name,' ','_') || '_' || REPLACE(p.last_name,' ','_') || '.docx') = LOWER(?)
+                               )
+                             ORDER BY a.id DESC LIMIT 1`,
+                            [req.user.id, safeName, readyKey, safeName]
+                        );
+                    }
+                }
+                const profile = app?.profile_id ? getAccessibleProfile(app.profile_id, req) : null;
+                const readyName = profile ? buildUploadResumeFilename(profile, '.docx') : '';
+                const readyPath = readyName ? path.join(RESUMES_READY_DIR, readyName) : '';
+                if (readyPath && fs.existsSync(readyPath)) {
+                    filepath = readyPath;
+                } else if (app?.draft_html && String(app.draft_html).trim() && profile) {
+                    const buf = await buildResumeDocx({
+                        resumeHtml: app.draft_html,
+                        profile
+                    });
+                    fs.mkdirSync(resumesDir, { recursive: true });
+                    fs.writeFileSync(filepath, buf);
+                    writeReadyResumeCopy(buf, profile).catch(() => {});
+                }
+            } catch (rebuildErr) {
+                console.warn('[resumes] rebuild skipped:', rebuildErr?.message || rebuildErr);
+            }
+        }
 
         if (!fs.existsSync(filepath)) {
             return res.status(404).json({ error: 'Resume not found' });

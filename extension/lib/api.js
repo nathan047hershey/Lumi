@@ -491,10 +491,33 @@ export async function fetchResumeBase64(apiBaseUrl, filename, token, opts = {}) 
     const settings = await getSettings();
     const base = normalizeBaseUrl(apiBaseUrl || settings.apiBaseUrl);
     const auth = token ?? settings.token;
-    const res = await fetch(`${base}/resumes/${encodeURIComponent(filename)}`, {
-        headers: auth ? { Authorization: `Bearer ${auth}` } : {}
-    });
-    if (!res.ok) throw new Error(`Failed to download resume (${res.status})`);
+    const headers = auth ? { Authorization: `Bearer ${auth}` } : {};
+    const names = [...new Set(
+        [filename, opts.uploadFilename, opts.profile ? buildUploadResumeFilename(opts.profile) : '']
+            .map((n) => String(n || '').trim())
+            .filter(Boolean)
+    )];
+    // /user/resumes rebuilds a missing Vercel /tmp file from draft_html.
+    // /resumes is the local Express static mount — keep as fallback.
+    const urls = [];
+    for (const name of names) {
+        const enc = encodeURIComponent(name);
+        urls.push(`${base}/user/resumes/${enc}`);
+        urls.push(`${base}/resumes/${enc}`);
+    }
+    let res = null;
+    let lastStatus = 0;
+    for (const url of urls) {
+        try {
+            const attempt = await fetch(url, { headers });
+            if (attempt.ok) {
+                res = attempt;
+                break;
+            }
+            lastStatus = attempt.status;
+        } catch (_) { /* try next */ }
+    }
+    if (!res) throw new Error(`Failed to download resume (${lastStatus || 404})`);
     const buf = await res.arrayBuffer();
     const bytes = new Uint8Array(buf);
     let binary = '';
@@ -551,7 +574,7 @@ export function inferCoreSkillsFromJd(jobDescription, profileTechstacks = []) {
 
 export function resumeDownloadUrl(apiBaseUrl, filename) {
     if (!filename) return null;
-    return `${normalizeBaseUrl(apiBaseUrl)}/resumes/${encodeURIComponent(filename)}`;
+    return `${normalizeBaseUrl(apiBaseUrl)}/user/resumes/${encodeURIComponent(filename)}`;
 }
 
 /** Outlook inbox — wait for Greenhouse email security code (~10m lifetime). */

@@ -1074,6 +1074,39 @@ async function answerQuestionsViaGenerateAssistant({
     return waitPromise;
 }
 
+function aiAnswersCacheKey({ applicationId, url, profileId }) {
+    if (applicationId) return `app:${applicationId}`;
+    return `url:${String(url || '').split('?')[0]}:${profileId || ''}`;
+}
+
+async function getCachedAiAnswers(key) {
+    if (!key) return null;
+    try {
+        const { lumiAiAnswersCache } = await chrome.storage.session.get('lumiAiAnswersCache');
+        const row = lumiAiAnswersCache?.[key];
+        if (!row?.answers?.length) return null;
+        if (Date.now() - Number(row.at || 0) > 6 * 60 * 60 * 1000) return null;
+        return row;
+    } catch {
+        return null;
+    }
+}
+
+async function setCachedAiAnswers(key, payload) {
+    if (!key || !payload?.answers?.length) return;
+    try {
+        const { lumiAiAnswersCache } = await chrome.storage.session.get('lumiAiAnswersCache');
+        const cache = lumiAiAnswersCache && typeof lumiAiAnswersCache === 'object' ? lumiAiAnswersCache : {};
+        cache[key] = {
+            answers: payload.answers,
+            skipped: payload.skipped || [],
+            profile: payload.profile || {},
+            at: Date.now()
+        };
+        await chrome.storage.session.set({ lumiAiAnswersCache: cache });
+    } catch (_) { /* ignore */ }
+}
+
 async function autofillAfterGenerate({
     tabId,
     settings,
@@ -1082,7 +1115,10 @@ async function autofillAfterGenerate({
     result,
     phase = 'full',
     answerMode = 'interactive',
-    softAnswers = false
+    softAnswers = false,
+    fromPanel = false,
+    reuseAnswers = true,
+    gapFillOnly = false
 }) {
     const t0 = Date.now();
     await setWorkProgress({
@@ -1216,7 +1252,9 @@ async function autofillAfterGenerate({
     let resumeFile = null;
     let coverLetterFile = null;
     if (phase === 'full' || phase === 'profile') {
-        notify('Lumi', 'Autofill — saved profile (no AI)…').catch(() => {});
+        notify('Lumi', gapFillOnly
+            ? 'Continue — empty fields + CV only (no extra AI)…'
+            : 'Autofill — saved profile (no AI)…').catch(() => {});
         fillResult = await fillAndUpload(tabId, {
             fields: form.fields || [],
             answers: [],
@@ -1226,11 +1264,12 @@ async function autofillAfterGenerate({
             autoSubmit: false,
             skipFiles: true,
             skipQuestions: true,
-            profileOnly: true
+            profileOnly: true,
+            profileGapFill: !!gapFillOnly
         });
 
         // Always gap-fill: first pass often hits a partial SPA mount (name+email only).
-        {
+        if (!gapFillOnly) {
             const filled1 = Number(fillResult?.fillStats?.filled || 0);
             await setWorkProgress({
                 phase: 'profile',
@@ -1288,6 +1327,40 @@ async function autofillAfterGenerate({
                     console.warn('[bidder] resume download for upload failed', err);
                 }
             }
+            if (!resumeFile?.base64 && profile) {
+                try {
+                    const readyName = buildUploadResumeFilename(profile) || '';
+                    if (readyName && readyName !== filename) {
+                        resumeFile = await fetchResumeBase64(settings.apiBaseUrl, readyName, settings.token, {
+                            profile,
+                            uploadFilename: readyName
+                        });
+                    }
+                } catch (err) {
+                    console.warn('[bidder] ready-name resume download failed', err);
+                }
+            }
+            if (resumeFile?.base64) {
+                resumeFile.profile = profile;
+                resumeFile.applicationId = result.application_id || result.applicationId || null;
+                const saved = await downloadResumeToCvLibrary(
+                    resumeFile,
+                    profile,
+                    resumeFile.applicationId
+                ).catch((err) => {
+                    console.warn('[bidder] local CV library download', err);
+                    return null;
+                });
+                if (saved?.path) {
+                    resumeFile.localPath = saved.path;
+                    resumeFile.localRelPath = saved.relPath;
+                }
+            } else {
+                await toastActiveTab(
+                    'CV download failed — Generate CV first, then Continue fill',
+                    'error'
+                ).catch(() => {});
+            }
             try {
                 coverLetterFile = await maybePrepareCoverLetterFile({
                     form,
@@ -1302,7 +1375,7 @@ async function autofillAfterGenerate({
             } catch (_) { /* ignore */ }
             if (!(resumeFile?.base64 || coverLetterFile?.base64)) return null;
             try {
-                return await fillAndUpload(tabId, {
+                const isolated = await fillAndUpload(tabId, {
                     uploadOnly: true,
                     filename: resumeFile?.filename,
                     base64: resumeFile?.base64,
@@ -1310,8 +1383,37 @@ async function autofillAfterGenerate({
                     resume: resumeFile,
                     coverLetter: coverLetterFile
                 });
+                let uploaded = Number(isolated?.uploadStats?.uploadedResume || isolated?.uploadStats?.uploaded || 0);
+                if (resumeFile?.base64) {
+                    const trusted = await setFileInputViaDebugger(tabId, resumeFile).catch(() => null);
+                    if (trusted?.ok) uploaded = Math.max(uploaded, 1);
+                    if (trusted?.ok || isolated) {
+                        isolated.uploadStats = {
+                            ...(isolated.uploadStats || {}),
+                            uploaded,
+                            uploadedResume: Math.max(Number(isolated.uploadStats?.uploadedResume || 0), uploaded)
+                        };
+                    }
+                    if (!uploaded) {
+                        await toastActiveTab(
+                            resumeFile.localRelPath
+                                ? `CV saved to ${resumeFile.localRelPath} — click Attach if the form is still empty`
+                                : 'CV fetched but not attached — click Attach on Resume/CV',
+                            'error'
+                        ).catch(() => {});
+                    } else {
+                        await toastActiveTab(`CV attached (${resumeFile.filename})`, 'ok').catch(() => {});
+                    }
+                }
+                return isolated;
             } catch (err) {
                 console.warn('[bidder] post-profile resume upload', err);
+                if (resumeFile?.base64) {
+                    const trusted = await setFileInputViaDebugger(tabId, resumeFile).catch(() => null);
+                    if (trusted?.ok) {
+                        return { uploadStats: { uploaded: 1, uploadedResume: 1 } };
+                    }
+                }
                 return null;
             }
         };
@@ -1378,32 +1480,12 @@ async function autofillAfterGenerate({
             || result.resume_filename
             || result.application_id
         );
-        if (!hasCv) {
-            if (softAnswers || phase === 'full') {
-                await toastActiveTab(
-                    `Profile filled — ${writtenQuestions.length} question(s) need a CV. Generate CV, then Autofill again for AI answers.`,
-                    'info'
-                ).catch(() => {});
-                await notify(
-                    'Lumi',
-                    `${writtenQuestions.length} question(s) left — Generate CV so Autofill can call the answers API`
-                );
-            } else {
-                throw new Error('Generate a CV first (Alt+Shift+G), then use Answer questions');
-            }
-        } else {
-        await notify(
-            'Lumi',
-            answerMode === 'auto'
-                ? `Drafting ${writtenQuestions.length} answer(s) with Groq…`
-                : `${writtenQuestions.length} question(s) → Answer on Generate`
-        );
-        await setWorkProgress({
-            phase: 'groq',
-            label: `Groq drafting ${writtenQuestions.length} answer(s)…`,
-            questionCount: writtenQuestions.length,
-            elapsedMs: Date.now() - t0
-        }).catch(() => {});
+        const cacheKey = aiAnswersCacheKey({
+            applicationId: result.application_id || result.applicationId,
+            url: job.url,
+            profileId: profile.id
+        });
+        const cached = reuseAnswers ? await getCachedAiAnswers(cacheKey) : null;
 
         const applyAiAnswers = async (payload) => {
             answersPayload = {
@@ -1462,8 +1544,36 @@ async function autofillAfterGenerate({
         };
 
         try {
-            if (answerMode === 'auto') {
-                // Fast path: API directly (no Generate-tab bridge / 10min wait).
+            if (gapFillOnly) {
+                // Continue fill: attach CV + empty profile only. Never spend another API key.
+                await notify('Lumi', 'Continue — empty fields + CV only (no extra AI)');
+            } else if (cached?.answers?.length) {
+                await applyAiAnswers(cached);
+                await toastActiveTab(
+                    `Reused ${cached.answers.length} saved answer(s) — no extra API call`,
+                    'ok'
+                ).catch(() => {});
+            } else if (!hasCv) {
+                if (softAnswers || phase === 'full') {
+                    await toastActiveTab(
+                        `Profile filled — ${writtenQuestions.length} question(s) need a CV. Generate CV, then Autofill again for AI answers.`,
+                        'info'
+                    ).catch(() => {});
+                    await notify(
+                        'Lumi',
+                        `${writtenQuestions.length} question(s) left — Generate CV so Autofill can call the answers API`
+                    );
+                } else {
+                    throw new Error('Generate a CV first (Alt+Shift+G), then use Answer questions');
+                }
+            } else if (answerMode === 'auto') {
+                await notify('Lumi', `Drafting ${writtenQuestions.length} answer(s) with Groq…`);
+                await setWorkProgress({
+                    phase: 'groq',
+                    label: `Groq drafting ${writtenQuestions.length} answer(s)…`,
+                    questionCount: writtenQuestions.length,
+                    elapsedMs: Date.now() - t0
+                }).catch(() => {});
                 const apiPayload = await generateAnswers({
                     profile_id: profile.id,
                     job_description: job.description || job.job_description || '',
@@ -1474,8 +1584,10 @@ async function autofillAfterGenerate({
                     application_id: result.application_id || result.applicationId || null,
                     answers_provider: 'groq'
                 });
+                await setCachedAiAnswers(cacheKey, apiPayload);
                 await applyAiAnswers(apiPayload);
             } else {
+                await notify('Lumi', `${writtenQuestions.length} question(s) → Answer on Generate`);
                 const viaAssistant = await answerQuestionsViaGenerateAssistant({
                     settings: await getSettings(),
                     profile,
@@ -1486,7 +1598,6 @@ async function autofillAfterGenerate({
                 });
                 await applyAiAnswers(viaAssistant);
             }
-            // Capture for popup review (Simplify-style).
             try {
                 const latestAnswers = answersPayload?.answers || [];
                 await saveCapturedQuestionsPack({
@@ -1499,6 +1610,9 @@ async function autofillAfterGenerate({
                 });
             } catch (_) { /* ignore */ }
         } catch (err) {
+            if (gapFillOnly) {
+                console.warn('[bidder] continue fill answers skipped', err);
+            } else {
             console.warn('[bidder] answer draft failed — trying API batch', err);
             try {
                 const apiPayload = await generateAnswers({
@@ -1528,8 +1642,8 @@ async function autofillAfterGenerate({
                     reason: 'answers_api_failed'
                 }));
             }
+            }
         }
-        } // end hasCv else — AI answers via API
     } else if (phase === 'answers' && writtenQuestions.length === 0) {
         await notify('Lumi', 'No written questions found on this form');
     }
@@ -2518,7 +2632,10 @@ async function runFillOnly(opts = {}) {
             result,
             phase,
             answerMode: opts.answerMode || 'interactive',
-            softAnswers: !!opts.softAnswers
+            softAnswers: !!opts.softAnswers,
+            fromPanel: !!opts.fromPanel,
+            reuseAnswers: opts.reuseAnswers !== false,
+            gapFillOnly: !!opts.gapFillOnly
         });
 
         await rememberCvForJob({
@@ -6016,6 +6133,21 @@ async function setAutofillPanelStatus(tabId, status, progress = null) {
 
 async function generateBidderAnswersForItem(item, app, questions, engineLabel, budgetMs = 50000) {
     if (!questions.length) return [];
+    const cacheKey = aiAnswersCacheKey({
+        applicationId: item.id || app.id,
+        url: item.open_url || item.job_url || app.job_url,
+        profileId: app.profile_id || item.profile_id
+    });
+    const cached = await getCachedAiAnswers(cacheKey);
+    if (cached?.answers?.length) {
+        await logCourseEvent(item.id, 'bidder_answers_reused', {
+            engine: engineLabel,
+            count: cached.answers.length,
+            questions: questions.length,
+            cached: true
+        }).catch(() => {});
+        return cached.answers;
+    }
     const answersStartedAt = Date.now();
     const requested = Number(budgetMs);
     // Always give Groq enough time — empty essays are worse than a few extra seconds.
@@ -6067,6 +6199,7 @@ async function generateBidderAnswersForItem(item, app, questions, engineLabel, b
             ]);
         }
         const answers = brain.answers || [];
+        await setCachedAiAnswers(cacheKey, { answers, skipped: brain.skipped || [], profile: brain.profile || {} });
         await logCourseEvent(item.id, brain.reused && !brain.generated_count
             ? 'bidder_answers_reused'
             : 'bidder_answers_ready', {
@@ -8079,7 +8212,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             answerMode: 'auto',
             manualAutofill: true,
             softSession: true,
-            fromPanel: true
+            fromPanel: true,
+            reuseAnswers: true,
+            gapFillOnly: true
         })
             .then((result) => sendResponse({ ok: true, result }))
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));

@@ -7338,8 +7338,8 @@
         });
 
         const btnContinue = mkBtn('Continue fill', false, () => {
-            api.setBusy(true, 'Continuing fill (new questions)…', 12);
-            showToast('Continue fill — catching new / empty fields…', 'info');
+            api.setBusy(true, 'Continue — CV + empty fields (no extra AI)…', 12);
+            showToast('Continue fill — download CV + empty fields only (no extra API)…', 'info');
             safeRuntimeSend({ type: 'RUN_CONTINUE_FILL' }, (res) => {
                 if (!res?.ok) {
                     api.setBusy(false, res?.error || 'Continue failed', 0);

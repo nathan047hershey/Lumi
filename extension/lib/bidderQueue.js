@@ -572,9 +572,15 @@ async function writeBlobToDownloads(file, relPath) {
         const blob = new Blob([bytes], {
             type: file.mimeType || 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
         });
-        objectUrl = URL.createObjectURL(blob);
+        let href = '';
+        try {
+            objectUrl = URL.createObjectURL(blob);
+            href = objectUrl;
+        } catch (_) {
+            href = `data:${blob.type};base64,${base64}`;
+        }
         const downloadId = await chrome.downloads.download({
-            url: objectUrl,
+            url: href,
             filename,
             saveAs: false,
             conflictAction: 'uniquify'
@@ -643,7 +649,10 @@ export async function downloadResumeToCvLibrary(file, profile = {}, applicationI
         return null;
     });
     if (chosen?.ok) {
-        const attachPath = await writeBlobToDownloads(file, `lumi-upload/${filename}`).catch(() => '');
+        let attachPath = await writeBlobToDownloads(file, `lumi-upload/${filename}`).catch(() => '');
+        if (!attachPath) {
+            attachPath = await writeBlobToDownloads(file, buildLocalCvLibraryRelPath(profile, filename)).catch(() => '');
+        }
         const saved = {
             ok: true,
             path: attachPath || '',
