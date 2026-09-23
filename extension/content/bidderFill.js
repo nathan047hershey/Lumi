@@ -845,7 +845,9 @@
     }
 
     function collectFields() {
-        const els = [...document.querySelectorAll('input, textarea, select')];
+        const els = [...document.querySelectorAll(
+            'input, textarea, select, [role="combobox"]'
+        )];
         const fields = [];
         for (const el of els) {
             if (!visible(el)) continue;
@@ -2583,16 +2585,10 @@
             'first_name', 'last_name', 'full_name', 'email', 'phone',
             'city', 'state', 'country', 'linkedin', 'github', 'todays_date',
             'disability_status', 'veteran_status', 'race_ethnicity',
-            'hispanic_latino', 'gender',
-            'how_heard', 'notice_period', 'earliest_start_date',
-            'willing_to_travel', 'website_url', 'over_18', 'willing_to_relocate',
-            'skill_experience', 'education_start_month', 'education_start_year',
-            'education_end_month', 'education_end_year', 'years_of_experience',
-            'requires_sponsorship', 'previous_employer_no', 'employee_relationship_no',
-            'non_compete_no', 'work_authorization', 'us_citizen_yes', 'us_person_yes',
-            'export_control_us_citizen', 'sanctioned_countries_no'
+            'hispanic_latino', 'gender'
         ]);
-        // Prefer answers API when present — except hard locks above.
+        // Prefer generated answers for screening / essay fields.
+        // Identity + EEO stay on the profile; hard locks above still win.
         if (!PROFILE_ONLY.has(kind)) {
             const fromAnswers = lookupAnswer(answersById, answersByLabel, field);
             if (fromAnswers) {
@@ -3340,6 +3336,11 @@
         }
         if (msg?.type === 'BIDDER_ENGINE_COLLECT') {
             try {
+                try {
+                    if (window !== window.top) return false;
+                } catch (_) {
+                    return false;
+                }
                 const ats = detectAts();
                 if (ats !== 'greenhouse') {
                     // Soft handoff — background uses fill.js for Oracle/Workday/etc.

@@ -5955,7 +5955,48 @@ function mapBidderQuestions(rawQuestions) {
         options: Array.isArray(q.options)
             ? q.options.map((o) => (typeof o === 'string' ? o : (o?.label || o?.value || ''))).filter(Boolean)
             : undefined
-    }));
+    })).filter((q) => q.label || q.id);
+}
+
+function mergeBidderQuestions(...lists) {
+    const out = [];
+    const seen = new Set();
+    for (const list of lists) {
+        for (const q of list || []) {
+            const lab = String(q.label || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            const key = `${String(q.id || '')}::${lab}`;
+            if (!lab && !q.id) continue;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            out.push(q);
+        }
+    }
+    return out;
+}
+
+async function loadBidderQuestions(tabId, { ats, applyUrl, tabUrl, formSnap } = {}) {
+    let collected = null;
+    try {
+        collected = await sendTabMessage(tabId, { type: 'BIDDER_ENGINE_COLLECT' });
+    } catch (_) {
+        collected = null;
+    }
+    let snap = formSnap || null;
+    const needFormSnap = !snap || !Array.isArray(snap.questions) || !snap.questions.length;
+    if (needFormSnap) {
+        snap = await collectForm(tabId).catch(() => snap);
+    }
+    const engineQs = mapBidderQuestions(collected?.questions || []);
+    const formQs = mapBidderQuestions(snap?.questions || []);
+    const questions = mergeBidderQuestions(engineQs, formQs);
+    const ghUrl = /greenhouse\.io/i.test(String(applyUrl || tabUrl || ''));
+    const softHandoff = !!(
+        collected
+        && !collected.ok
+        && (collected.useAutofill || /greenhouse[_-]?only|use_autofill/i.test(String(collected.reason || '')))
+        && !ghUrl
+    );
+    return { collected, questions, formSnap: snap, softHandoff };
 }
 
 async function setAutofillPanelStatus(tabId, status, progress = null) {
@@ -5971,40 +6012,55 @@ async function setAutofillPanelStatus(tabId, status, progress = null) {
 async function generateBidderAnswersForItem(item, app, questions, engineLabel, budgetMs = 50000) {
     if (!questions.length) return [];
     const answersStartedAt = Date.now();
-    // Never force a 20–25s AI wait when the bid wall-clock budget is nearly gone.
     const requested = Number(budgetMs);
+    // Always give Groq enough time — empty essays are worse than a few extra seconds.
     const ANSWERS_BUDGET_MS = Math.min(
-        50000,
-        Math.max(0, Number.isFinite(requested) ? requested : 50000)
+        60000,
+        Math.max(25000, Number.isFinite(requested) ? requested : 50000)
     );
-    if (ANSWERS_BUDGET_MS < 8000) {
-        await logCourseEvent(item.id, 'ai_skipped_budget', {
-            fresh: questions.length,
+    const profileId = app.profile_id || item.profile_id;
+    if (!profileId) {
+        await logCourseEvent(item.id, 'ai_failed', {
+            error: 'missing_profile_id',
+            engine: engineLabel,
             questions: questions.length,
-            duration_ms: Date.now() - answersStartedAt,
-            remainingMs: ANSWERS_BUDGET_MS,
-            reason: 'answers_budget_too_low'
+            duration_ms: 0
         }).catch(() => {});
         return [];
     }
+    const payload = {
+        profile_id: profileId,
+        job_description: app.job_description || '',
+        resume_html: app.draft_html || '',
+        questions,
+        company_name: app.company_name || item.company_name || '',
+        job_role: app.job_role || item.job_role || '',
+        application_id: item.id
+    };
     try {
-        const brain = await Promise.race([
-            generateBidderAnswers({
-                profile_id: app.profile_id || item.profile_id,
-                job_description: app.job_description || '',
-                resume_html: app.draft_html || '',
-                questions,
-                company_name: app.company_name || item.company_name || '',
-                job_role: app.job_role || item.job_role || '',
-                application_id: item.id
-            }),
-            new Promise((_, reject) => {
-                setTimeout(
-                    () => reject(new Error(`AI answers timed out after ${Math.round(ANSWERS_BUDGET_MS / 1000)}s — continuing with profile fill`)),
-                    ANSWERS_BUDGET_MS
-                );
-            })
-        ]);
+        let brain = null;
+        try {
+            brain = await Promise.race([
+                generateBidderAnswers(payload),
+                new Promise((_, reject) => {
+                    setTimeout(
+                        () => reject(new Error(`AI answers timed out after ${Math.round(ANSWERS_BUDGET_MS / 1000)}s — continuing with profile fill`)),
+                        ANSWERS_BUDGET_MS
+                    );
+                })
+            ]);
+        } catch (brainErr) {
+            console.warn('[bidder] brain answers failed; trying generate-answers', brainErr);
+            brain = await Promise.race([
+                generateAnswers({ ...payload, answers_provider: 'groq' }),
+                new Promise((_, reject) => {
+                    setTimeout(
+                        () => reject(brainErr),
+                        Math.max(12000, ANSWERS_BUDGET_MS - (Date.now() - answersStartedAt))
+                    );
+                })
+            ]);
+        }
         const answers = brain.answers || [];
         await logCourseEvent(item.id, brain.reused && !brain.generated_count
             ? 'bidder_answers_reused'
@@ -7101,33 +7157,57 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
 
     let questions = [];
     let useGreenhouseEngine = ats === 'greenhouse';
-    if (useGreenhouseEngine) {
-        // Re-bind after CV/API work — tab may have navigated and dropped listeners.
-        const collected = await sendTabMessage(tabId, { type: 'BIDDER_ENGINE_COLLECT' });
-        const softHandoff = /greenhouse[_-]?only|use_autofill/i.test(
-            String(collected?.reason || '')
-        ) || collected?.useAutofill;
-        if (!collected?.ok && softHandoff) {
-            useGreenhouseEngine = false;
-            ats = resolveBidderAts({ applyUrl, tabUrl, formAts: collected?.ats || formSnap?.ats || 'generic' });
-            engineLabel = engineLabelForAts(ats);
-            if (!formSnap) formSnap = await collectForm(tabId).catch(() => null);
-            questions = mapBidderQuestions(formSnap?.questions || []);
-            await logCourseEvent(item.id, 'autofill_engine', {
-                ats,
-                engine: engineLabel,
-                fallback: 'greenhouse_collect_handoff'
-            });
-        } else if (!collected?.ok) {
-            throw new Error(collected?.reason || collected?.error || 'Bidder collect failed');
-        } else {
-            questions = mapBidderQuestions(collected.questions || []);
-        }
+    const loadQs = async () => loadBidderQuestions(tabId, {
+        ats,
+        applyUrl,
+        tabUrl,
+        formSnap
+    });
+    let collectedPack = await loadQs().catch(() => ({
+        collected: null,
+        questions: [],
+        formSnap,
+        softHandoff: false
+    }));
+    if (collectedPack.formSnap) formSnap = collectedPack.formSnap;
+    questions = collectedPack.questions || [];
+    if (useGreenhouseEngine && collectedPack.softHandoff) {
+        useGreenhouseEngine = false;
+        ats = resolveBidderAts({
+            applyUrl,
+            tabUrl,
+            formAts: collectedPack.collected?.ats || formSnap?.ats || 'generic'
+        });
+        engineLabel = engineLabelForAts(ats);
+        await logCourseEvent(item.id, 'autofill_engine', {
+            ats,
+            engine: engineLabel,
+            fallback: 'greenhouse_collect_handoff'
+        });
+    } else if (
+        useGreenhouseEngine
+        && collectedPack.collected
+        && !collectedPack.collected.ok
+        && !collectedPack.softHandoff
+        && !questions.length
+    ) {
+        throw new Error(
+            collectedPack.collected?.reason
+            || collectedPack.collected?.error
+            || 'Bidder collect failed'
+        );
     }
     if (!useGreenhouseEngine && !questions.length) {
         if (!formSnap) formSnap = await collectForm(tabId).catch(() => null);
-        questions = mapBidderQuestions(formSnap?.questions || []);
+        questions = mergeBidderQuestions(questions, mapBidderQuestions(formSnap?.questions || []));
         await logCourseEvent(item.id, 'autofill_engine', { ats, engine: engineLabel });
+    }
+    if (!questions.length) {
+        await new Promise((r) => setTimeout(r, 1600));
+        await ensureApplyFormVisible(tabId).catch(() => {});
+        collectedPack = await loadQs().catch(() => collectedPack);
+        if (collectedPack.formSnap) formSnap = collectedPack.formSnap;
+        questions = collectedPack.questions || [];
     }
 
     await ensureApplyFormVisible(tabId);
@@ -7137,6 +7217,16 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             engine: engineLabel,
             questions: questions.length
         });
+        await setAppRunState(item.id, 'filling', {
+            tabId,
+            eventType: 'answers_generating',
+            requiredTotal: questions.length
+        }).catch(() => {});
+        await setQueueState({
+            lastStatusEvent: 'answers_generating',
+            lastStatusAt: Date.now(),
+            lastStatusMeta: { questions: questions.length, phase: 'answers' }
+        }).catch(() => {});
     }
     await setAutofillPanelStatus(
         tabId,
@@ -7146,33 +7236,19 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         35
     );
 
-    // Reserve wall-clock for verify/submit AFTER answers — never skip Groq then burn TIME LIMIT.
-    const ANSWERS_RESERVE_MS = 18000;
-    const MIN_ANSWERS_MS = 8000;
     const remainingTotal = Math.max(0, bidDeadline - Date.now());
-    const remainingForAi = remainingTotal - ANSWERS_RESERVE_MS;
     let answersPromise;
-    if (questions.length && remainingForAi < MIN_ANSWERS_MS) {
+    if (!questions.length) {
+        answersPromise = Promise.resolve([]);
         await logCourseEvent(item.id, 'ai_skipped_budget', {
-            fresh: questions.length,
-            questions: questions.length,
+            fresh: 0,
+            questions: 0,
             duration_ms: 0,
             remainingMs: remainingTotal,
-            reason: 'answers_budget_short_continue_fill'
+            reason: 'no_questions_collected'
         }).catch(() => {});
-        // Do not park here. Required gaps still get fallback answers in the engine.
-        const shortBudget = Math.max(4000, remainingForAi);
-        answersPromise = remainingForAi >= 4000
-            ? generateBidderAnswersForItem(item, app, questions, engineLabel, shortBudget)
-                .catch((err) => {
-                    console.warn('[bidder] answers failed; continue profile-only', err);
-                    return [];
-                })
-            : Promise.resolve([]);
-    } else if (!questions.length) {
-        answersPromise = Promise.resolve([]);
     } else {
-        const answersBudgetMs = Math.min(50000, Math.max(MIN_ANSWERS_MS, remainingForAi));
+        const answersBudgetMs = Math.max(25000, Math.min(60000, remainingTotal || 50000));
         answersPromise = generateBidderAnswersForItem(
             item,
             app,
