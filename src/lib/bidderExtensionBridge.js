@@ -229,3 +229,15 @@ export function listenForLumiBridgeReady(onReady) {
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
 }
+
+/** Live monitor: queue state pushed from extension storage (not a 3s poll). */
+export function listenForBidderQueuePush(onPush) {
+    if (typeof window === 'undefined' || typeof onPush !== 'function') return () => {};
+    const handler = (event) => {
+        if (event.source !== window) return;
+        if (event.data?.type !== 'JOB_APPLY_BIDDER_QUEUE_PUSH') return;
+        onPush(event.data.state || null);
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
+}

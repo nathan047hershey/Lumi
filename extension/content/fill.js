@@ -442,10 +442,20 @@
                 inputType: 'insertText',
                 data: str
             }));
+            // Pre-NEXT Greenhouse Remix listened for paste-style input, not only insertText.
+            el.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertFromPaste',
+                data: str
+            }));
         } catch (_) {
             el.dispatchEvent(new Event('input', { bubbles: true }));
         }
         el.dispatchEvent(new Event('change', { bubbles: true }));
+        try {
+            el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+        } catch (_) { /* ignore */ }
         try {
             const key = Object.keys(el).find((k) => k.startsWith('__reactProps$') || k.startsWith('__reactFiber$'));
             if (key && key.startsWith('__reactProps$')) {
@@ -6146,19 +6156,8 @@
     }
 
     function listFileInputsForUpload() {
-        return [...document.querySelectorAll('input[type="file"]')].filter((el) => {
-            if (!el || el.disabled) return false;
-            const wrap = dropzoneAncestor(el);
-            if (wrap) {
-                const cr = wrap.getBoundingClientRect();
-                if (cr.width > 4 && cr.height > 4) return true;
-            }
-            const label = nearbyUploadLabel(el);
-            if (/\b(r[ée]sum[eé]|cv|curriculum)\b/i.test(label) || /drop or select|\.docx|\.pdf/i.test(label)) {
-                return true;
-            }
-            return visible(el);
-        });
+        // Include hidden inputs. Greenhouse keeps #resume at display:none inside Attach.
+        return [...document.querySelectorAll('input[type="file"]')].filter((el) => el && !el.disabled);
     }
 
     function fileSlotLooksFilled(input) {
@@ -6496,18 +6495,32 @@
         });
         const file = new File([blob], filename, { type: blob.type });
         try {
+            // Do not click Attach — that opens the OS file picker and blocks Auto Bid.
+            const zone = dropzoneAncestor(input);
             const dt = new DataTransfer();
             dt.items.add(file);
-            input.files = dt.files;
+            const proto = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'files');
+            if (proto?.set) proto.set.call(input, dt.files);
+            else input.files = dt.files;
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.dispatchEvent(new Event('change', { bubbles: true }));
             try {
-                const zone = dropzoneAncestor(input);
                 if (zone && zone !== input) {
                     zone.dispatchEvent(new Event('change', { bubbles: true }));
+                    const drop = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
+                    zone.dispatchEvent(drop);
                 }
             } catch (_) { /* ignore */ }
-            return true;
+            try {
+                const key = Object.keys(input).find((k) => k.startsWith('__reactProps$'));
+                if (key) {
+                    const props = input[key];
+                    if (typeof props?.onChange === 'function') {
+                        props.onChange({ target: input, currentTarget: input, type: 'change' });
+                    }
+                }
+            } catch (_) { /* ignore */ }
+            return !!(input.files && input.files.length);
         } catch (err) {
             console.warn('[autofill] upload failed', err);
             return false;
@@ -6551,6 +6564,11 @@
         let skippedCoverLetter = 0;
 
         const inputs = listFileInputsForUpload();
+        // Greenhouse job-boards: #resume is display:none inside Attach — always try it first.
+        const ghResume = document.querySelector('input#resume, input[name="resume"], input[type="file"][id*="resume" i]');
+        if (ghResume && resume?.base64 && resume?.filename && !inputs.includes(ghResume)) {
+            inputs.unshift(ghResume);
+        }
         for (const input of inputs) {
             const kind = fileInputKind(input);
             if (kind === 'cover_letter') {
@@ -7249,22 +7267,14 @@
                 strategy: 'topup'
             };
         }
-        let fields = form.fields || [];
-        if (Array.isArray(payload.answers) && payload.answers.length) {
-            const qIds = new Set(payload.answers.map((a) => String(a.id)));
-            const qLabels = new Set(
-                payload.answers
-                    .map((a) => String(a.label || '').trim().toLowerCase())
-                    .filter(Boolean)
-            );
-            const filtered = fields.filter((f) =>
-                f.kind === 'question'
-                || f.kind === 'salary'
-                || qIds.has(String(f.id))
-                || qLabels.has(String(f.label || '').trim().toLowerCase())
-            );
-            if (filtered.length) fields = filtered;
-        }
+        let fields = (form.fields || []).filter((f) => {
+            const el = document.getElementById(f.id) || document.querySelector(`[name="${CSS.escape(f.name || '')}"]`);
+            const cur = el && 'value' in el ? String(el.value || '').trim() : '';
+            const shown = String(el?.closest?.('.select__control, .select-shell')?.innerText || '').trim();
+            const filled = (cur && !/^select/i.test(cur)) || (shown && !/^select/i.test(shown) && shown.length > 1);
+            return !filled;
+        });
+        if (!fields.length) fields = form.fields || [];
         const fillStats = await fillForm({
             fields,
             answers: payload.answers,
@@ -7409,11 +7419,11 @@
                     const profilePass = !!(msg.payload?.profileOnly || msg.payload?.profileGapFill);
                     const minReady = profilePass ? 6 : 2;
                     if (fieldCount < minReady && !msg.payload?.uploadOnly) {
-                        const deadline = Date.now() + (profilePass ? 7000 : 4500);
+                        const deadline = Date.now() + (profilePass ? 12000 : 8000);
                         let lastCount = fieldCount;
                         let stable = 0;
                         while (Date.now() < deadline) {
-                            await new Promise((r) => setTimeout(r, 150));
+                            await new Promise((r) => setTimeout(r, 300));
                             form = collectForm();
                             fieldCount = (form.fields?.length || 0) + (form.fileInputs?.length || 0);
                             if (fieldCount >= minReady) {

@@ -11,7 +11,8 @@
 
 export const AUTOFILL_ENGINE = 'autofill-engine-v3';
 export const AUTOFILL_MAX_PAGES = 6;
-export const AUTOFILL_PAGE_SETTLE_MS = 450;
+/** Pre-NEXT Greenhouse needed ~1.8s after Apply / Next so react-select + #resume mount. */
+export const AUTOFILL_PAGE_SETTLE_MS = 1800;
 /** Was 3 — each full refill re-ran AI and stretched one bid past 10 minutes. */
 export const AUTOFILL_RETRY_PER_PAGE = 2;
 export const AUTOFILL_MIN_COVERAGE = 0.35;
@@ -21,10 +22,10 @@ export const BID_HARD_LIMIT_MS = 90000;
 /** Slower SPAs (Oracle / Workday) need longer Next-page settles. */
 export function settleMsForAts(ats) {
     const id = String(ats || '').toLowerCase();
-    if (id === 'oracle' || id === 'workday') return 900;
-    if (id === 'icims' || id === 'smartrecruiters') return 700;
-    if (id === 'ashby' || id === 'lever') return 500;
-    if (id === 'greenhouse') return 350;
+    if (id === 'oracle' || id === 'workday') return 2800;
+    if (id === 'icims' || id === 'smartrecruiters') return 2200;
+    if (id === 'ashby' || id === 'lever') return 2000;
+    if (id === 'greenhouse') return 1800;
     return AUTOFILL_PAGE_SETTLE_MS;
 }
 

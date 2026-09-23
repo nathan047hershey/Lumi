@@ -698,7 +698,9 @@ async function captureTabScreenshot(tabId, opts = {}) {
 
     const prevTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     const prev = prevTabs[0];
-    const settleMs = Math.max(0, Number(opts.settleMs) || 800);
+    const settleMs = Number.isFinite(Number(opts.settleMs))
+        ? Math.max(0, Number(opts.settleMs))
+        : 800;
 
     try {
         await chrome.tabs.update(tabId, { active: true });
@@ -913,7 +915,8 @@ export async function uploadScreenshot(applicationId, stage, tabId, opts = {}) {
             method: 'POST',
             body: { application_id: applicationId, stage, image_base64: dataUrl }
         });
-        if (/^(live|opened|mid_fill|after_fill|after_fill_done|no_form|pre_submit|captcha|login_wall)$/.test(String(stage))) {
+        if (/^(live|opened|mid_fill|after_fill|after_fill_done|no_form|pre_submit|captcha|login_wall|reopened|after_submit)$/.test(String(stage))
+            || /^autofill_page_/i.test(String(stage))) {
             await setQueueState({ liveShotAt: Date.now() }).catch(() => {});
         }
         return true;

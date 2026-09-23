@@ -56,9 +56,18 @@
                 inputType: 'insertText',
                 data: str
             }));
+            el.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertFromPaste',
+                data: str
+            }));
         } catch (_) {
             el.dispatchEvent(new Event('input', { bubbles: true }));
         }
+        try {
+            el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+        } catch (_) { /* ignore */ }
         el.dispatchEvent(new Event('change', { bubbles: true }));
         fireReactOnChange(el);
         if (blur) {

@@ -849,8 +849,8 @@ async function waitForFormReady(tabId, {
     /** Profile fills: wait for fuller form (not just name+email). */
     profileFill = false,
     stableReads = 2,
-    pollMs = 150,
-    maxMs = 7000
+    pollMs = 400,
+    maxMs = 12000
 } = {}) {
     const deadline = Date.now() + Math.max(1500, Number(maxMs) || 7000);
     const gap = Math.max(80, Number(pollMs) || 150);
@@ -920,6 +920,30 @@ async function fillAndUpload(tabId, payload) {
     // jumps to the phone widget (Swooped fills identity first; dial runs with phone).
     const response = await sendTabMessage(tabId, { type: 'FILL_FORM', payload });
     if (!response?.ok) throw new Error(response?.error || 'Failed to fill form');
+    const resumeFile = payload?.resume
+        || (payload?.base64 && payload?.filename
+            ? { filename: payload.filename, base64: payload.base64, mimeType: payload.mimeType }
+            : null);
+    const uploadedResume = Number(response?.uploadStats?.uploadedResume || response?.fillStats?.uploadedResume || 0);
+    // Greenhouse often ignores isolated-world file change events. CDP is optional on
+    // the store build — skip quietly when debugger is not granted.
+    if (resumeFile?.base64 && uploadedResume < 1 && !payload?.skipFiles) {
+        const trusted = await setFileInputViaDebugger(tabId, resumeFile).catch(() => null);
+        if (trusted?.ok) {
+            response.uploadStats = {
+                ...(response.uploadStats || {}),
+                uploaded: Math.max(Number(response.uploadStats?.uploaded || 0), 1),
+                uploadedResume: Math.max(uploadedResume, 1)
+            };
+            if (response.fillStats) {
+                response.fillStats.uploadedResume = Math.max(
+                    Number(response.fillStats.uploadedResume || 0),
+                    1
+                );
+                response.fillStats.resumeOk = true;
+            }
+        }
+    }
     return response;
 }
 
@@ -5876,16 +5900,16 @@ async function runBidderFillOnTab(tabId, item, prefs) {
     }
 }
 
-async function prepareBidderApplicationFiles(tabId, item, app, prefs) {
+async function prepareBidderApplicationFiles(tabId, item, app, prefs, profile = {}) {
     await ensureScripts(tabId);
     let resumeFile = null;
     const resumeName = app.resume_filename || item.resume_filename;
     const settings = await getSettings();
     if (resumeName) {
         const profileHint = {
-            first_name: app.first_name || item.first_name || prefs?.first_name,
-            last_name: app.last_name || item.last_name || prefs?.last_name,
-            preferred_name: app.preferred_name || item.preferred_name
+            first_name: profile.first_name || profile.firstName || app.first_name || item.first_name || prefs?.first_name,
+            last_name: profile.last_name || profile.lastName || app.last_name || item.last_name || prefs?.last_name,
+            preferred_name: profile.preferred_name || app.preferred_name || item.preferred_name
         };
         // Prefer names from cached profiles list when application payload lacks them.
         if (!profileHint.first_name || !profileHint.last_name) {
@@ -6145,19 +6169,25 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
             }
         }
 
-        // Wait briefly for SPA form fields to mount (Oracle/Workday)
+        // Wait for SPA fields to mount. Pre-NEXT used 6×500ms until ANY fields —
+        // the 150ms identity gate filled Greenhouse before react-select/#resume existed.
         let formSnap = null;
-        for (let readyTry = 0; readyTry < 10; readyTry++) {
+        const formReadyTries = ats === 'greenhouse' ? 12 : 8;
+        const formReadyGap = ats === 'greenhouse' ? 500 : 350;
+        for (let readyTry = 0; readyTry < formReadyTries; readyTry++) {
             formSnap = await collectForm(tabId).catch(() => null);
             if (formSnap?.blocked) {
                 throw new Error(formSnap.reason || 'Site blocked');
             }
-            // Do NOT use formFingerprint alone — empty forms still have a truthy fingerprint.
-            if (formHasUsableFields(formSnap, 4)
-                && (formHasCoreIdentity(formSnap) || formFieldCount(formSnap) >= 6)) {
+            const n = formFieldCount(formSnap);
+            if (n > 0 && (formHasUsableFields(formSnap, 2) || formFingerprint(formSnap))) {
+                if (ats === 'greenhouse' && n < 6 && readyTry < 4) {
+                    await new Promise((r) => setTimeout(r, formReadyGap));
+                    continue;
+                }
                 break;
             }
-            await new Promise((r) => setTimeout(r, 150));
+            await new Promise((r) => setTimeout(r, formReadyGap));
         }
         const fp = formFingerprint(formSnap);
         // lastFp = page we already filled. Do NOT set lastFp to the destination
@@ -7143,7 +7173,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 return [];
             });
     }
-    const prepPromise = prepareBidderApplicationFiles(tabId, item, app, prefs);
+    const prepPromise = prepareBidderApplicationFiles(tabId, item, app, prefs, profile);
 
     let resumeFile = null;
     let coverLetterFile = null;
@@ -7152,6 +7182,12 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         const prep = await prepPromise;
         resumeFile = prep?.resumeFile || null;
         coverLetterFile = prep?.coverLetterFile || null;
+        if (resumeFile?.base64) {
+            const clean = buildUploadResumeFilename({ ...profile, ...payload.profile });
+            if (clean && !/^resume_/i.test(clean)) {
+                resumeFile = { ...resumeFile, filename: clean };
+            }
+        }
     } catch (err) {
         throw err;
     }
@@ -7262,7 +7298,6 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 applicationId: item.id,
                 jobDescription: app.job_description || '',
                 bidDeadline,
-                // Ensure Greenhouse gets the CV even if the profile-only pass missed it.
                 resume: resumeFile,
                 coverLetter: coverLetterFile,
                 skipCoverLetter: !coverLetterFile,
@@ -7295,6 +7330,29 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
 
         if (!run?.ok) throw new Error(run?.error || 'Bidder engine run failed');
         let result = run.result || {};
+
+        // Fill leftover empty fields (optional EEO, city, country, essays) after engine.
+        await setAutofillPanelStatus(tabId, 'Filling remaining gaps…', 79);
+        const gap = await fillAndUpload(tabId, {
+            ...filePayload,
+            profile: { ...profile, ...payload.profile },
+            answers,
+            jobDescription: app.job_description || '',
+            autoSubmit: false,
+            skipQuestions: false,
+            skipFiles: !resumeFile?.base64,
+            engine: AUTOFILL_ENGINE
+        }).catch(() => null);
+        if (gap?.fillStats) {
+            result = {
+                ...result,
+                filled: Number(result.filled || 0) + Number(gap.fillStats.filled || 0),
+                requiredComplete: gap.fillStats.requiredComplete ?? result.requiredComplete,
+                requiredOk: gap.fillStats.requiredOk ?? result.requiredOk,
+                requiredTotal: gap.fillStats.requiredTotal ?? result.requiredTotal,
+                missingRequired: gap.fillStats.missingRequired || result.missingRequired
+            };
+        }
 
         // Required fields still empty — one more full pass before we give up.
         if (

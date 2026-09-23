@@ -99,6 +99,16 @@
         }, '*');
     }
 
+    try {
+        chrome.storage.onChanged.addListener((changes, area) => {
+            if (area !== 'local' || !changes.bidderQueueState) return;
+            window.postMessage({
+                type: 'JOB_APPLY_BIDDER_QUEUE_PUSH',
+                state: changes.bidderQueueState.newValue || null
+            }, '*');
+        });
+    } catch (_) { /* ignore */ }
+
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         if (msg?.type === 'BIDDER_INJECT_JOB') {
             try {

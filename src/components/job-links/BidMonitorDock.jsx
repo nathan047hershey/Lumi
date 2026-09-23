@@ -892,18 +892,21 @@ export default function BidMonitorDock({
                         <>
                             {/* Preview */}
                             <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-black/50">
-                                {imgSrc && !loading ? (
+                                {imgSrc ? (
                                     <button type="button" className="block w-full cursor-zoom-in" onClick={onFullscreen} title="Full screen">
                                         <img
                                             key={imgSrc}
                                             src={imgSrc}
                                             alt={shotStage || 'Apply page'}
-                                            className="max-h-[min(32vh,16rem)] min-h-[8rem] w-full object-contain object-top"
+                                            className={`max-h-[min(32vh,16rem)] min-h-[8rem] w-full object-contain object-top ${loading ? 'opacity-80' : ''}`}
                                         />
                                     </button>
                                 ) : (
-                                    <div className="flex h-28 items-center justify-center px-3 text-center text-xs text-white/40">
-                                        {loading ? 'Loading…' : imgErr || 'Waiting for live frames…'}
+                                    <div className="flex h-28 flex-col items-center justify-center gap-1 px-3 text-center text-xs text-white/40">
+                                        <span>{loading ? 'Loading…' : imgErr || progressLabel || statusLine || 'Waiting for live frames…'}</span>
+                                        {!loading && !imgErr && (queueRunning || progressLabel) ? (
+                                            <span className="text-[10px] text-white/30">Live frame updates while this job is open</span>
+                                        ) : null}
                                     </div>
                                 )}
                                 <div className="absolute bottom-1.5 left-1.5 flex flex-wrap gap-1">

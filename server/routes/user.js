@@ -4059,6 +4059,7 @@ router.get('/bidder/applications/:id', (req, res) => {
                 job_url: app.job_url,
                 job_description: app.job_description,
                 resume_filename: app.resume_filename,
+                resume_upload_filename: app.resume_upload_filename || null,
                 draft_html: app.draft_html,
                 generation_status: app.generation_status,
                 status: app.status

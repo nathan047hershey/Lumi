@@ -40,7 +40,7 @@ import {
     ModalTabsList,
     ModalTabsTrigger
 } from '@/components/ui/modal-tabs';
-import { sendBidderExtensionCommand, getLumiBridgeVersion, listenForLumiBridgeReady, reinjectLumiBridge } from '@/lib/bidderExtensionBridge';
+import { sendBidderExtensionCommand, getLumiBridgeVersion, listenForLumiBridgeReady, listenForBidderQueuePush, reinjectLumiBridge } from '@/lib/bidderExtensionBridge';
 import {
     loadLumiBidderPrefs,
     processQueuePrefsPayload
@@ -122,16 +122,23 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
     const [err, setErr] = useState('');
     const [loading, setLoading] = useState(false);
     const prevObjectUrlRef = useRef('');
+    const identityRef = useRef('');
 
     useEffect(() => {
-        // Always drop the previous frame immediately so a new course cannot keep
-        // showing the last job's screenshot while the next blob loads.
-        if (prevObjectUrlRef.current) {
-            try { URL.revokeObjectURL(prevObjectUrlRef.current); } catch (_) { /* ignore */ }
-            prevObjectUrlRef.current = '';
+        const identity = `${courseId || ''}|${filename || ''}`;
+        const courseChanged = identityRef.current !== identity;
+        identityRef.current = identity;
+
+        // Only drop the prior frame when the course/file changes — refreshKey
+        // must keep showing the last image until the new blob arrives.
+        if (courseChanged) {
+            if (prevObjectUrlRef.current) {
+                try { URL.revokeObjectURL(prevObjectUrlRef.current); } catch (_) { /* ignore */ }
+                prevObjectUrlRef.current = '';
+            }
+            setSrc('');
+            setErr('');
         }
-        setSrc('');
-        setErr('');
 
         if (!courseId || !filename) {
             setLoading(false);
@@ -154,12 +161,17 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
                     try { URL.revokeObjectURL(objectUrl); } catch (_) { /* ignore */ }
                     return;
                 }
+                const old = prevObjectUrlRef.current;
                 prevObjectUrlRef.current = objectUrl;
                 setSrc(objectUrl);
                 setErr('');
+                if (old && old !== objectUrl) {
+                    try { URL.revokeObjectURL(old); } catch (_) { /* ignore */ }
+                }
             } catch (e) {
                 if (alive) {
-                    setSrc('');
+                    // Keep the previous frame on refresh failure.
+                    if (courseChanged) setSrc('');
                     setErr(e?.message || 'load failed');
                 }
             } finally {
@@ -536,6 +548,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     const queueDoneHandledRef = useRef('');
     const coursesSigRef = useRef('');
     const detailSigRef = useRef('');
+    const prevMonitorCourseRef = useRef('');
     /** Keep Control on SUCCESS after Update state / Submit until the server catches up. */
     const successLatchRef = useRef(false);
     const courseListScrollRef = useRef(null);
@@ -1315,13 +1328,18 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         }
         const needsDetail = monitorActive || workspaceTab === 'form' || workspaceTab === 'log';
         if (!needsDetail) return;
-        // Drop previous course frames immediately — do not keep last job's screenshot.
-        setDetail(null);
-        setMonitorFrameIndex(0);
-        setMonitorFrameFollowLive(true);
-        setLiveRefreshKey((k) => k + 1);
-        detailSigRef.current = '';
-        loadDetail(selectedId, { silent: false, bumpLive: true });
+        // Only wipe frames when the course changes. Closing the Process dialog
+        // must keep the dock's current screenshot.
+        const courseChanged = String(prevMonitorCourseRef.current || '') !== String(selectedId);
+        prevMonitorCourseRef.current = selectedId;
+        if (courseChanged) {
+            setDetail(null);
+            setMonitorFrameIndex(0);
+            setMonitorFrameFollowLive(true);
+            setLiveRefreshKey((k) => k + 1);
+            detailSigRef.current = '';
+        }
+        loadDetail(selectedId, { silent: !courseChanged, bumpLive: true });
     }, [open, selectedId, loadDetail, monitorActive, workspaceTab]);
 
     // Live screenshot: refresh only when status / liveShotAt changes (not every 3s).
@@ -1460,8 +1478,8 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                     setStatus(`Queue started — ${res.queued} ready application(s). Watch the Live monitor (bottom-right).`);
                     setMonitorActive(true);
                     setDockOpen(true);
-                    setDockMinimized(true);
-                    writeMonitorStorage({ active: true, minimized: true });
+                    setDockMinimized(false);
+                    writeMonitorStorage({ active: true, minimized: false });
                     // Close the big dialog so Job Links / other work stays usable.
                     onOpenChange?.(false);
                     if (stayInApp) {
@@ -1506,38 +1524,44 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     };
 
     useEffect(() => {
-        // Keep queue state alive for Live monitor controls even after Process closes the dialog.
-        // While bidding, poll ≤500ms so status + liveShotAt hit the UI within the 0.5s budget.
+        // Queue state is pushed from extension storage when application status changes.
+        // Heartbeat poll is slow — only a fallback if a push is missed.
         const watching = open || monitorActive || dockOpen;
         if (!watching) return undefined;
         let alive = true;
-        const activeBid = !!(
-            queueState?.running
-            || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_cv_regen|awaiting_next|gating|filling)$/i.test(
-                String(queueState?.status || '')
-            )
-            || /^(?:gating|filling|opening|verifying|submitting)$/i.test(String(queueState?.runState || ''))
-        );
+        let inFlight = false;
+        const applyState = (st) => {
+            if (!st || typeof st !== 'object') return;
+            setQueueState(st);
+            if (Array.isArray(st.uiMessageLog)) {
+                setExtNotifs(st.uiMessageLog);
+            }
+        };
         const poll = async () => {
+            if (inFlight) return;
+            inFlight = true;
             try {
                 const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_QUEUE_STATE', 4000);
                 if (!alive) return;
-                const st = res?.result || res?.data || null;
-                setQueueState(st);
-                if (Array.isArray(st?.uiMessageLog)) {
-                    setExtNotifs(st.uiMessageLog);
-                }
+                applyState(res?.result || res?.data || null);
             } catch {
-                if (alive) setQueueState(null);
+                // A slow extension reply must not wipe the live monitor.
+            } finally {
+                inFlight = false;
             }
         };
         poll();
-        const t = setInterval(poll, activeBid ? 250 : 2000);
+        const unsub = listenForBidderQueuePush((st) => {
+            if (!alive) return;
+            applyState(st);
+        });
+        const t = setInterval(poll, 15000);
         return () => {
             alive = false;
+            unsub();
             clearInterval(t);
         };
-    }, [open, monitorActive, dockOpen, queueState?.running, queueState?.status]);
+    }, [open, monitorActive, dockOpen]);
 
     // Push a short feed line when the active job's status event changes.
     useEffect(() => {
@@ -3466,7 +3490,6 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             queueRunning={
                 /running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_cv_regen|awaiting_next/i.test(String(queueState?.status || ''))
                 || !!queueState?.running
-                || monitorActive
             }
             onProcess={() => {
                 setDockOpen(true);

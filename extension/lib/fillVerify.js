@@ -123,7 +123,8 @@ export function canAutoSubmit(stats, prefs = {}) {
 export function bidLimitMsForAts(ats, { pageCount = 0 } = {}) {
     const id = String(ats || '').toLowerCase();
     let ms = FILL_VERIFY_BASE_LIMIT_MS;
-    if (id === 'oracle' || id === 'workday') ms = 120000;
+    if (id === 'greenhouse') ms = 150000;
+    else if (id === 'oracle' || id === 'workday') ms = 120000;
     else if (id === 'icims' || id === 'smartrecruiters') ms = 110000;
     else if (id === 'ashby' || id === 'lever') ms = 100000;
     if (Number(pageCount) > 2) ms = Math.min(150000, ms + 20000);
@@ -131,14 +132,15 @@ export function bidLimitMsForAts(ats, { pageCount = 0 } = {}) {
     return ms;
 }
 
-/** Longer SPA form waits for slow ATS — budget only; exits early when form is ready. */
-export function formWaitMsForAts(ats, baseMs = 6000) {
+/** Longer SPA form waits for slow ATS — exits early when the form is ready, never before. */
+export function formWaitMsForAts(ats, baseMs = 20000) {
     const id = String(ats || '').toLowerCase();
-    const base = Math.max(3000, Number(baseMs) || 6000);
-    if (id === 'oracle' || id === 'workday') return Math.max(base, 12000);
-    if (id === 'icims' || id === 'ashby' || id === 'lever') return Math.max(base, 9000);
-    // Greenhouse / generic: honor user base (no forced 8s floor).
-    return base;
+    const base = Math.max(8000, Number(baseMs) || 20000);
+    if (id === 'oracle' || id === 'workday') return Math.max(base, 25000);
+    if (id === 'icims' || id === 'ashby' || id === 'lever' || id === 'greenhouse') {
+        return Math.max(base, 20000);
+    }
+    return Math.max(base, 15000);
 }
 
 /** Poll budget after Submit click before declaring needs_manual. */

@@ -1000,9 +1000,18 @@
                 inputType: 'insertText',
                 data: str
             }));
+            el.dispatchEvent(new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                inputType: 'insertFromPaste',
+                data: str
+            }));
         } catch (_) {
             el.dispatchEvent(new Event('input', { bubbles: true }));
         }
+        try {
+            el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true }));
+        } catch (_) { /* ignore */ }
         el.dispatchEvent(new Event('change', { bubbles: true }));
         try {
             const key = Object.keys(el).find((k) => k.startsWith('__reactProps$'));
@@ -2889,11 +2898,11 @@
             } catch (_) { /* continue */ }
 
             for (const field of fields) {
-                // Skip dial Country — already handled above (not residence country).
-                if (
-                    field.id === 'country'
-                    || (field.kind === 'country' && document.getElementById(field.id)?.closest?.('.phone-input'))
-                ) {
+                const fieldEl = findEl(field) || document.getElementById(field.id);
+                const isPhoneDial = !!(fieldEl && fieldEl.closest
+                    && fieldEl.closest('.phone-input, .phone-input__country, [class*="phone-input"], [class*="iti"]'));
+                // Skip phone dial Country (+1) only — still fill residence Country*.
+                if (isPhoneDial) {
                     const alreadyDial = typeof window.__lumiDialCountryIsSet === 'function'
                         ? window.__lumiDialCountryIsSet()
                         : !!document.querySelector(
@@ -2908,16 +2917,20 @@
 
                 const wantedRaw = profileValue(profile, answersById, answersByLabel, field, payload.jobDescription);
                 let wanted = wantedRaw;
-                if (!wanted && field.required) {
+                if (!wanted && (field.required || field.kind === 'city' || field.kind === 'country'
+                    || field.kind === 'gender' || field.kind === 'race_ethnicity'
+                    || field.kind === 'veteran_status' || field.kind === 'disability_status'
+                    || field.kind === 'work_authorization' || field.kind === 'pronouns')) {
                     wanted = fallbackEssayForQuestion(field.label, profile, payload.jobDescription)
                         || (field.kind === 'city'
                             ? [profile?.city, profile?.state].filter(Boolean).join(', ')
                             : '')
+                        || (field.kind === 'country' ? (profile?.country || 'United States') : '')
                         || (field.type === 'textarea'
                             ? `I have relevant production experience described on my resume and can apply that work directly to this role.`
                             : '');
                 }
-                if (!wanted && !field.required) continue;
+                if (!wanted) continue;
 
                 // Skip if already correct (prevents begin→end→begin overwrite).
                 const already = readCurrentValue(field);
