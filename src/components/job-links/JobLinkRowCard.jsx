@@ -1,5 +1,6 @@
 import {
     Check,
+    Clock,
     ExternalLink,
     Loader2,
     MoreHorizontal,
@@ -19,6 +20,7 @@ import {
     DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
+import { formatEasternDateTime } from '@/lib/easternTime';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
 
 /**
@@ -237,6 +239,10 @@ export default function JobLinkRowCard({
     ].filter(Boolean).join(' · ');
     const stage = linkPipelineStage(row);
     const busy = stage === 'scraping' || stage === 'generating';
+    const addedAt = (addedLabel && addedLabel !== '—')
+        ? addedLabel
+        : (row.created_at ? formatEasternDateTime(row.created_at) : '');
+    const addedVisible = addedAt && addedAt !== '—';
 
     return (
         <article
@@ -272,6 +278,15 @@ export default function JobLinkRowCard({
                                     <span className="ml-2 text-amber-200/70">· {row.comment}</span>
                                 ) : null}
                             </p>
+                            {addedVisible ? (
+                                <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] tabular-nums text-white/60">
+                                    <Clock className="h-3 w-3 shrink-0 text-white/40" />
+                                    <span>
+                                        Added {addedAt}
+                                        {row.created_by_username ? ` · ${row.created_by_username}` : ''}
+                                    </span>
+                                </p>
+                            ) : null}
                         </button>
 
                         <div className="flex shrink-0 flex-wrap items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
@@ -355,11 +370,6 @@ export default function JobLinkRowCard({
                 </div>
             </div>
 
-            {(row.created_by_username || addedLabel) && (
-                <span className="sr-only">
-                    {row.created_by_username ? `by ${row.created_by_username}` : ''} {addedLabel || ''}
-                </span>
-            )}
         </article>
     );
 }
