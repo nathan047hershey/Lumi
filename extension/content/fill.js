@@ -948,6 +948,10 @@
     function isPhoneDialCountryControl(el) {
         if (!el) return false;
         const tag = String(el.tagName || '').toLowerCase();
+        const type = String(el.type || '').toLowerCase();
+        // The actual Phone* tel must never be treated as Country* (+1).
+        if (type === 'tel' || type === 'email' || type === 'file') return false;
+        if (/^phone$/i.test(el.id || el.name || '')) return false;
         // Native residence <select id="country"> (Workday/kitchen-sink) — never dial code.
         if (tag === 'select') return false;
         // Greenhouse / intl-tel-input: Country* next to Phone is dial code (+1), not residence.
@@ -1230,11 +1234,18 @@
     try {
         window.__lumiEnsureUsDialCode = ensureUsDialCode;
         window.__lumiDialCountryIsSet = dialCountryIsSet;
+        window.__lumiFillPhoneInput = fillPhoneInput;
+        window.__lumiIsPhoneDialCountry = isPhoneDialCountryControl;
     } catch (_) { /* ignore */ }
 
     function fillPhoneInput(el, raw) {
-        const target = (el && el.type === 'tel') ? el : resolvePhoneInput();
-        if (!target || isPhoneDialCountryControl(target)) return false;
+        const target = (el && (el.type === 'tel' || /^phone$/i.test(el.id || '')))
+            ? el
+            : resolvePhoneInput();
+        if (!target) return false;
+        if (target.type !== 'tel' && !/^phone$/i.test(target.id || '') && isPhoneDialCountryControl(target)) {
+            return false;
+        }
         const digits = String(raw || '').replace(/[^\d]/g, '');
         if (!digits) return false;
         let national = digits;
@@ -1278,6 +1289,11 @@
         dismissPhoneDialUi();
         return String(target.value || '').replace(/\D/g, '').length >= 7;
     }
+
+    try {
+        window.__lumiFillPhoneInput = fillPhoneInput;
+        window.__lumiIsPhoneDialCountry = isPhoneDialCountryControl;
+    } catch (_) { /* ignore */ }
 
     function classifyPersonal(label, name, autoId = '') {
         const autoExpanded = String(autoId || '')
@@ -3906,6 +3922,14 @@
             await delay(45);
         }
 
+        // Always fill Phone* even if collect skipped it (shared Country/Phone wrapper).
+        if (!deferredPhone) {
+            const phoneVal = personalValue('phone', profile);
+            if (phoneVal && resolvePhoneInput()) {
+                deferredPhone = { field: { kind: 'phone', label: 'Phone' }, writeValue: phoneVal };
+            }
+        }
+
         // Phone BEFORE waitComboboxIdle — dial/tel must not wait on slow select settle.
         if (deferredPhone) {
             dismissPhoneDialUi();
@@ -4106,6 +4130,20 @@
                 skippedWritten += 1;
             } else if (kind === 'salary') {
                 skippedSalary += 1;
+            } else if (kind === 'city' || kind === 'city_state' || /\blocation\s*\(?\s*city/i.test(String(field.label || ''))) {
+                const free = personalValue('city_state', profile) || personalValue('city', profile);
+                if (free) {
+                    try {
+                        setNativeValue(comboEl, free, { blur: false });
+                        comboEl.dispatchEvent(new KeyboardEvent('keydown', {
+                            key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+                        }));
+                        if (String(comboEl.value || '').trim().length >= 3) {
+                            filled += 1;
+                            highlightFilledControl(comboEl);
+                        }
+                    } catch (_) { /* ignore */ }
+                }
             }
         }
 
@@ -4261,6 +4299,41 @@
         if (deferredPhone) {
             // Already filled earlier (before select settle). Keep as safety net only.
         }
+
+        try {
+            await ensureUsDialCode();
+            const phoneVal = personalValue('phone', profile);
+            const phoneEl = resolvePhoneInput();
+            if (phoneEl && phoneVal && String(phoneEl.value || '').replace(/\D/g, '').length < 7) {
+                fillPhoneInput(phoneEl, phoneVal);
+            }
+            const cityWanted = personalValue('city_state', profile) || personalValue('city', profile);
+            if (cityWanted) {
+                const cityEl = [...document.querySelectorAll('input, [role="combobox"]')].find((el) => {
+                    if (!el || isPhoneDialCountryControl(el)) return false;
+                    const type = String(el.type || '').toLowerCase();
+                    if (['hidden', 'tel', 'email', 'checkbox', 'radio', 'file'].includes(type)) return false;
+                    const lab = labelFor(el);
+                    return /location\s*\(?\s*city|\bcity\s*\*|^\s*city\b/i.test(lab);
+                });
+                const shown = String(cityEl?.value || cityEl?.closest?.('.select__control')?.innerText || '')
+                    .replace(/\s+/g, ' ')
+                    .trim();
+                if (cityEl && (!shown || /^(select|search|city|location)/i.test(shown))) {
+                    try {
+                        cityEl.focus();
+                        document.execCommand('selectAll');
+                        document.execCommand('insertText', false, cityWanted);
+                    } catch (_) {
+                        setNativeValue(cityEl, cityWanted, { blur: false });
+                    }
+                    if (String(cityEl.value || '').trim().length >= 3) {
+                        filled += 1;
+                        highlightFilledControl(cityEl);
+                    }
+                }
+            }
+        } catch (_) { /* ignore */ }
 
         dismissPhoneDialUi();
         updateAutofillPanel({

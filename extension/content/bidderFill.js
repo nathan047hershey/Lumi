@@ -2082,6 +2082,84 @@
         return { ok: el.checked === on, chosen: el.checked ? 'Yes' : 'No' };
     }
 
+    /** Dial-code Country only — Phone tel and Location (City) must still fill. */
+    function isDialCountryOnly(field, fieldEl) {
+        if (!fieldEl) return false;
+        if (field?.kind === 'phone' || fieldEl.type === 'tel' || /^phone$/i.test(fieldEl.id || fieldEl.name || '')) {
+            return false;
+        }
+        if (field?.kind === 'city' || /location\s*\(?\s*city/i.test(String(field?.label || ''))) {
+            return false;
+        }
+        try {
+            if (typeof window.__lumiIsPhoneDialCountry === 'function' && window.__lumiIsPhoneDialCountry(fieldEl)) {
+                return true;
+            }
+        } catch (_) { /* ignore */ }
+        if (fieldEl.closest('.phone-input__country, .iti__country-container, .iti__flag-container')) {
+            return true;
+        }
+        if (fieldEl.id === 'country' && fieldEl.closest('.phone-input, [class*="phone-input"], [class*="iti"]')) {
+            return true;
+        }
+        return false;
+    }
+
+    async function fillGreenhouseIdentityGaps(profile = {}) {
+        try {
+            if (typeof window.__lumiEnsureUsDialCode === 'function') {
+                await window.__lumiEnsureUsDialCode();
+            }
+        } catch (_) { /* ignore */ }
+
+        const phoneWanted = profile.phone || profile.mobile || profile.telephone || profile.phone_number || '';
+        const phoneEl = document.getElementById('phone')
+            || document.querySelector('input[type="tel"]')
+            || document.querySelector('input[name*="phone" i]');
+        if (phoneEl && phoneWanted) {
+            let ok = false;
+            try {
+                if (typeof window.__lumiFillPhoneInput === 'function') {
+                    ok = !!window.__lumiFillPhoneInput(phoneEl, phoneWanted);
+                }
+            } catch (_) { /* ignore */ }
+            if (!ok && String(phoneEl.value || '').replace(/\D/g, '').length < 7) {
+                setNativeValue(phoneEl, phoneWanted);
+            }
+        }
+
+        const cityWanted = formatLocationFreeText(
+            profile,
+            [profile.city, profile.state].filter(Boolean).join(', ')
+        );
+        if (cityWanted) {
+            const cityEl = [...document.querySelectorAll('input, [role="combobox"]')].find((el) => {
+                if (!visible(el)) return false;
+                const type = (el.type || '').toLowerCase();
+                if (['hidden', 'tel', 'email', 'checkbox', 'radio', 'file'].includes(type)) return false;
+                if (isDialCountryOnly({ kind: 'city' }, el)) return false;
+                const lab = labelFor(el);
+                return /location\s*\(?\s*city|\bcity\s*\*|^\s*city\b/i.test(lab);
+            });
+            if (cityEl) {
+                const shown = String(
+                    cityEl.value || cityEl.closest('.select__control')?.innerText || ''
+                ).replace(/\s+/g, ' ').trim();
+                if (!shown || /^(select|search|city|location)/i.test(shown)) {
+                    const res = await fillCombobox(cityEl, cityWanted, 'city', 'type', profile, 'Location (City)');
+                    if (!res?.ok) {
+                        setNativeValue(cityEl, cityWanted);
+                        try {
+                            cityEl.dispatchEvent(new KeyboardEvent('keydown', {
+                                key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
+                            }));
+                        } catch (_) { /* ignore */ }
+                    }
+                }
+            }
+        }
+    }
+
     async function fillOne(field, wanted, attempt, profile = null) {
         const kind0 = effectiveFieldKind(field) || field.kind || '';
         const forceOpen = kind0 === 'skill_experience'
@@ -2098,6 +2176,19 @@
         }
         const el = findEl(field);
         if (!el) return { ok: false, chosen: '', strategy, error: 'el_not_found' };
+        if (kind0 === 'phone' || el.type === 'tel' || /^phone$/i.test(el.id || '')) {
+            let ok = false;
+            try {
+                if (typeof window.__lumiFillPhoneInput === 'function') {
+                    ok = !!window.__lumiFillPhoneInput(el, wanted);
+                }
+            } catch (_) { /* ignore */ }
+            if (!ok) {
+                setNativeValue(el, wanted);
+                ok = String(el.value || '').replace(/\D/g, '').length >= 7;
+            }
+            return { ok, chosen: el.value, strategy: 'phone' };
+        }
         if (el.tagName === 'SELECT') {
             return { ...(await fillSelect(el, wanted)), strategy };
         }
@@ -2899,10 +2990,8 @@
 
             for (const field of fields) {
                 const fieldEl = findEl(field) || document.getElementById(field.id);
-                const isPhoneDial = !!(fieldEl && fieldEl.closest
-                    && fieldEl.closest('.phone-input, .phone-input__country, [class*="phone-input"], [class*="iti"]'));
-                // Skip phone dial Country (+1) only — still fill residence Country*.
-                if (isPhoneDial) {
+                // Only skip the dial-code Country control — never skip Phone / City.
+                if (isDialCountryOnly(field, fieldEl)) {
                     const alreadyDial = typeof window.__lumiDialCountryIsSet === 'function'
                         ? window.__lumiDialCountryIsSet()
                         : !!document.querySelector(
@@ -2994,6 +3083,10 @@
                     // continue trying other fields; report at end
                 }
             }
+
+            try {
+                await fillGreenhouseIdentityGaps(profile);
+            } catch (_) { /* continue */ }
 
             // Verify required before Next / Submit
             let stillBad = collectFields().filter((f) => {

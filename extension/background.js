@@ -7007,6 +7007,18 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             early: true,
             filled: filledEarly
         });
+        await setAppRunState(item.id, 'filling', {
+            tabId,
+            eventType: 'profile_fill_started',
+            requiredOk: Number(gap?.fillStats?.requiredOk || early?.fillStats?.requiredOk || 0),
+            requiredTotal: Number(gap?.fillStats?.requiredTotal || early?.fillStats?.requiredTotal || 0),
+            missingRequired: gap?.fillStats?.missingRequired || early?.fillStats?.missingRequired || []
+        }).catch(() => {});
+        await setQueueState({
+            lastStatusEvent: 'profile_fill_started',
+            lastStatusAt: Date.now(),
+            lastStatusMeta: { filled: filledEarly, phase: 'early_profile' }
+        }).catch(() => {});
     } catch (err) {
         console.warn('[bidder] early profile fill', err);
     }
@@ -7353,6 +7365,31 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 missingRequired: gap.fillStats.missingRequired || result.missingRequired
             };
         }
+        await logCourseEvent(item.id, 'profile_gaps_filled', {
+            ats,
+            engine: engineLabel,
+            filled: result.filled,
+            requiredOk: result.requiredOk,
+            requiredTotal: result.requiredTotal,
+            missing: result.missingRequired || []
+        }).catch(() => {});
+        await setAppRunState(item.id, 'filling', {
+            tabId,
+            eventType: 'profile_gaps_filled',
+            requiredOk: result.requiredOk,
+            requiredTotal: result.requiredTotal,
+            missingRequired: result.missingRequired || []
+        }).catch(() => {});
+        await setQueueState({
+            lastStatusEvent: 'profile_gaps_filled',
+            lastStatusAt: Date.now(),
+            lastStatusMeta: {
+                filled: result.filled,
+                requiredOk: result.requiredOk,
+                requiredTotal: result.requiredTotal,
+                missing: result.missingRequired || []
+            }
+        }).catch(() => {});
 
         // Required fields still empty — one more full pass before we give up.
         if (
@@ -7411,6 +7448,18 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                     debugger: !!trusted?.ok,
                     reason: trusted?.reason || null,
                     filename: resumeFile.filename || trusted?.filename || null
+                }).catch(() => {});
+                await setAppRunState(item.id, 'filling', {
+                    tabId,
+                    eventType: trusted?.ok ? 'cv_upload_ok' : 'cv_upload_retry'
+                }).catch(() => {});
+                await setQueueState({
+                    lastStatusEvent: trusted?.ok ? 'cv_upload_ok' : 'cv_upload_retry',
+                    lastStatusAt: Date.now(),
+                    lastStatusMeta: {
+                        filename: resumeFile.filename || null,
+                        debugger: !!trusted?.ok
+                    }
                 }).catch(() => {});
             } catch (err) {
                 console.warn('[bidder] greenhouse resume upload', err);
