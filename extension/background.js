@@ -5973,8 +5973,8 @@ async function generateBidderAnswersForItem(item, app, questions, engineLabel, b
     const requested = Number(budgetMs);
     // Always give Groq enough time — empty essays are worse than a few extra seconds.
     const ANSWERS_BUDGET_MS = Math.min(
-        15000,
-        Math.max(8000, Number.isFinite(requested) ? requested : 12000)
+        40000,
+        Math.max(25000, Number.isFinite(requested) ? requested : 30000)
     );
     const profileId = app.profile_id || item.profile_id;
     if (!profileId) {
@@ -7028,6 +7028,8 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         console.warn('[bidder] early profile fill', err);
     }
 
+    const prepPromise = prepareBidderApplicationFiles(tabId, item, app, prefs, profile);
+
     // CV quality gate — file, clean name, content quality.
     // Missing file / critical content → regenerate and wait (60s).
     // Soft keyword overlap alone still deferred to background.
@@ -7197,7 +7199,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             reason: 'no_questions_collected'
         }).catch(() => {});
     } else {
-        const answersBudgetMs = Math.max(8000, Math.min(15000, remainingTotal || 12000));
+        const answersBudgetMs = Math.max(25000, Math.min(40000, remainingTotal || 30000));
         answersPromise = generateBidderAnswersForItem(
             item,
             app,
@@ -7210,8 +7212,6 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 return [];
             });
     }
-    const prepPromise = prepareBidderApplicationFiles(tabId, item, app, prefs, profile);
-
     let resumeFile = null;
     let coverLetterFile = null;
     try {
@@ -7262,7 +7262,28 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             }
         }).catch(() => null);
         if (resumeFile?.base64) {
-            await setFileInputViaDebugger(tabId, resumeFile).catch(() => null);
+            await setAutofillPanelStatus(tabId, 'Uploading resume…', 48);
+            let trusted = await setFileInputViaDebugger(tabId, resumeFile).catch((err) => ({
+                ok: false,
+                reason: err?.message || String(err)
+            }));
+            if (!trusted?.ok) {
+                await new Promise((r) => setTimeout(r, 500));
+                trusted = await setFileInputViaDebugger(tabId, resumeFile).catch((err) => ({
+                    ok: false,
+                    reason: err?.message || String(err)
+                }));
+            }
+            await logCourseEvent(item.id, trusted?.ok ? 'cv_upload_ok' : 'cv_upload_retry', {
+                debugger: !!trusted?.ok,
+                reason: trusted?.reason || null,
+                filename: resumeFile.filename || trusted?.filename || null,
+                phase: 'early'
+            }).catch(() => {});
+            await setAppRunState(item.id, 'filling', {
+                tabId,
+                eventType: trusted?.ok ? 'cv_upload_ok' : 'cv_upload_retry'
+            }).catch(() => {});
         }
         uploadScreenshot(item.id, 'mid_fill', tabId, shotOpts({ settleMs: 200 })).catch(() => {});
     } catch (err) {
@@ -7271,14 +7292,11 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
 
     let answers = [];
     try {
-        await setAutofillPanelStatus(tabId, 'Filling now — answers join if ready…', 65);
-        const raced = await Promise.race([
-            answersPromise.then((a) => ({ ready: true, a })).catch(() => ({ ready: true, a: [] })),
-            new Promise((resolve) => setTimeout(() => resolve({ ready: false, a: [] }), 5000))
-        ]);
-        answers = Array.isArray(raced?.a) ? raced.a : [];
+        await setAutofillPanelStatus(tabId, 'Waiting for AI answers…', 65);
+        const ans = await answersPromise;
+        answers = Array.isArray(ans) ? ans : [];
     } catch (err) {
-        console.warn('[bidder] answers race', err);
+        console.warn('[bidder] answers failed; fill with profile defaults', err);
         answers = [];
     }
 
@@ -7380,7 +7398,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             answers,
             jobDescription: app.job_description || '',
             autoSubmit: false,
-            skipQuestions: false,
+            skipQuestions: true,
             skipFiles: !resumeFile?.base64,
             engine: AUTOFILL_ENGINE
         }).catch(() => null);
@@ -7468,7 +7486,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 answers,
                 jobDescription: app.job_description || '',
                 autoSubmit: false,
-                skipQuestions: false,
+                skipQuestions: true,
                 skipFiles: !resumeFile?.base64,
                 engine: AUTOFILL_ENGINE
             }).catch(() => null);

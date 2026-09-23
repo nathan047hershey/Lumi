@@ -3317,6 +3317,25 @@
                     if (field.required) requiredOk += 1;
                     continue;
                 }
+                // One-time fill: do not keep rewriting a real answer.
+                if (!isPlaceholderValue(already) && String(already || '').trim()) {
+                    const lab = String(field.label || '');
+                    const kindNow = effectiveFieldKind(field) || field.kind || '';
+                    const wrongYesEssay = /^yes\.?$/i.test(already)
+                        && (labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab)
+                            || kindNow === 'skill_list' || kindNow === 'skill_project_brief');
+                    const polarityKind = kindNow === 'disability_status'
+                        || kindNow === 'requires_sponsorship'
+                        || kindNow === 'previous_employer_no'
+                        || kindNow === 'hispanic_latino'
+                        || kindNow === 'sanctioned_countries_no';
+                    const polarityWrong = polarityKind && wanted && !valuesMatch(wanted, already, kindNow);
+                    if (!wrongYesEssay && !polarityWrong) {
+                        filled += 1;
+                        if (field.required) requiredOk += 1;
+                        continue;
+                    }
+                }
 
                 let ok = false;
                 let chosen = '';
