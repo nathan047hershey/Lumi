@@ -79,6 +79,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { DatePicker } from '@/components/DatePicker';
 import { cn } from '@/lib/utils';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
+import { formatEasternDateTime } from '@/lib/easternTime';
 import {
     clientTzOffsetMinutes,
     dateInputValue,
@@ -201,12 +202,7 @@ function jdStatusMeta(row) {
 }
 
 function formatJobLinkTimestamp(value) {
-    if (!value) return '—';
-    const raw = String(value).trim();
-    const iso = raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`;
-    const dt = new Date(iso);
-    if (Number.isNaN(dt.getTime())) return '—';
-    return dt.toLocaleString();
+    return formatEasternDateTime(value);
 }
 
 /**
@@ -1720,8 +1716,7 @@ function JobLinks({ embedded = false }) {
     };
 
     // "Today" is a shortcut for the date bounds. When toggled on,
-    // we pin both From and To to today's local calendar day so the
-    // API range is that day in the user's timezone (not UTC).
+    // we pin both From and To to today's Eastern (EST/EDT) calendar day.
     const handleToggleToday = () => {
         setPage(1);
         if (isTodayActive) {
@@ -1803,9 +1798,13 @@ function JobLinks({ embedded = false }) {
             if (availableFilter !== 'all') filters.available = availableFilter;
             if (debouncedDateFrom)   filters.date_from = debouncedDateFrom;
             if (debouncedDateTo)     filters.date_to = debouncedDateTo;
-            if (debouncedDateFrom || debouncedDateTo) {
+            if (isTodayActive)       filters.today = 1;
+            if (debouncedDateFrom || debouncedDateTo || isTodayActive) {
                 filters.tz_offset = clientTzOffsetMinutes();
-                const range = localDayUtcRange(debouncedDateFrom, debouncedDateTo);
+                const range = localDayUtcRange(
+                    isTodayActive ? localYmd() : debouncedDateFrom,
+                    isTodayActive ? localYmd() : debouncedDateTo
+                );
                 if (range) {
                     filters.created_after = range.created_after;
                     filters.created_before = range.created_before;
@@ -1864,7 +1863,7 @@ function JobLinks({ embedded = false }) {
                 if (!silent) setTableLoading(false);
             }
         }
-    }, [page, limit, debouncedSearch, techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, mergeJustCreated]);
+    }, [page, limit, debouncedSearch, techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, isTodayActive, mergeJustCreated]);
 
     useEffect(() => {
         load();

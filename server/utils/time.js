@@ -156,11 +156,74 @@ function utcIsoToLocalPicker(isoStr) {
     return `${yyyy}-${mm}-${dd}T${hh}:${mi}`;
 }
 
+const EASTERN_TZ = 'America/New_York';
+
+function easternParts(d) {
+    const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: EASTERN_TZ,
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+    }).formatToParts(d);
+    const out = {};
+    for (const p of parts) {
+        if (p.type !== 'literal') out[p.type] = p.value;
+    }
+    return out;
+}
+
+function easternYmd(d = new Date()) {
+    const p = easternParts(d);
+    return `${p.year}-${p.month}-${p.day}`;
+}
+
+function easternLocalToUtcDate(ymd, hour = 0, minute = 0, second = 0) {
+    const [Y, M, D] = String(ymd).split('-').map((n) => parseInt(n, 10));
+    if (!Y || !M || !D) return null;
+    let utc = Date.UTC(Y, M - 1, D, hour, minute, second);
+    const p = easternParts(new Date(utc));
+    const gotHour = p.hour === '24' ? 0 : parseInt(p.hour, 10);
+    const got = Date.UTC(
+        parseInt(p.year, 10),
+        parseInt(p.month, 10) - 1,
+        parseInt(p.day, 10),
+        gotHour,
+        parseInt(p.minute, 10),
+        parseInt(p.second, 10)
+    );
+    const want = Date.UTC(Y, M - 1, D, hour, minute, second);
+    return new Date(utc + (want - got));
+}
+
+function easternDayUtcRange(fromYmd, toYmd) {
+    const from = String(fromYmd || '').trim();
+    const to = String(toYmd || '').trim() || from;
+    const startYmd = from || to;
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(startYmd) || !/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        return null;
+    }
+    const start = easternLocalToUtcDate(startYmd, 0, 0, 0);
+    const endDay = easternLocalToUtcDate(to, 0, 0, 0);
+    if (!start || !endDay) return null;
+    const end = new Date(endDay.getTime() + 24 * 60 * 60 * 1000);
+    const created_after = toSqlDateTime(start);
+    const created_before = toSqlDateTime(end);
+    if (!created_after || !created_before) return null;
+    return { created_after, created_before };
+}
+
 module.exports = {
+    EASTERN_TZ,
     getCurrentWorkdayEST,
     nowAsESTISOString,
     toSqlDateTime,
     formatGMT4,
     localPickerToUTCIso,
-    utcIsoToLocalPicker
+    utcIsoToLocalPicker,
+    easternYmd,
+    easternDayUtcRange
 };

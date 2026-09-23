@@ -46,6 +46,7 @@ const {
 } = require('../services/scraper/jobLinkUrl');
 const jobMatchService = require('../services/jobMatchService');
 const { platformFilterSql } = require('../services/scraper/jobLinkPlatform');
+const { easternDayUtcRange, easternYmd } = require('../utils/time');
 
 const router = express.Router();
 const adminWriteRouter = express.Router();
@@ -132,21 +133,23 @@ function buildJobLinkListFilters(query = {}) {
     const techstack = (query.techstack || 'all').trim();
     const platform = (query.platform || query.ats || 'all').trim();
     const available = (query.available || 'all').trim();
-    const dateFrom = /^\d{4}-\d{2}-\d{2}$/.test((query.date_from || '').trim())
+    let dateFrom = /^\d{4}-\d{2}-\d{2}$/.test((query.date_from || '').trim())
         ? (query.date_from || '').trim()
         : '';
-    const dateTo = /^\d{4}-\d{2}-\d{2}$/.test((query.date_to || '').trim())
+    let dateTo = /^\d{4}-\d{2}-\d{2}$/.test((query.date_to || '').trim())
         ? (query.date_to || '').trim()
         : '';
-    const createdAfter = sqliteUtcStamp(query.created_after);
-    const createdBefore = sqliteUtcStamp(query.created_before);
-    const tzOffsetRaw = parseInt(query.tz_offset, 10);
-    const tzOffsetMin = Number.isFinite(tzOffsetRaw) && tzOffsetRaw >= -14 * 60 && tzOffsetRaw <= 14 * 60
-        ? tzOffsetRaw
-        : 0;
-    const tzAbs = Math.abs(tzOffsetMin);
-    const tzSign = tzOffsetMin >= 0 ? '-' : '+';
-    const createdLocalDate = `DATE(datetime(replace(created_at, 'T', ' '), '${tzSign}${tzAbs} minutes'))`;
+    const todayFlag = ['1', 'true', 'yes'].includes(String(query.today || '').trim().toLowerCase());
+    if (todayFlag) {
+        const todayEst = easternYmd();
+        dateFrom = todayEst;
+        dateTo = todayEst;
+    }
+    const estRange = (dateFrom || dateTo)
+        ? easternDayUtcRange(dateFrom || dateTo, dateTo || dateFrom)
+        : null;
+    const createdAfter = estRange?.created_after || sqliteUtcStamp(query.created_after);
+    const createdBefore = estRange?.created_before || sqliteUtcStamp(query.created_before);
     const createdAtExpr = `datetime(replace(created_at, 'T', ' '))`;
     const fetchStatus = (query.fetch_status || 'all').trim();
     const hasGeneratedResumeRaw = (query.has_generated_resume || '').trim().toLowerCase();
@@ -195,24 +198,13 @@ function buildJobLinkListFilters(query = {}) {
         conds.push('is_available = 0');
     }
 
-    if (createdAfter || createdBefore) {
-        if (createdAfter) {
-            conds.push(`${createdAtExpr} >= datetime(?)`);
-            params.push(createdAfter);
-        }
-        if (createdBefore) {
-            conds.push(`${createdAtExpr} < datetime(?)`);
-            params.push(createdBefore);
-        }
-    } else {
-        if (dateFrom) {
-            conds.push(`${createdLocalDate} >= ?`);
-            params.push(dateFrom);
-        }
-        if (dateTo) {
-            conds.push(`${createdLocalDate} <= ?`);
-            params.push(dateTo);
-        }
+    if (createdAfter) {
+        conds.push(`${createdAtExpr} >= datetime(?)`);
+        params.push(createdAfter);
+    }
+    if (createdBefore) {
+        conds.push(`${createdAtExpr} < datetime(?)`);
+        params.push(createdBefore);
     }
     if (fetchStatus && fetchStatus !== 'all'
         && ['pending', 'fetching', 'success', 'failed'].includes(fetchStatus)) {

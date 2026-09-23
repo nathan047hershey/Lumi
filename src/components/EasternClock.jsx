@@ -9,15 +9,14 @@ const MONTH_NAMES = [
 ];
 
 /**
- * Renders the current time anchored to GMT-4 (matches the same
- * workday anchor the stats service uses). Updates every second.
+ * Renders the current Eastern Time (America/New_York — EST/EDT).
  */
 export default function EasternClock({
     serverISO,
-    label = 'Current time (GMT-4)',
+    label = 'Current time (EST)',
     className,
     showSeconds = true,
-    tz = 'Etc/GMT+4'  // sign-inverted in IANA: Etc/GMT+4 == UTC-4
+    tz = 'America/New_York'
 }) {
     const [now, setNow] = useState(() => new Date());
 
@@ -78,7 +77,7 @@ export default function EasternClock({
                 <span className="font-mono text-2xl font-bold text-foreground">
                     {timeFormatter.format(now)}
                 </span>
-                <span className="text-sm font-medium text-muted-foreground">GMT-4</span>
+                <span className="text-sm font-medium text-muted-foreground">EST</span>
             </div>
             <div className="flex items-center gap-2 text-sm text-foreground/80">
                 <span>{dayFormatter.format(now)}</span>
