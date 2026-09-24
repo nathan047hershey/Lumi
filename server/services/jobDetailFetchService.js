@@ -116,6 +116,21 @@ function scheduleReconnect() {
     }, RECONNECT_MS);
 }
 
+/** One pending row, in this request. Used when no background worker is alive. */
+async function scrapeNextDueInline() {
+    if (!process.env.VERCEL) return null;
+    cleanupStaleFetching();
+    const ids = listDueJobLinkIds(1);
+    if (!ids.length) return null;
+    try {
+        return await scrapeJobLinkById(ids[0]);
+    } catch (err) {
+        lastError = formatError(err);
+        console.warn('[jobDetailFetch] list-triggered scrape failed:', lastError);
+        return null;
+    }
+}
+
 async function refreshQueueDepth() {
     try {
         const ch = await connect();
@@ -155,6 +170,19 @@ async function enqueueJobDetailFetch(jobLinkId, opts = {}) {
             console.warn('[jobDetailFetch] RabbitMQ unavailable, falling back to in-process scrape:', formatError(queueErr));
         }
         mode = 'inline';
+        // On Vercel the process freezes when the HTTP response ends, so a
+        // deferred scrape never runs. Finish this row before returning.
+        if (process.env.VERCEL) {
+            try {
+                const result = await scrapeJobLinkById(jobLinkId);
+                lastError = result && result.error ? formatError({ message: result.error }) : null;
+                return { ok: !!(result && (result.ok || result.skipped)), jobLinkId, mode: 'inline', result };
+            } catch (scrapeErr) {
+                lastError = formatError(scrapeErr);
+                console.warn('[jobDetailFetch] inline scrape failed:', lastError);
+                return { ok: false, jobLinkId, mode: 'inline', error: lastError };
+            }
+        }
         setImmediate(() => {
             scrapeJobLinkById(jobLinkId)
                 .then((result) => {
@@ -331,6 +359,7 @@ function getStatus() {
 
 module.exports = {
     enqueueJobDetailFetch,
+    scrapeNextDueInline,
     startWorker,
     stopWorker,
     closeQueue,

@@ -1144,7 +1144,10 @@ function refreshQueue() {
                 fetch_status = 'pending'
                 OR (fetch_status = 'failed' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP))
               )
-           AND source_url IS NOT NULL AND TRIM(source_url) <> ''
+           AND (
+                (source_url IS NOT NULL AND TRIM(source_url) <> '')
+             OR (job_apply_url IS NOT NULL AND TRIM(job_apply_url) <> '')
+           )
          ORDER BY (fetch_status = 'pending') DESC, next_retry_at ASC, updated_at ASC
          LIMIT ?`,
         [MAX_BATCH]
@@ -1163,7 +1166,10 @@ function listDueJobLinkIds(limit = MAX_BATCH) {
                 fetch_status = 'pending'
                 OR (fetch_status = 'failed' AND (next_retry_at IS NULL OR next_retry_at <= CURRENT_TIMESTAMP))
               )
-           AND source_url IS NOT NULL AND TRIM(source_url) <> ''
+           AND (
+                (source_url IS NOT NULL AND TRIM(source_url) <> '')
+             OR (job_apply_url IS NOT NULL AND TRIM(job_apply_url) <> '')
+           )
          ORDER BY (fetch_status = 'pending') DESC, next_retry_at ASC, updated_at ASC
          LIMIT ?`,
         [Math.min(Math.max(parseInt(limit, 10) || MAX_BATCH, 1), 200)]

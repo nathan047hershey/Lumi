@@ -448,8 +448,16 @@ function jobLinkNeighborQuery(sort, jobLink) {
 // -----------------------------------------------------------------------------
 // GET /job-links — paginated list with filters (any user)
 // -----------------------------------------------------------------------------
-function listHandler(req, res) {
+async function listHandler(req, res) {
     try {
+        if (process.env.VERCEL) {
+            try {
+                const jobDetailFetchService = require('../services/jobDetailFetchService');
+                await jobDetailFetchService.scrapeNextDueInline();
+            } catch (err) {
+                console.warn('[job-links] inline scrape skipped:', err.message);
+            }
+        }
         const page = Math.max(1, parseInt(req.query.page) || 1);
         // Default page size: 10. Clients can override with `?limit=N`
         // up to 100; below 1 we clamp to 1.
@@ -635,10 +643,10 @@ async function createHandler(req, res) {
         // used to make POST /job-links wait until the JD (and often
         // CVs) finished.
         if ((source || applyUrl) && !hasPastedDescription) {
-            setImmediate(() => {
+            const kickFetch = () => {
                 try {
                     const jobDetailFetchService = require('../services/jobDetailFetchService');
-                    jobDetailFetchService
+                    return jobDetailFetchService
                         .enqueueJobDetailFetch(row.id, { source: 'create' })
                         .catch((err) => {
                             console.warn(
@@ -651,8 +659,14 @@ async function createHandler(req, res) {
                         `[jobLinks] enqueue detail-fetch failed for job_link=${row.id}:`,
                         err && err.message ? err.message : err
                     );
+                    return null;
                 }
-            });
+            };
+            if (process.env.VERCEL) {
+                await kickFetch();
+            } else {
+                setImmediate(kickFetch);
+            }
         }
 
         // Auto-generate CVs for matching profiles as soon as a JD is ready.
