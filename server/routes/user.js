@@ -2405,6 +2405,31 @@ router.delete('/interview-requests/:applicationId', (req, res) => {
     }
 });
 
+// POST /api/user/resumes/:filename/from-draft
+// The generated file lives on the server that created it. A later download
+// can rebuild the DOCX from the HTML this browser already received.
+router.post('/resumes/:filename/from-draft', async (req, res) => {
+    try {
+        const safeName = path.basename(String(req.params.filename || ''));
+        const html = String(req.body?.draft_html || '').trim();
+        const profileId = parseInt(req.body?.profile_id, 10);
+        if (!safeName || !html || !profileId) {
+            return res.status(400).json({ error: 'Resume HTML and profile are required' });
+        }
+        const profile = getAccessibleProfile(profileId, req);
+        if (!profile) return res.status(404).json({ error: 'Profile not found' });
+        const { buildResumeDocx, buildUploadResumeFilename } = require('../services/resumeService');
+        const buf = await buildResumeDocx({ resumeHtml: html, profile });
+        const downloadAs = buildUploadResumeFilename(profile, '.docx');
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.setHeader('Content-Disposition', `attachment; filename="${downloadAs}"`);
+        res.send(buf);
+    } catch (err) {
+        console.error('Rebuild resume error:', err);
+        res.status(500).json({ error: err.message || 'Failed to build resume' });
+    }
+});
+
 // GET /api/user/resumes/:filename - Download resume
 router.get('/resumes/:filename', async (req, res) => {
     try {

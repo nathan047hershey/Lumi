@@ -59,7 +59,7 @@ import { useAuth } from '@/context/AuthContext';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
 import { formatAddedTimeLabel } from '@/lib/easternTime';
 import { jobLinksListQueryFromLocation, localDayUtcRange } from '@/lib/jobLinksListState';
-import { openResume } from '@/lib/resumeUrl';
+import { downloadResumeAuthenticated, openResume, rememberCvDraft } from '@/lib/resumeUrl';
 import AppPage from '@/components/AppPage';
 import { PageLoader, Loader } from '@/components/Loader';
 import { Button } from '@/components/ui/button';
@@ -232,9 +232,18 @@ function ApplicationCard({ application, onChanged }) {
         }
     };
 
-    const handleDownload = () => {
+    const handleDownload = async () => {
         if (!application.resume_filename) return;
-        openResume(application.resume_filename);
+        rememberCvDraft({
+            filename: application.resume_filename,
+            draft_html: application.draft_html,
+            profile_id: application.profile_id || application.profile?.id
+        });
+        try {
+            await downloadResumeAuthenticated(application.resume_filename);
+        } catch (err) {
+            setLocalError(err.message || 'Download failed');
+        }
     };
 
     const handleDownloadPdf = () => {
@@ -615,7 +624,16 @@ export default function JobLinkDetail() {
             } catch (_) { /* ignore */ }
             const res = await adminAPI.getJobLinkApplications(jobLinkId, { ...listFilters, remembered });
             if (requestId !== loadRequestRef.current) return;
-            setData(res.data?.data || null);
+            const next = res.data?.data || null;
+            const apps = next?.applications || next?.job_applications || [];
+            for (const app of apps) {
+                rememberCvDraft({
+                    filename: app?.resume_filename,
+                    draft_html: app?.draft_html,
+                    profile_id: app?.profile_id || app?.profile?.id
+                });
+            }
+            setData(next);
             setError(null);
         } catch (err) {
             if (requestId !== loadRequestRef.current) return;

@@ -79,6 +79,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { DatePicker } from '@/components/DatePicker';
 import { cn } from '@/lib/utils';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
+import { rememberCvDraft } from '@/lib/resumeUrl';
 import { formatAddedTimeLabel } from '@/lib/easternTime';
 import { parseSqliteUtcMs } from '@/lib/sqliteDate';
 import {
@@ -1546,12 +1547,24 @@ function JobLinks({ embedded = false }) {
         }
     };
     const writeVisibleCache = (nextRows, nextTotal) => {
+        const slim = (nextRows || []).map((row) => ({
+            ...row,
+            available_profiles: (row.available_profiles || []).map((p) => {
+                rememberCvDraft({
+                    filename: p.resume_filename,
+                    draft_html: p.draft_html,
+                    profile_id: p.profile_id
+                });
+                const { draft_html, ...rest } = p;
+                return rest;
+            })
+        }));
         try {
             localStorage.setItem(VISIBLE_CACHE_KEY, JSON.stringify({
                 at: Date.now(),
-                rows: nextRows,
+                rows: slim,
                 total: nextTotal,
-                cleared: !nextRows.length
+                cleared: !slim.length
             }));
         } catch (_) { /* private mode */ }
     };

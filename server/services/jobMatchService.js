@@ -678,14 +678,14 @@ async function processQueuedPair({ profileId, jobLinkId, correlationId, force } 
             const generationMs = generationDurationMs(startMs, finishedAt) || Math.max(1, finishedAt - startMs);
             runQuery(
                 `UPDATE job_applications
-                 SET resume_filename = ?, template_id = ?, font_family = ?,
+                 SET resume_filename = ?, draft_html = ?, template_id = ?, font_family = ?,
                      generation_status = 'ready', generation_error = NULL,
                      generation_ms = ?,
                      generation_started_at = COALESCE(generation_started_at, datetime('now')),
                      generation_finished_at = datetime('now'),
                      updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?`,
-                [gen.filename, gen.templateId, gen.font, generationMs, latest.id]
+                [gen.filename, gen.html || null, gen.templateId, gen.font, generationMs, latest.id]
             );
             saveDatabase();
             try {
@@ -1330,6 +1330,7 @@ function attachAvailableProfilesToJobLinks(jobLinks) {
     const placeholders = linkIds.map(() => '?').join(',');
     const apps = getAll(
         `SELECT a.id, a.job_link_id, a.profile_id, a.generation_status, a.generation_ms,
+                a.resume_filename, a.draft_html,
                 a.generation_started_at, a.generation_finished_at, a.status, a.state, a.match_score, a.updated_at,
                 c.filled_at AS bid_filled_at, c.applied_at AS bid_applied_at, c.outcome AS bid_outcome,
                 (SELECT e.event_type FROM bid_course_events e
@@ -1364,6 +1365,8 @@ function attachAvailableProfilesToJobLinks(jobLinks) {
         score,
         has_application: !!app,
         application_id: app?.id ?? null,
+        resume_filename: app?.resume_filename ?? null,
+        draft_html: app?.draft_html ?? null,
         generation_status: app?.generation_status ?? null,
         generation_ms: app?.generation_ms != null ? Number(app.generation_ms) : null,
         generation_started_at: sqliteUtcToIso(app?.generation_started_at),
