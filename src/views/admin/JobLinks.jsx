@@ -1532,6 +1532,8 @@ function JobLinks({ embedded = false }) {
 
     // Data + UI state
     const [rows, setRows] = useState([]);
+    const rowsRef = useRef([]);
+    rowsRef.current = rows;
     const addedClockLive = rows.some((r) => {
         const ms = parseSqliteUtcMs(r?.created_at);
         return Number.isFinite(ms) && Date.now() - ms < 60 * 60 * 1000;
@@ -1843,6 +1845,13 @@ function JobLinks({ embedded = false }) {
             if (requestId !== loadRequestRef.current) return;
             const apiRows = Array.isArray(listRes.data?.data) ? listRes.data.data : [];
             const merged = mergeJustCreated(apiRows);
+            // A background refresh during CV generation must not wipe the
+            // list when this response comes back empty. The row is still
+            // on screen and a later poll can fill it in again.
+            if (silent && merged.length === 0 && rowsRef.current.length > 0) {
+                if (cronRes?.data) setCronStatus(cronRes.data);
+                return;
+            }
             setRows(merged);
             const apiTotal = listRes.data?.pagination?.total || 0;
             const extra = Math.max(0, merged.length - apiRows.length);
