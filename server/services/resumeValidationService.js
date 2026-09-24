@@ -158,10 +158,10 @@ function validateResumeHtml(html, context = {}) {
     const summaryWords = stripTags(summaryHtml).split(/\s+/).filter(Boolean).length;
     add(
         'summary_about_me_depth',
-        summaryWords >= 80,
-        summaryWords >= 80
+        summaryWords >= 50 && summaryWords <= 120,
+        summaryWords >= 50 && summaryWords <= 120
             ? `Summary About Me depth OK (${summaryWords} words)`
-            : `Summary is too thin (${summaryWords} words) — expand to an About Me of ~90–140 words (open with bold current title + bold total years, then systems/stacks)`
+            : `Summary length off (${summaryWords} words) — expand to ~55–90 words (open with exact years phrase, then bench employer)`
     );
 
     const expHtml = extractSectionHtml(body, ['work experience', 'professional experience', 'experience']);
@@ -278,7 +278,7 @@ function buildStackValidationFeedback(validation) {
         ...validation.issues.map((issue) => `- ${issue}`),
         'Put each missing stack as literal text inside Experience <li> bullets. Example:',
         '<li>Shipped checkout in <strong>React</strong> and TypeScript on Node.js services after latency complaints; p95 fell from ~800ms to ~150ms.</li>',
-        'If Summary is thin: expand to ~90–140 words; FIRST sentence MUST bold current job title + total years (e.g. <strong>Software Engineer</strong> with <strong>12 years</strong>…), then systems/stacks.',
+        'If Summary is thin: expand to ~55–90 words; FIRST sentence MUST use the exact years phrase (e.g. <strong>15+ years</strong>…), then most-recent bench employer. Bold employers, 1–2 stacks, and metrics.',
         'If Experience bullets are thin: rewrite most bullets to 28–50 words with problem + action + result; recent role 5–7 bullets.'
     ].filter(Boolean).join('\n');
 }

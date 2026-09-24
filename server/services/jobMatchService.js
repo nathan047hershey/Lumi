@@ -415,6 +415,8 @@ async function generateResumeForPair(profile, jobLink, font = null, genOptions =
             font: resolvedFont,
             templateId,
             jobUrl: jobLink.job_apply_url || jobLink.source_url || '',
+            jobRole: jobRole,
+            coreSkills: jobLink.core_skills || jobLink.techstack || '',
             _cvLockHeld: !!genOptions._cvLockHeld
         }
     );

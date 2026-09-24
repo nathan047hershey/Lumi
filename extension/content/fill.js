@@ -761,15 +761,15 @@
                 const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
                 if (lab) {
                     const t = cleanLabelText(lab.innerText || lab.textContent || '');
-                    if (t) return t;
+                    if (t && !isYesNoOnlyLabel(t)) return t;
                 }
             } catch (_) { /* ignore */ }
         }
         const aria = el.getAttribute('aria-label');
         if (aria && aria.trim().length > 2) {
             const t = cleanLabelText(aria);
-            // Keep searching when aria is just the placeholder ("Select...")
-            if (t) return t;
+            // Keep searching when aria is just the placeholder ("Select...") or Yes/No option.
+            if (t && !isYesNoOnlyLabel(t)) return t;
         }
         const labelled = el.getAttribute('aria-labelledby');
         if (labelled) {
@@ -782,7 +782,7 @@
                 .join(' ')
                 .trim();
             const t = cleanLabelText(text);
-            if (t) return t;
+            if (t && !isYesNoOnlyLabel(t)) return t;
         }
 
         const wrap = fieldShell(el);
@@ -802,7 +802,7 @@
             );
             if (ownLab) {
                 const t = cleanLabelText(ownLab.innerText || ownLab.textContent || '');
-                if (t && t.length < 200 && !isPlaceholderLabelText(t)) return t;
+                if (t && t.length < 200 && !isPlaceholderLabelText(t) && !isYesNoOnlyLabel(t)) return t;
             }
             // Only clone small shells — never dump a whole questions section.
             const inputsInWrap = wrap.querySelectorAll('input, textarea, select').length;
@@ -819,7 +819,8 @@
                         .map((s) => cleanLabelText(s))
                         .filter((s) => s && !isPlaceholderLabelText(s));
                     // Prefer a real question line over section headers like "ZIP CODE".
-                    const best = lines.find((s) => /\?/.test(s) || s.length >= 18) || lines[0];
+                    const best = lines.find((s) => (/\?/.test(s) || s.length >= 18) && !isYesNoOnlyLabel(s))
+                        || lines.find((s) => !isYesNoOnlyLabel(s));
                     if (best && best.length < 400) return best;
                 } catch (_) { /* ignore */ }
             }
@@ -1541,7 +1542,8 @@
         if (/\bU\.?\s*S\.?\s*person\b|whether you are a\s*["“']?U\.?\s*S\.?\s*person/i.test(hay)) {
             return 'us_person_yes';
         }
-        if (/\b(are you a former\b|former\b.{0,48}\bemployee|employed by\b|ever been employed|have (?:you )?ever been employed|worked\s+(?:before\s+)?(?:at|for|with)\s+(us|this|our|the\s+company|here)|ever\s+worked\s+(?:before\s+)?(?:at|for|with)\s+(us|this|our|here)|previously\s+worked\s+(at|for|here|with\s+(us|this|our)|before)|have you (?:ever )?worked\s+(?:before\s+)?(?:(?:at|for|with)\s+)?(?:this|our|the)\s+(?:company|employer|organization|firm)|(?:related|affiliate|subsidiary|sister|parent|associated)\s+(?:company|companies|employer|entity|role|position)|related\s+(?:company|role|position|employer)|same\s+(?:company|employer)|permanent or temporary employee|(?:currently|previously)\s+(?:\([^)]*\)\s*)?working\s+for|working\s+for\b.{0,80}\b(contractor|contingent)|contractor or contingent|contingent worker|as an?\s+(employee|contractor|contingent)|employee or (?:a )?contractor|internal (?:candidate|employee)|applied (?:here|to (?:us|this)|before))\b/i.test(hay)) {
+        if (/\b(are you a former\b|former\b.{0,48}\bemployee|employed by\b|ever been employed|have (?:you )?ever been employed|worked\s+(?:before\s+)?(?:at|for|with)\s+(us|this|our|the\s+company|here)|ever\s+worked\s+(?:before\s+)?(?:at|for|with)\s+(us|this|our|here)|previously\s+worked\s+(at|for|here|with\s+(us|this|our)|before)|have you (?:ever )?worked\s+(?:before\s+)?(?:(?:at|for|with)\s+)?(?:this|our|the)\s+(?:company|employer|organization|firm)|(?:related|affiliate|subsidiary|sister|parent|associated)\s+(?:company|companies|employer|entity|role|position)|related\s+(?:company|role|position|employer)|same\s+(?:company|employer)|permanent or temporary employee|(?:currently|previously)\s+(?:\([^)]*\)\s*)?working\s+for|working\s+for\b.{0,80}\b(contractor|contingent)|contractor or contingent|contingent worker|as an?\s+(employee|contractor|contingent)|employee or (?:a )?contractor|internal (?:candidate|employee)|applied (?:here|to (?:us|this)|before))\b/i.test(hay)
+            || CONFLICT_NO_RE.test(hay)) {
             return 'previous_employer_no';
         }
         // Background / drug screen consent → Yes
@@ -1739,8 +1741,12 @@
         if (labelLooksLikeSponsorship(lab)) {
             return sponsorshipAnswerFromProfile(profile);
         }
-        if (/\b(have you (ever )?worked|previously\s+worked|worked\s+(at|for)\b|former\b.{0,48}\bemployee|are you a former\b|(?:currently|previously).{0,40}working\s+for|contractor or contingent|contingent worker)\b/i.test(lab)) {
+        if (labelLooksLikeHardNo(lab) || labelLooksLikeConflictNo(lab)
+            || /\b(have you (ever )?worked|previously\s+worked|worked\s+(at|for)\b|former\b.{0,48}\bemployee|are you a former\b|(?:currently|previously).{0,40}working\s+for|contractor or contingent|contingent worker)\b/i.test(lab)) {
             return 'No';
+        }
+        if (labelLooksLikeWorkAuthYes(lab)) {
+            return 'Yes';
         }
         if (/^yes\.?$/i.test(v) && (labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab))) {
             return labelLooksLikeSkillList(lab)
@@ -2706,10 +2712,10 @@
         let wantRaw = String(value || '').trim();
         // Hard safety: sponsorship radios must never stay on Yes unless profile is exact Yes.
         // Exception: "authorized … without sponsorship?" is work-auth Yes, not sponsorship No.
-        if (labelLooksLikeAuthorizedWithoutSponsorship(field?.label)) {
-            wantRaw = normalizeWorkAuthorization(
-                profileForSponsor || { work_authorization: wantRaw || 'Yes' }
-            ) || 'Yes';
+        if (labelLooksLikeAuthorizedWithoutSponsorship(field?.label)
+            || field?.kind === 'work_authorization'
+            || labelLooksLikeWorkAuthYes(field?.label)) {
+            wantRaw = 'Yes';
         } else if (
             field?.kind === 'disability_status'
             || /\b(disabilit(?:y|ies)|disabled|\bada\b)\b/i.test(String(field?.label || ''))
@@ -2719,12 +2725,12 @@
             field?.kind === 'requires_sponsorship'
             || labelLooksLikeSponsorship(field?.label)
         ) {
-            wantRaw = sponsorshipAnswerFromProfile(
-                profileForSponsor || { requires_sponsorship: wantRaw }
-            );
+            wantRaw = 'No';
         } else if (
             field?.kind === 'previous_employer_no'
             || field?.kind === 'sanctioned_countries_no'
+            || labelLooksLikeConflictNo(field?.label)
+            || labelLooksLikeHardNo(field?.label)
             || /\b(have you (ever )?worked|previously\s+worked|worked\s+(at|for)\b|former\b.{0,48}\bemployee|are you a former\b|(?:currently|previously).{0,40}working\s+for|contractor or contingent|contingent worker|permanent or temporary employee)\b/i.test(String(field?.label || ''))
         ) {
             wantRaw = 'No';
@@ -2863,6 +2869,20 @@
             && /\bwithout\s+(?:visa\s+)?sponsorship\b/.test(lab);
     }
 
+    const CONFLICT_NO_RE = /\b(philanthropic|stand together|worked for this organization|federal.{0,80}government|state, or local government|elected office|newly elected|candidate for.{0,80}(federal|state|local|elected|office)|political party|representative of a political|employed by.{0,80}(federal|state|local|government|political))\b/i;
+
+    function isYesNoOnlyLabel(text) {
+        return /^(yes|no|y|n)(\s*\/\s*(yes|no))?$/i.test(String(text || '').replace(/\s+/g, ' ').trim());
+    }
+    function firstQuestionSlice(label) {
+        const lab = String(label || '').replace(/\s+/g, ' ').trim();
+        const idx = lab.indexOf('?');
+        return idx >= 0 ? lab.slice(0, idx + 1) : lab;
+    }
+    function labelLooksLikeConflictNo(label) {
+        return CONFLICT_NO_RE.test(String(label || ''));
+    }
+
     /** Local essay when AI answers are missing / skipped (time budget). */
     function fallbackEssayForQuestion(label, profile, jobDescription = '') {
         const lab = String(label || '').toLowerCase();
@@ -2954,11 +2974,27 @@
 
     function labelLooksLikeSponsorship(label) {
         if (labelLooksLikeAuthorizedWithoutSponsorship(label)) return false;
-        const lab = String(label || '').toLowerCase();
+        const lab = firstQuestionSlice(label).toLowerCase();
         return /\b(sponsor|sponsorship|visa[\s_-]*sponsor|visa[\s_-]*support|require.*visa|need.*visa|need\s+visa\s+sponsorship|employment[\s_-]*visa|h-?1b|visa[\s_-]*status)\b/.test(lab)
             || /\b(now or in the future).{0,80}\b(sponsor|visa)/.test(lab)
             || /\bwill you.{0,80}\b(require|need).{0,60}\b(sponsor|visa)/.test(lab)
             || /\bneed\b.{0,40}\bvisa\b.{0,40}\bsponsor/.test(lab);
+    }
+
+    function labelLooksLikeWorkAuthYes(label) {
+        const first = firstQuestionSlice(label);
+        if (labelLooksLikeSponsorship(first) && !labelLooksLikeAuthorizedWithoutSponsorship(first)) {
+            return false;
+        }
+        return /\b(legally authorized|authorized to work|authorised to work|eligible to work|work authorization|right to work|legally[\s_-]*authorized)\b/i.test(first)
+            || (/\b(authoriz|authoris)\b/i.test(first) && /\bwork\b/i.test(first) && !/\bsponsor/i.test(first));
+    }
+
+    function labelLooksLikeHardNo(label) {
+        const lab = String(label || '');
+        return labelLooksLikeSponsorship(lab)
+            || labelLooksLikeConflictNo(lab)
+            || /\b(have you (ever )?worked|previously\s+worked|worked\s+(at|for)\b|former\b.{0,48}\bemployee|are you a former\b|employed by\b)\b/i.test(lab);
     }
 
     function personalValue(kind, profile, field = null) {
@@ -3215,7 +3251,14 @@
         if (kind === 'previous_employer_no' || kind === 'requires_sponsorship' || kind === 'sanctioned_countries_no') {
             return kind;
         }
-        if (/\b(have you (ever )?worked|previously\s+worked|worked\s+(at|for)\b|former\b.{0,48}\bemployee|are you a former\b|(?:currently|previously).{0,40}working\s+for|contractor or contingent|contingent worker)\b/i.test(lab)) {
+        if (labelLooksLikeWorkAuthYes(lab) || labelLooksLikeAuthorizedWithoutSponsorship(lab)) {
+            return 'work_authorization';
+        }
+        if (labelLooksLikeSponsorship(lab) && !labelLooksLikeWorkAuthYes(lab)) {
+            return 'requires_sponsorship';
+        }
+        if (labelLooksLikeConflictNo(lab)
+            || /\b(have you (ever )?worked|previously\s+worked|worked\s+(at|for)\b|former\b.{0,48}\bemployee|are you a former\b|(?:currently|previously).{0,40}working\s+for|contractor or contingent|contingent worker)\b/i.test(lab)) {
             return 'previous_employer_no';
         }
         if (labelLooksLikeAuthorizedWithoutSponsorship(lab)) {
@@ -3718,6 +3761,8 @@
                     || /\bU\.?\s*S\.?\s*person\b/i.test(String(field.label || ''))) {
                     value = 'Yes';
                 } else if (field.kind === 'previous_employer_no' || field.kind === 'sanctioned_countries_no'
+                    || labelLooksLikeConflictNo(field.label)
+                    || labelLooksLikeHardNo(field.label)
                     || /\b(have you (ever )?worked|previously\s+worked|former\b.{0,48}\bemployee|are you a former\b|employed by\b|ever been employed|have (?:you )?ever been employed|worked\s+(at|for)\b|ever\s+worked\s+(at|for)|(?:currently|previously).{0,40}working\s+for|contractor or contingent|contingent worker|permanent or temporary employee)\b/i.test(String(field.label || ''))) {
                     value = 'No';
                 } else if (field.kind === 'disability_status'
@@ -3814,9 +3859,14 @@
             const current = readFieldCurrent(field, el);
             const forcedKind = effectiveRequiredKind(field);
             const wrongSponsorYes = (forcedKind === 'requires_sponsorship' || forcedKind === 'previous_employer_no'
-                || forcedKind === 'sanctioned_countries_no')
+                || forcedKind === 'sanctioned_countries_no'
+                || labelLooksLikeConflictNo(String(field.label || ''))
+                || labelLooksLikeHardNo(String(field.label || '')))
                 && /\byes\b/i.test(String(current || ''))
                 && /^no$/i.test(String(value || '').trim());
+            const wrongWorkAuthNo = (forcedKind === 'work_authorization'
+                || labelLooksLikeWorkAuthYes(String(field.label || '')))
+                && /^no\b/i.test(String(current || '').trim());
             const wrongDisabilityYes = (
                 forcedKind === 'disability_status'
                 || /\bdisabilit/i.test(String(field.label || ''))
@@ -3824,12 +3874,12 @@
                 && /^yes\b/i.test(String(current || ''))
                 && /have a disability|have had/i.test(String(current || ''))
                 && !/do not|don'?t|have not had/i.test(String(current || ''));
-            if (!wrongSponsorYes && !wrongDisabilityYes && current && valuesRoughlyMatch(value, current, field.kind)) {
+            if (!wrongSponsorYes && !wrongWorkAuthNo && !wrongDisabilityYes && current && valuesRoughlyMatch(value, current, field.kind)) {
                 skippedAlready += 1;
                 continue;
             }
             // One-time fill: keep the first real answer (later AI / leftover / top-up must not rewrite).
-            if (!wrongSponsorYes && !wrongDisabilityYes && current && !isPlaceholderValue(current)) {
+            if (!wrongSponsorYes && !wrongWorkAuthNo && !wrongDisabilityYes && current && !isPlaceholderValue(current)) {
                 const labKeep = String(field.label || '');
                 const wrongYesEssay = /^yes\.?$/i.test(String(current).trim())
                     && (labelLooksLikeSkillList(labKeep) || labelLooksLikeSkillDescribe(labKeep)
@@ -4386,6 +4436,8 @@
                 const hardNo = field.kind === 'previous_employer_no'
                     || field.kind === 'requires_sponsorship'
                     || field.kind === 'sanctioned_countries_no'
+                    || labelLooksLikeConflictNo(lab)
+                    || labelLooksLikeHardNo(lab)
                     || /\b(have you (ever )?worked|previously\s+worked|former\b.{0,48}\bemployee|require sponsorship|need sponsorship)\b/i.test(lab);
                 if (!hardNo) continue;
                 let el = findElByField(field) || findByLabelHint(lab);
@@ -4507,14 +4559,22 @@
                     want = skillListAnswer(profile, lab);
                 } else if (field.kind === 'skill_project_brief' || labelLooksLikeSkillDescribe(lab)) {
                     want = skillDescribeAnswer(profile, lab);
+                } else if (labelLooksLikeHardNo(lab) || field.kind === 'previous_employer_no'
+                    || field.kind === 'requires_sponsorship' || field.kind === 'sanctioned_countries_no'
+                    || labelLooksLikeConflictNo(lab)) {
+                    want = 'No';
+                } else if (field.kind === 'work_authorization' || labelLooksLikeWorkAuthYes(lab)) {
+                    want = 'Yes';
                 } else if (
                     field.kind === 'skill_experience'
-                    || /\b(do you have|have you)\b.{0,80}\bexperience\b/i.test(lab)
+                    || (/\b(do you have|have you)\b.{0,80}\bexperience\b/i.test(lab) && !labelLooksLikeHardNo(lab))
                 ) {
                     want = 'Yes';
                 } else if (el && (el.tagName === 'SELECT' || field.combobox
-                    || el.getAttribute?.('role') === 'combobox')) {
-                    if (/\b(are|do|have|will|can|able|ability|attend|confirm|reconfirm|consent|agree)\b/i.test(lab)) {
+                    || el.getAttribute?.('role') === 'combobox'
+                    || el.type === 'radio' || field.type === 'radio')) {
+                    if (/\b(are|do|have|will|can|able|ability|attend|confirm|reconfirm|consent|agree)\b/i.test(lab)
+                        && !labelLooksLikeHardNo(lab) && !labelLooksLikeConflictNo(lab)) {
                         want = 'Yes';
                     }
                 }
@@ -4525,7 +4585,9 @@
                     || el.getAttribute?.('role') === 'combobox'
                     || !!el.getAttribute?.('aria-autocomplete');
                 let ok = false;
-                if (el.tagName === 'SELECT') {
+                if (el.type === 'radio' || field.type === 'radio') {
+                    ok = !!clickRadioMatching(field, want, profile);
+                } else if (el.tagName === 'SELECT') {
                     ok = await fillNativeSelectHuman(el, want, field.kind || '');
                 } else if (selectLike) {
                     ok = await fillComboboxSimplify(el, want, {

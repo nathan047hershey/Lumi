@@ -157,7 +157,8 @@ async function generateValidatedDraft(profile, jobDescription, providedCompany, 
             skipDocx: true,
             validationFeedback,
             coreSkills,
-            jobUrl: body.job_url || body.jobUrl || existingApplication?.job_url || ''
+            jobUrl: body.job_url || body.jobUrl || existingApplication?.job_url || '',
+            jobRole: body.job_role || body.jobRole || existingApplication?.job_role || ''
         });
 
         lastValidation = validateResumeHtml(result.resumeHtml, {

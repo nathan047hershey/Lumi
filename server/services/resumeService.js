@@ -4,7 +4,7 @@ const HTMLtoDOCX = require('html-to-docx');
 const cheerio = require('cheerio');
 const { getProviderConfig, getAlternateMinimaxConfig, isMinimaxQuotaError, promoteMinimaxSlot, getAlternateGroqConfig, isGroqQuotaError, promoteGroqSlot, hasUsableProviderKey } = require('./settingsService');
 const { buildContactHtml, buildContactPromptHint } = require('./resumeContactHeader');
-const { polishResumeHtml, extractCareerFacts, buildCandidateBackground } = require('./resumePolishService');
+const { polishResumeHtml, extractCareerFacts } = require('./resumePolishService');
 const { buildCompactSystemPrompt, buildCompactUserPrompt } = require('./resumePromptBuilder');
 const { asNodeBuffer } = require('../utils/asNodeBuffer');
 
@@ -106,7 +106,8 @@ function stripReasoningBlocks(text) {
 function looksLikeResumeHtml(html) {
     const s = String(html || '').trim();
     if (!s || s.length < 400) return false;
-    if (!/<h1\b/i.test(s) || !/<h2\b/i.test(s)) return false;
+    // Body-only drafts start at <h2>; header inject adds <h1> afterward.
+    if (!/<h2\b/i.test(s)) return false;
     if (!/<h2[^>]*>[\s\S]{0,80}?(?:summary|skills|experience|education)/i.test(s)) return false;
     // Need real structure, not a few tags quoted in prose
     const tagCount = (s.match(/<\/?(?:h1|h2|p|ul|li|strong)\b/gi) || []).length;
@@ -120,20 +121,20 @@ function looksLikeResumeHtml(html) {
         || /\bOutput resume HTML only\b/i.test(s)
         || /\bBEGIN HTML\b/i.test(s)
         || (/\bwe (?:need to|must|should) (?:decide|produce|follow|craft|include)\b/i.test(s)
-            && /MUST PASS|PRECOMPUTED|Not a chatbot brochure/i.test(s))
+            && /MUST PASS|PRECOMPUTED|Not a chatbot brochure|JD-FIRST TAILORING/i.test(s))
         || (/\blet'?s (?:aim|list|think|craft|stick to)\b/i.test(s)
             && /Core Skills|bullet/i.test(s)
             && tagCount < 40)
         || (/Tags:\s*h2,\s*p,\s*strong/i.test(s) && !/<ul\b/i.test(s))
-        || (/No planning/i.test(s) && /Start with <h1>/i.test(s));
+        || (/No planning/i.test(s) && /Start with <h[12]/i.test(s));
     if (looksLikeCot) return false;
     return true;
 }
 
-/** If CoT wraps a finished resume, slice from the first real <h1>. */
+/** If CoT wraps a finished resume, slice from the first real <h1> or <h2>. */
 function extractEmbeddedResumeHtml(text) {
     const s = String(text || '');
-    const idx = s.search(/<h1\b[^>]*>/i);
+    const idx = s.search(/<h[12]\b[^>]*>/i);
     if (idx < 0) return '';
     const sliced = s.slice(idx).trim();
     return looksLikeResumeHtml(sliced) ? sliced : '';
@@ -182,10 +183,10 @@ function isResumeAiRequest(requestConfig) {
     if (requestConfig?.providerOverride === 'minimax'
         && /MiniMax-M2/i.test(String(requestConfig?.data?.model || ''))) {
         const blob = (requestConfig?.data?.messages || []).map((m) => m.content || '').join('\n');
-        return /<h1>|Resume HTML|Output ONLY HTML/i.test(blob);
+        return /<h1>|<h2>|Resume HTML|Output ONLY HTML/i.test(blob);
     }
     const blob = (requestConfig?.data?.messages || []).map((m) => m.content || '').join('\n');
-    return /Resume HTML for |Output ONLY HTML starting with <h1>|PRECOMPUTED: title=/i.test(blob);
+    return /Resume HTML for |Resume body HTML for |Output ONLY HTML starting with <h[12]|CANDIDATE TOTAL EXPERIENCE|PRECOMPUTED: title=/i.test(blob);
 }
 
 function pinResumeToMinimax(requestConfig) {
@@ -503,6 +504,31 @@ function stripLongDashesFromResumeHtml(html) {
 }
 
 /**
+ * Convert education <table class="resume-role-table"> drafts into the
+ * two-line paragraph form the DOCX renderer already understands.
+ */
+function educationTableToParagraphs(body) {
+    return String(body || '').replace(/<table\b[^>]*>[\s\S]*?<\/table>/gi, (table) => {
+        const cells = [...table.matchAll(/<td\b[^>]*>([\s\S]*?)<\/td>/gi)].map((m) =>
+            String(m[1] || '')
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim()
+        ).filter(Boolean);
+        if (cells.length >= 3) {
+            const inst = cells[0];
+            const years = cells[1];
+            const degree = cells[2];
+            return `<p><strong>${degree}</strong></p>\n<p class="edu-meta">${inst} | ${years}</p>`;
+        }
+        if (cells.length === 2) {
+            return `<p><strong>${cells[0]}</strong></p>\n<p class="edu-meta">${cells[1]}</p>`;
+        }
+        return cells.map((c) => `<p>${c}</p>`).join('\n');
+    });
+}
+
+/**
  * Force Education lines into: Degree | School | YYYY - YYYY
  * (whole line bold). Fixes common AI mistakes: school-first order,
  * bullets, missing years, city/state after school.
@@ -635,7 +661,7 @@ function normalizeEducationSection(resumeHtml) {
         if (s.key !== 'education') return s.block;
         const h2Match = s.block.match(/^([\s\S]*?<h2\b[^>]*>[\s\S]*?<\/h2>)/i);
         const h2 = h2Match ? h2Match[1] : '<h2>Education</h2>';
-        const body = h2Match ? s.block.slice(h2Match[1].length) : s.block;
+        const body = educationTableToParagraphs(h2Match ? s.block.slice(h2Match[1].length) : s.block);
         const lines = [];
         const pRe = /<p\b[^>]*>([\s\S]*?)<\/p>|<li\b[^>]*>([\s\S]*?)<\/li>/gi;
         let m;
@@ -887,6 +913,31 @@ function generateRandomWorkModeSchedule(jobCount, rng) {
     return out;
 }
 
+/**
+ * The layout engine only right-aligns a job line when the whole row is
+ * one <strong>Title | Company | Location | Dates</strong>. The updated
+ * prompt used to ask for split <strong> tags and class names, which
+ * rendered as a flat left-aligned line. Collapse those rows back.
+ */
+function normalizeExperienceJobLines(resumeHtml) {
+    const { header, sections } = splitResumeSections(resumeHtml);
+    if (!sections.length) return resumeHtml;
+    const yearRe = /\b(?:19|20)\d{2}\b/;
+    const fixed = sections.map((s) => {
+        if (s.key !== 'experience') return s.block;
+        return s.block.replace(/<p\b[^>]*>[\s\S]*?<\/p>/gi, (para) => {
+            const text = para
+                .replace(/<[^>]+>/g, ' ')
+                .replace(/\s+/g, ' ')
+                .trim();
+            const parts = text.split(/\s*\|\s*/).map((p) => p.trim()).filter(Boolean);
+            if (parts.length < 3 || !yearRe.test(text)) return para;
+            return `<p><strong>${parts.join(' | ')}</strong></p>`;
+        });
+    });
+    return header + fixed.join('');
+}
+
 function applyWorkModeOverride(resumeHtml, workModes) {
     if (!resumeHtml || typeof resumeHtml !== 'string') return resumeHtml;
     if (!Array.isArray(workModes) || workModes.length === 0) return resumeHtml;
@@ -896,7 +947,7 @@ function applyWorkModeOverride(resumeHtml, workModes) {
     // First pass: count how many job-title lines exist in the document so
     // we can build a schedule of exactly the right length (and not bleed
     // extra entries into education/bullets which never match the regex).
-    const jobLinePattern = /<p><strong>((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)<\/strong><\/p>/gi;
+    const jobLinePattern = /<p\b[^>]*>\s*<strong>((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)<\/strong>\s*<\/p>/gi;
     let jobCount = 0;
     while (jobLinePattern.exec(resumeHtml) !== null) jobCount++;
 
@@ -919,7 +970,7 @@ function applyWorkModeOverride(resumeHtml, workModes) {
 
     // Second pass: actually rewrite. We re-create the regex with `lastIndex`
     // resets so the closure capture works cleanly inside `replace`.
-    const lineRe = /<p><strong>((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)<\/strong><\/p>/gi;
+    const lineRe = /<p\b[^>]*>\s*<strong>((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)\s*\|\s*((?:[^<]|<(?!strong))*?)<\/strong>\s*<\/p>/gi;
     let idx = 0;
     return resumeHtml.replace(lineRe, (match, title, company, _location, dates) => {
         const cleanTitle = String(title).trim();
@@ -1085,7 +1136,8 @@ async function generateResume(profile, jobDescription, providedCompanyName = nul
             contactHint,
             coreSkills: options.coreSkills || '',
             facts: careerFacts,
-            validationFeedback: options.validationFeedback || ''
+            validationFeedback: options.validationFeedback || '',
+            jobRole: options.jobRole || options.job_role || ''
         });
         const promptChars = systemPrompt.length + userPrompt.length;
 
@@ -1180,7 +1232,7 @@ async function generateResume(profile, jobDescription, providedCompanyName = nul
                         assistantMsg,
                         {
                             role: 'user',
-                            content: 'Stop thinking. Output the complete resume HTML now, starting with <h1>. No prose.'
+                            content: 'Stop thinking. Output the complete resume HTML now, starting with <h2>SUMMARY</h2>. Job lines must be <p><strong>Role | Company | Location | Dates</strong></p>. Education is <p><strong>Degree</strong></p><p>School | YYYY - YYYY</p>. No tables. No prose. No <h1> or contact line.'
                         }
                     ],
                     max_tokens: 12000,
@@ -1207,11 +1259,6 @@ async function generateResume(profile, jobDescription, providedCompanyName = nul
 
             let messages = null;
             if (entry.compactRetry) {
-                const shortBg = buildCandidateBackground(profile, { maxLen: 5000 });
-                const shortJd = String(jobDescription || '').slice(0, 1500);
-                const name = `${profile.first_name || ''} ${profile.last_name || ''}`.trim() || 'Candidate';
-                const yoe = careerFacts.totalYears > 0 ? careerFacts.totalYears : null;
-                const titleHint = careerFacts.currentTitle || 'Software Engineer';
                 messages = [
                     {
                         role: 'system',
@@ -1219,16 +1266,17 @@ async function generateResume(profile, jobDescription, providedCompanyName = nul
                     },
                     {
                         role: 'user',
-                        content: [
-                            `Resume HTML for ${name}. Output ONLY HTML starting with <h1>.`,
-                            `PRECOMPUTED: title=${titleHint}; years=${yoe != null ? yoe : 'from work history'} — copy years exactly in Summary opener.`,
-                            `Contact:\n${contactHint}`,
-                            `Background (use these employers/dates exactly):\n${shortBg}`,
-                            `JD (tailor emphasis only):\n${shortJd}`,
-                            options.coreSkills ? `Bold these stacks: ${options.coreSkills}` : '',
-                            options.validationFeedback || '',
-                            'Start with <h1> now. Do not explain. Do not plan.'
-                        ].filter(Boolean).join('\n\n')
+                        content: buildCompactUserPrompt({
+                            profile,
+                            jobDescription,
+                            contactHint,
+                            coreSkills: options.coreSkills || '',
+                            facts: careerFacts,
+                            validationFeedback: options.validationFeedback || '',
+                            jobRole: options.jobRole || options.job_role || '',
+                            backgroundMaxLen: 5000,
+                            jdMax: 1500
+                        })
                     }
                 ];
             }
@@ -1323,7 +1371,7 @@ async function generateResume(profile, jobDescription, providedCompanyName = nul
 
         // Remove any introductory text before the HTML (like "Here's a tailored...")
         // Look for the start of actual HTML content
-        const htmlStartMatch = resumeHtml.match(/<!DOCTYPE html>|<html|<h1>/i);
+        const htmlStartMatch = resumeHtml.match(/<!DOCTYPE html>|<html|<h1>|<h2/i);
         if (htmlStartMatch && htmlStartMatch.index > 0) {
             resumeHtml = resumeHtml.substring(htmlStartMatch.index);
         }
@@ -1401,7 +1449,7 @@ async function generateResume(profile, jobDescription, providedCompanyName = nul
 
         // Step 4: handle the same dedup for <p> blocks (Summary, Core
         // Skills, education lines, contact line) — same rule.
-        resumeHtml = resumeHtml.replace(/<p>([\s\S]*?)<\/p>/gi, (match, inner) => {
+        resumeHtml = resumeHtml.replace(/<p\b([^>]*)>([\s\S]*?)<\/p>/gi, (match, attrs, inner) => {
             const seen = new Set();
             const cleaned = inner.replace(/<strong>([\s\S]*?)<\/strong>/gi, (m, text) => {
                 const key = String(text).trim().toLowerCase();
@@ -1410,7 +1458,7 @@ async function generateResume(profile, jobDescription, providedCompanyName = nul
                 seen.add(key);
                 return m;
             });
-            return '<p>' + cleaned + '</p>';
+            return `<p${attrs}>` + cleaned + '</p>';
         });
 
         // Ensure every <li> bullet ends with a period. The AI is told to do this,
@@ -1658,6 +1706,7 @@ const UNIT_PATTERN = '(?:years?|yrs?|%+|percent|x|ms|s|engineers?|developers?|se
         // Reorder sections to a canonical order:
         //   Summary → Skills/Core Skills/Technical Skills → Work Experience → Education
         resumeHtml = reorderResumeSections(resumeHtml);
+        resumeHtml = normalizeExperienceJobLines(resumeHtml);
         resumeHtml = normalizeEducationSection(resumeHtml);
 
         // Override the location segment on each job-title line. The most
@@ -1693,7 +1742,7 @@ const UNIT_PATTERN = '(?:years?|yrs?|%+|percent|x|ms|s|engineers?|developers?|se
 
         const bodyOk = looksLikeResumeHtml(resumeHtml)
             || ((/<h2\b/i.test(resumeHtml) || /<ul\b/i.test(resumeHtml))
-                && !/which one to follow|Not a chatbot brochure/i.test(resumeHtml));
+                && !/which one to follow|Not a chatbot brochure|JD-FIRST TAILORING/i.test(resumeHtml));
         if (!bodyOk) {
             if (!options._headerRetry) {
                 console.warn('[resume] header-only or CoT draft; auto-retrying once with stronger instructions');
@@ -1704,9 +1753,9 @@ const UNIT_PATTERN = '(?:years?|yrs?|%+|percent|x|ms|s|engineers?|developers?|se
                         options.validationFeedback || '',
                         'CRITICAL FIX: Your previous output was HEADER ONLY or reasoning text (not a resume).',
                         'You MUST output a COMPLETE resume body with ALL of:',
-                        '<h2>Summary</h2> (90+ words), <h2>Core Skills</h2>,',
-                        '<h2>Work Experience</h2> with multiple <ul><li>…</li></ul> bullets per job,',
-                        'and <h2>Education</h2>. Do not stop after the contact header. No planning commentary.'
+                        '<h2>SUMMARY</h2> (55-90 words), <h2>SKILLS</h2>,',
+                        '<h2>EXPERIENCE</h2> with <p><strong>Role | Company | Location | Dates</strong></p> and <ul><li> bullets per job,',
+                        'and <h2>EDUCATION</h2> as <p><strong>Degree</strong></p><p>School | YYYY - YYYY</p>. No tables. Start at SUMMARY. No <h1> or contact. No planning commentary.'
                     ].filter(Boolean).join('\n')
                 });
             }

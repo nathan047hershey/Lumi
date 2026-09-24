@@ -30,9 +30,22 @@
     const NON_COMPETE_RE = /\b(non[\s_-]*compete|noncompete|restrictive covenant|garden leave|subject to .{0,40}(non[\s_-]*compete|covenant))\b/i;
     /** Incomplete degree / program → always No. */
     const INCOMPLETE_EDU_RE = /\b(incomplete|not complete|did not complete|unfinished)\b.{0,60}\b(degree|program|education|school|studies)\b|\b(degree|program|education).{0,40}\b(incomplete|not complete|unfinished)\b/i;
+    /** Gov / political / org-conflict Yes/No → always No. */
+    const CONFLICT_NO_RE = /\b(philanthropic|stand together|worked for this organization|federal.{0,80}government|state, or local government|elected office|newly elected|candidate for.{0,80}(federal|state|local|elected|office)|political party|representative of a political|employed by.{0,80}(federal|state|local|government|political))\b/i;
 
     function labelLooksLikeFormerEmployee(label) {
         return FORMER_EMPLOYEE_RE.test(String(label || ''));
+    }
+    function labelLooksLikeConflictNo(label) {
+        return CONFLICT_NO_RE.test(String(label || ''));
+    }
+    function isYesNoOnlyLabel(text) {
+        return /^(yes|no|y|n)(\s*\/\s*(yes|no))?$/i.test(String(text || '').replace(/\s+/g, ' ').trim());
+    }
+    function firstQuestionSlice(label) {
+        const lab = String(label || '').replace(/\s+/g, ' ').trim();
+        const idx = lab.indexOf('?');
+        return idx >= 0 ? lab.slice(0, idx + 1) : lab;
     }
     function labelLooksLikeSkillList(label) {
         const hay = String(label || '').toLowerCase();
@@ -158,13 +171,13 @@
             const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
             if (lab) {
                 const t = cleanLabelText(lab.innerText || lab.textContent || '');
-                if (t) return t.slice(0, 200);
+                if (t && !isYesNoOnlyLabel(t)) return t.slice(0, 200);
             }
         }
         const aria = el.getAttribute('aria-label');
         if (aria && !isPlaceholderLabelText(aria)) {
             const t = cleanLabelText(aria);
-            if (t) return t.slice(0, 200);
+            if (t && !isYesNoOnlyLabel(t)) return t.slice(0, 200);
         }
         const labelled = el.getAttribute('aria-labelledby');
         if (labelled) {
@@ -176,7 +189,7 @@
                 .filter(Boolean)
                 .join(' ');
             const t = cleanLabelText(text);
-            if (t) return t.slice(0, 200);
+            if (t && !isYesNoOnlyLabel(t)) return t.slice(0, 200);
         }
         const wrap = el.closest(
             'label, .field, .form-field, .application-field, [class*="field"], [class*="education"], .form-group'
@@ -188,7 +201,7 @@
                 + '.select__single-value, [class*="single-value"], [class*="menu"]'
             ).forEach((n) => n.remove());
             const t = cleanLabelText((clone.innerText || '').replace(/\s+/g, ' ').trim());
-            if (t) return t.slice(0, 200);
+            if (t && !isYesNoOnlyLabel(t)) return t.slice(0, 200);
         }
         // Previous sibling title (common Greenhouse education / essay layout).
         // Essay prompts are often 100–300 chars — the old <80 cap dropped them and
@@ -214,7 +227,47 @@
                 } catch (_) { /* ignore */ }
             }
         }
+        const nearby = radioQuestionLabel(el);
+        if (nearby) return nearby;
         return cleanLabelText(el.placeholder || el.name || '') || '';
+    }
+
+    function radioQuestionLabel(el) {
+        if (!el) return '';
+        const fieldset = el.closest('fieldset');
+        if (fieldset) {
+            const legend = fieldset.querySelector(':scope > legend');
+            if (legend) {
+                const t = cleanLabelText(legend.innerText || legend.textContent || '');
+                if (t && !isYesNoOnlyLabel(t) && t.length >= 8) return t.slice(0, 420);
+            }
+        }
+        let node = el;
+        for (let depth = 0; depth < 8 && node; depth++) {
+            let prev = node.previousElementSibling;
+            for (let i = 0; i < 8 && prev; i++, prev = prev.previousElementSibling) {
+                const raw = cleanLabelText(prev.innerText || prev.textContent || '');
+                if (!raw || isYesNoOnlyLabel(raw)) continue;
+                const lines = raw.split(/\n/).map((s) => cleanLabelText(s)).filter(Boolean);
+                const q = [...lines].reverse().find((s) => /\?/.test(s) && !isYesNoOnlyLabel(s) && s.length >= 12);
+                if (q) return q.slice(0, 420);
+                if (/\?/.test(raw) || raw.length >= 24) return raw.slice(0, 420);
+            }
+            node = node.parentElement;
+            if (node && /^(FORM|BODY|HTML)$/i.test(node.tagName)) break;
+        }
+        return '';
+    }
+
+    function labelForRadioGroup(group) {
+        const radios = Array.isArray(group) ? group : [];
+        for (const r of radios) {
+            const q = radioQuestionLabel(r);
+            if (q && !isYesNoOnlyLabel(q)) return q;
+        }
+        const raw = radios[0] ? labelFor(radios[0]) : '';
+        if (raw && !isYesNoOnlyLabel(raw)) return raw;
+        return raw || radios[0]?.name || '';
     }
 
     function isRequired(el, label) {
@@ -459,7 +512,7 @@
         if (/\bU\.?\s*S\.?\s*person\b|whether you are a\s*["“']?U\.?\s*S\.?\s*person/i.test(hay)) {
             return 'us_person_yes';
         }
-        if (FORMER_EMPLOYEE_RE.test(hay)) {
+        if (FORMER_EMPLOYEE_RE.test(hay) || CONFLICT_NO_RE.test(hay)) {
             return 'previous_employer_no';
         }
         if (EMPLOYEE_RELATIONSHIP_RE.test(hay)) {
@@ -566,11 +619,29 @@
 
     function labelLooksLikeSponsorship(label) {
         if (labelLooksLikeAuthorizedWithoutSponsorship(label)) return false;
-        const lab = String(label || '').toLowerCase();
+        const lab = firstQuestionSlice(label).toLowerCase();
         return /\b(sponsor|sponsorship|visa[\s_-]*sponsor|visa[\s_-]*support|require.*visa|need.*visa|need\s+visa\s+sponsorship|employment[\s_-]*visa|h-?1b|visa[\s_-]*status)\b/.test(lab)
             || /\b(now or in the future).{0,80}\b(sponsor|visa)/.test(lab)
             || /\bwill you.{0,80}\b(require|need).{0,60}\b(sponsor|visa)/.test(lab)
             || /\bneed\b.{0,40}\bvisa\b.{0,40}\bsponsor/.test(lab);
+    }
+
+    function labelLooksLikeWorkAuthYes(label) {
+        const first = firstQuestionSlice(label);
+        if (labelLooksLikeSponsorship(first) && !labelLooksLikeAuthorizedWithoutSponsorship(first)) {
+            return false;
+        }
+        return /\b(legally authorized|authorized to work|authorised to work|eligible to work|work authorization|right to work|legally[\s_-]*authorized)\b/i.test(first)
+            || (/\b(authoriz|authoris)\b/i.test(first) && /\bwork\b/i.test(first) && !/\bsponsor/i.test(first));
+    }
+
+    function labelLooksLikeHardNo(label) {
+        const lab = String(label || '');
+        return labelLooksLikeSponsorship(lab)
+            || labelLooksLikeFormerEmployee(lab)
+            || labelLooksLikeConflictNo(lab)
+            || labelLooksLikeEmployeeRelationship(lab)
+            || labelLooksLikeNonCompete(lab);
     }
 
     function countEmployersFromProfile(profile) {
@@ -957,7 +1028,7 @@
             byName.get(n).push(r);
         }
         for (const [name, group] of byName) {
-            const label = labelFor(group[0]) || name;
+            const label = labelForRadioGroup(group) || name;
             fields.push({
                 id: `radio_${name}`,
                 label,
@@ -1149,7 +1220,12 @@
             || kind === 'hispanic_latino'
             || kind === 'sanctioned_countries_no'
             || kind === 'employee_relationship_no'
-            || kind === 'non_compete_no';
+            || kind === 'non_compete_no'
+            || kind === 'work_authorization'
+            || labelLooksLikeConflictNo(lab)
+            || labelLooksLikeWorkAuthYes(lab)
+            || labelLooksLikeSponsorship(lab)
+            || labelLooksLikeFormerEmployee(lab);
         if (polarityKind) {
             if (kind === 'disability_status') {
                 const hasDisability = /^yes\b/i.test(cur)
@@ -1157,6 +1233,10 @@
                     && !/do not|don'?t|have not had/i.test(cur);
                 if (hasDisability) return false;
                 return true;
+            }
+            if ((kind === 'work_authorization' || labelLooksLikeWorkAuthYes(lab))
+                && /^no\b/i.test(cur)) {
+                return false;
             }
             if (/^yes\b/i.test(cur) && /^no\b/i.test(want)) return false;
             return true;
@@ -1169,12 +1249,19 @@
         const kind = String(field?.kind || '');
         const lab = String(field?.label || '');
         const name = String(field?.name || field?.id || '');
-        if (labelLooksLikeAuthorizedWithoutSponsorship(lab) || kind === 'work_authorization') {
+        if (labelLooksLikeWorkAuthYes(lab) || labelLooksLikeAuthorizedWithoutSponsorship(lab)) {
             return 'work_authorization';
+        }
+        if (labelLooksLikeSponsorship(lab) && !labelLooksLikeWorkAuthYes(lab)) {
+            return 'requires_sponsorship';
+        }
+        if (labelLooksLikeFormerEmployee(lab) || labelLooksLikeConflictNo(lab)) {
+            return 'previous_employer_no';
         }
         if (kind === 'previous_employer_no' || kind === 'requires_sponsorship' || kind === 'sanctioned_countries_no'
             || kind === 'city' || kind === 'state'
             || kind === 'skill_experience'
+            || kind === 'work_authorization'
             || /^education_(start|end)_/.test(kind)) {
             return kind;
         }
@@ -1191,7 +1278,7 @@
             }
             return 'city';
         }
-        if (labelLooksLikeFormerEmployee(lab)) {
+        if (labelLooksLikeFormerEmployee(lab) || labelLooksLikeConflictNo(lab)) {
             return 'previous_employer_no';
         }
         if (labelLooksLikeSponsorship(lab)) {
@@ -1243,10 +1330,18 @@
                 || kind === 'requires_sponsorship'
                 || kind === 'previous_employer_no'
                 || kind === 'hispanic_latino'
-                || kind === 'sanctioned_countries_no';
+                || kind === 'sanctioned_countries_no'
+                || kind === 'work_authorization'
+                || labelLooksLikeConflictNo(String(field?.label || ''))
+                || labelLooksLikeWorkAuthYes(String(field?.label || ''))
+                || labelLooksLikeSponsorship(String(field?.label || ''))
+                || labelLooksLikeFormerEmployee(String(field?.label || ''));
             if (!polarity) return true;
         }
         if (kind === 'phone') return phoneDigits(got).length >= 7;
+        if (kind === 'work_authorization' || labelLooksLikeWorkAuthYes(String(field?.label || ''))) {
+            return /^yes\b/i.test(String(got || '').trim());
+        }
         if (kind === 'previous_employer_no' || kind === 'requires_sponsorship' || kind === 'sanctioned_countries_no') {
             if (/\bno\b/i.test(got) && !/yes/i.test(String(got).replace(/\bno\b/i, ''))) return true;
             if (w && valuesMatch(w, got, kind)) return true;
@@ -2074,10 +2169,10 @@
         let wantRaw = String(wanted || '').trim();
         const lab = String(field?.label || '');
         const kind = effectiveFieldKind(field) || field?.kind || '';
-        // Never trust API/wanted Yes on these — profile or hard No only.
-        if (labelLooksLikeAuthorizedWithoutSponsorship(lab) || kind === 'work_authorization') {
-            const raw = String(profile?.work_authorization || '').trim();
-            wantRaw = (/^(no|n)\b/i.test(raw) || /not authorized|unauthorized/i.test(raw)) ? 'No' : 'Yes';
+        // Never trust API/wanted Yes on these — polarity locks only.
+        if (kind === 'work_authorization' || labelLooksLikeWorkAuthYes(lab)
+            || labelLooksLikeAuthorizedWithoutSponsorship(lab)) {
+            wantRaw = 'Yes';
         } else if (kind === 'requires_sponsorship' || labelLooksLikeSponsorship(lab)) {
             wantRaw = 'No';
         } else if (
@@ -2086,12 +2181,11 @@
             || kind === 'employee_relationship_no'
             || kind === 'non_compete_no'
             || labelLooksLikeFormerEmployee(lab)
+            || labelLooksLikeConflictNo(lab)
             || labelLooksLikeEmployeeRelationship(lab)
             || labelLooksLikeNonCompete(lab)
         ) {
             wantRaw = 'No';
-        } else if (kind === 'work_authorization' || labelLooksLikeAuthorizedWithoutSponsorship(lab)) {
-            wantRaw = 'Yes';
         } else if (kind === 'over_18' || kind === 'us_citizen_yes' || kind === 'us_person_yes') {
             wantRaw = 'Yes';
         } else if (kind === 'export_control_us_citizen') {
@@ -2482,11 +2576,11 @@
             return 'Yes';
         }
         if (kind === 'export_control_us_citizen') return 'U.S. Citizen';
-        if (kind === 'requires_sponsorship' || /\bsponsor|visa|h-?1b\b/i.test(lab)) return 'No';
-        if (kind === 'previous_employer_no' || labelLooksLikeFormerEmployee(lab)) return 'No';
+        if (kind === 'requires_sponsorship' || labelLooksLikeSponsorship(lab) || /\bsponsor|visa|h-?1b\b/i.test(firstQuestionSlice(lab))) return 'No';
+        if (kind === 'previous_employer_no' || labelLooksLikeFormerEmployee(lab) || labelLooksLikeConflictNo(lab)) return 'No';
         if (kind === 'employee_relationship_no' || labelLooksLikeEmployeeRelationship(lab)) return 'No';
         if (kind === 'non_compete_no' || labelLooksLikeNonCompete(lab)) return 'No';
-        if (kind === 'work_authorization' || /\bauthoriz|eligible to work\b/i.test(lab)) return 'Yes';
+        if (kind === 'work_authorization' || labelLooksLikeWorkAuthYes(lab) || /\bauthoriz|eligible to work\b/i.test(firstQuestionSlice(lab))) return 'Yes';
         if (kind === 'over_18' || /\bover[\s_-]*18|18 or older\b/i.test(lab)) return 'Yes';
         if (kind === 'hispanic_latino' || /\bhispanic|latino\b/i.test(lab)) return 'No';
         if (kind === 'veteran_status' || /\bveteran\b/i.test(lab)) {
@@ -2537,7 +2631,8 @@
         }
         // Binary question shape with no mapped kind — safe polarity defaults.
         if (/\b(are|do|does|have|has|will|would|can|is)\b/i.test(lab) || /\?/.test(lab)) {
-            if (labelLooksLikeFormerEmployee(lab)) return 'No';
+            if (labelLooksLikeFormerEmployee(lab) || labelLooksLikeConflictNo(lab) || labelLooksLikeSponsorship(lab)) return 'No';
+            if (labelLooksLikeWorkAuthYes(lab)) return 'Yes';
             if (labelLooksLikeSkillExperienceYes(lab)) return 'Yes';
             if (labelLooksLikeInterviewAttendYes(lab)
                 || /\b(open|willing|able|ability|comfortable|agree|authorized|eligible|citizen|person|attend|reconfirm)\b/i.test(lab)) {
@@ -2574,11 +2669,18 @@
         if (labelLooksLikeInterviewAttendYes(lab) || kind === 'interview_attend_yes') {
             return 'Yes';
         }
+        if (kind === 'requires_sponsorship' || labelLooksLikeSponsorship(lab)) return 'No';
+        if (kind === 'previous_employer_no' || labelLooksLikeFormerEmployee(lab) || labelLooksLikeConflictNo(lab)) {
+            return 'No';
+        }
+        if (kind === 'work_authorization' || labelLooksLikeWorkAuthYes(lab)) return 'Yes';
         if (isSelectLikeField(field) && wanted && wanted.length > 40) {
             const compact = defaultAnswerForEmptySelect(
                 field, profile, answersById, answersByLabel, jobDescription
             );
             if (compact && compact.length < 40) wanted = compact;
+            else if (labelLooksLikeHardNo(lab)) wanted = 'No';
+            else if (labelLooksLikeWorkAuthYes(lab)) wanted = 'Yes';
             else if (/\b(do you|have you|are you|will you|can you|reconfirm|confirm)\b/i.test(lab)) {
                 wanted = 'Yes';
             }
@@ -2588,7 +2690,7 @@
                 wanted = fallbackEssayForQuestion(lab, profile, jobDescription)
                     || skillDescribeAnswer(profile, lab);
             } else if (isSelectLikeField(field)) {
-                wanted = 'Yes';
+                wanted = labelLooksLikeHardNo(lab) ? 'No' : 'Yes';
             }
         }
         return String(wanted || '').trim();
@@ -2696,7 +2798,9 @@
                 want: 'No'
             },
             {
-                match: (k, lab) => k === 'previous_employer_no' || labelLooksLikeFormerEmployee(lab),
+                match: (k, lab) => k === 'previous_employer_no'
+                    || labelLooksLikeFormerEmployee(lab)
+                    || labelLooksLikeConflictNo(lab),
                 want: 'No'
             },
             {
@@ -2735,8 +2839,9 @@
             },
             {
                 match: (k, lab) => k === 'work_authorization'
+                    || labelLooksLikeWorkAuthYes(lab)
                     || labelLooksLikeAuthorizedWithoutSponsorship(lab)
-                    || (/\b(authoriz|eligible to work|legally[\s_-]*authorized)\b/i.test(lab)
+                    || (/\b(authoriz|eligible to work|legally[\s_-]*authorized)\b/i.test(firstQuestionSlice(lab))
                         && !labelLooksLikeSponsorship(lab)),
                 want: 'Yes'
             },
@@ -2770,7 +2875,10 @@
                 const got = readCurrentValue(f);
                 const empty = !got || isPlaceholderValue(got);
                 const wrongNo = /^no\b/i.test(String(got || '').trim());
-                if (empty) {
+                const polarityYes = kind === 'work_authorization'
+                    || labelLooksLikeWorkAuthYes(lab)
+                    || labelLooksLikeAuthorizedWithoutSponsorship(lab);
+                if (empty || (wrongNo && polarityYes)) {
                     if (await tryFillEmpty(f, spec.want)) swept += 1;
                     await sleep(100);
                 }
@@ -2840,7 +2948,8 @@
             const kind = effectiveFieldKind(f) || f.kind || '';
             const lab = String(f.label || '');
             if (kind === 'disability_status' || /\bdisabilit/i.test(lab)) return false;
-            if (kind === 'requires_sponsorship' || labelLooksLikeSponsorship(lab)) return false;
+            if (kind === 'requires_sponsorship' || labelLooksLikeSponsorship(lab)
+                || kind === 'previous_employer_no' || labelLooksLikeHardNo(lab)) return false;
             const got = readCurrentValue(f);
             return !got || isPlaceholderValue(got);
         });
@@ -2864,7 +2973,7 @@
         }
         // Hard YES: authorized to work / over 18 / US citizen / U.S. person.
         if (labelLooksLikeAuthorizedWithoutSponsorship(lab) || kind === 'work_authorization'
-            || /\b(authoriz|eligible to work|legally[\s_-]*authorized)\b/i.test(lab)) {
+            || labelLooksLikeWorkAuthYes(lab)) {
             return workAuthAnswerFromProfile(profile);
         }
         if (kind === 'over_18' || /\bover[\s_-]*18|18 or older\b/i.test(lab)) {
@@ -2884,7 +2993,8 @@
         }
         if (kind === 'previous_employer_no'
             || kind === 'sanctioned_countries_no'
-            || labelLooksLikeFormerEmployee(lab)) {
+            || labelLooksLikeFormerEmployee(lab)
+            || labelLooksLikeConflictNo(lab)) {
             return 'No';
         }
         if (kind === 'employee_relationship_no' || labelLooksLikeEmployeeRelationship(lab)) {
@@ -3110,8 +3220,10 @@
                 if (/\b(agree|acknowledg|consent|terms|certify|confirm|retain|future opportunit|talent pool|privacy\s*policy|have you read)\b/i.test(field.label || '')) {
                     return 'Yes';
                 }
-                if (SKILL_EXPERIENCE_YES_RE.test(field.label || '') && !labelLooksLikeFormerEmployee(field.label || '')) return 'Yes';
-                if (labelLooksLikeFormerEmployee(field.label || '')) return 'No';
+                if (SKILL_EXPERIENCE_YES_RE.test(field.label || '') && !labelLooksLikeFormerEmployee(field.label || '')
+                    && !labelLooksLikeConflictNo(field.label || '')) return 'Yes';
+                if (labelLooksLikeFormerEmployee(field.label || '') || labelLooksLikeConflictNo(field.label || '')
+                    || labelLooksLikeSponsorship(field.label || '')) return 'No';
                 const essay = fallbackEssayForQuestion(field.label, p, jobDescription);
                 if (essay) return essay;
                 return '';

@@ -54,8 +54,6 @@ const JUNIOR_SUMMARY_PATTERNS = [
     { id: 'passionate_opener', re: /\bPassionate\b/i, msg: 'Summary contains banned filler: "Passionate…"' }
 ];
 
-const TECHISH_TITLE = /^(python|java|go|golang|aws|linux|kubernetes|docker|react|node|sql|postgres|mysql|ansible|terraform|ci\/cd|rest|api)$/i;
-
 /**
  * @param {string} html
  * @param {{ profile?: object, jobDescription?: string, coreSkills?: string }} [context]
@@ -103,10 +101,10 @@ function buildResumeQualityReport(html, context = {}) {
     const summaryText = stripTags(summaryHtml);
     const summaryWords = summaryText ? summaryText.split(/\s+/).filter(Boolean).length : 0;
     addCheck(
-        p2.checks, issues, 2, 'summary_depth', summaryWords >= 80,
-        summaryWords >= 80
+        p2.checks, issues, 2, 'summary_depth', summaryWords >= 50 && summaryWords <= 120,
+        summaryWords >= 50 && summaryWords <= 120
             ? `Summary depth OK (${summaryWords} words)`
-            : `Summary too thin (${summaryWords} words) — need ~90–140 About Me words`,
+            : `Summary length off (${summaryWords} words) — need ~55–90 words`,
         'critical'
     );
     for (const rule of JUNIOR_SUMMARY_PATTERNS) {
@@ -119,26 +117,22 @@ function buildResumeQualityReport(html, context = {}) {
     const boldSpans = [...firstChunkHtml.matchAll(/<strong\b[^>]*>([\s\S]*?)<\/strong>/gi)].map((m) =>
         String(m[1] || '').replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim()
     );
-    const hasBoldYears = boldSpans.some((s) => /^\d+\+?\s*years?(?:\s+of\s+experience)?$/i.test(s));
-    const hasBoldTitle = boldSpans.some((s) => {
-        if (!s || s.length < 4 || s.length > 70) return false;
-        if (/^\d/.test(s)) return false;
-        if (TECHISH_TITLE.test(s)) return false;
-        return /\b(engineer|developer|architect|administrator|sre|devops|manager|lead|analyst|scientist|specialist|consultant|director|principal|staff)\b/i.test(s)
-            || /\b(sr\.?|senior|junior|staff|principal)\b/i.test(s);
-    });
+    const hasBoldYears = boldSpans.some((s) =>
+        /^\d+\+?\s*years?(?:\s+of\s+experience)?$/i.test(s) || /^\d+\+$/.test(s)
+    );
     addCheck(
-        p2.checks, issues, 2, 'summary_bold_title', hasBoldTitle,
-        hasBoldTitle
-            ? 'Summary bolds current job title near the opener'
-            : 'Summary must bold the current job title in the first sentence (e.g. <strong>Software Engineer</strong>)',
+        p2.checks, issues, 2, 'summary_inline_emphasis',
+        boldSpans.length >= 2,
+        boldSpans.length >= 2
+            ? 'Summary has inline <strong> emphasis for skim words'
+            : 'Summary must bold employer names, 1–2 stack names, and metrics with <strong>',
         'critical'
     );
     addCheck(
         p2.checks, issues, 2, 'summary_bold_years', hasBoldYears,
         hasBoldYears
             ? 'Summary bolds total experience years near the opener'
-            : 'Summary must bold total years in the first sentence (e.g. <strong>12 years</strong>)',
+            : 'Summary must bold total years in the first sentence (e.g. <strong>12 years</strong> or <strong>15+ years</strong>)',
         'critical'
     );
 
@@ -281,11 +275,11 @@ function buildQualityRemakeFeedback(report) {
         ...report.issues.slice(0, 12).map((i) => `- [Pass ${i.pass_id}/${i.severity}] ${i.message}`),
         '',
         'Rules while fixing:',
-        '- Summary: third person, ~90–140 words; FIRST sentence MUST bold current job title + total years (e.g. <strong>Software Engineer</strong> with <strong>12 years</strong>…). No "I build", no "Looking for a team".',
+        '- Summary: third person, 3–4 sentences (~55–90 words); open with the exact years phrase (e.g. <strong>15+ years</strong>), then most-recent bench employer. Bold employers, 1–2 stacks, and metrics. No "I build", no "Looking for a team".',
         '- Prefer open compounds: "on call", "kernel level", "application layer", "ecommerce" — avoid hyphen wraps.',
         '- NO long dashes (— or –). Use commas, periods, colons, or ASCII " - " only in date ranges.',
-        '- Education MUST be two lines: <p><strong>Degree</strong></p> then <p>School | YYYY - YYYY</p>.',
-        '- Experience: dense bullets (problem + action + result), 5–7 on latest role.'
+        '- Education MUST be two lines: <p><strong>Degree</strong></p> then <p>School | YYYY - YYYY</p> (or resume-role-table, which is converted).',
+        '- Experience: dense bullets (problem + action + result), 5–7 on latest role. Each role is its own job line; repeat the company name.'
     ];
     return lines.join('\n');
 }

@@ -879,8 +879,8 @@ function htmlToParagraph(html, styleSpec, font, sectionHint = null) {
         }
     }
 
-    const isBoldRow = /^<p[^>]*><strong>[\s\S]*<\/strong><\/p>$/i.test(html.trim())
-                       || /^<strong>[\s\S]*<\/strong>$/i.test(inner);
+    const isBoldRow = /^<p[^>]*>\s*<strong\b[\s\S]*<\/strong>\s*<\/p>$/i.test(html.trim())
+                       || /^<strong\b[\s\S]*<\/strong>$/i.test(inner.trim());
 
     // Position-line pattern: pipes + year range (e.g. "Title | Company |
     // Location | 2020 - 2024"). Bold format. Slot = position_line.
@@ -932,7 +932,7 @@ function htmlToParagraph(html, styleSpec, font, sectionHint = null) {
     } else if (
         sectionHint !== 'summary'
         && sectionHint !== 'skills'
-        && /^<p[^>]*><strong>/i.test(html.trim())
+        && /^<p[^>]*>\s*<strong\b/i.test(html.trim())
         && isYearRange
     ) {
         // Job title rows often start with <strong>Title</strong>… — only when dated.

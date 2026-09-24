@@ -124,6 +124,8 @@ export default function BidMonitorDock({
     cvFilename = '',
     cvDownloadUrl = '',
     cvEditHref = '',
+    cvHtml = '',
+    onLoadCv = null,
     courseAnswers = [],
     onListFormQuestions = null,
     onApplyAnswers = null,
@@ -170,7 +172,13 @@ export default function BidMonitorDock({
     const [instructBusy, setInstructBusy] = useState(false);
     const [instructMsg, setInstructMsg] = useState('');
     const [showAsk, setShowAsk] = useState(false);
+    const [cvPreviewHtml, setCvPreviewHtml] = useState('');
+    const [cvPreviewBusy, setCvPreviewBusy] = useState(false);
+    const [cvPreviewErr, setCvPreviewErr] = useState('');
     const autoLoadedQsRef = useRef('');
+    const cvLoadKeyRef = useRef('');
+    const onLoadCvRef = useRef(onLoadCv);
+    onLoadCvRef.current = onLoadCv;
 
     useEffect(() => {
         setMounted(true);
@@ -190,6 +198,46 @@ export default function BidMonitorDock({
             answer: String(a?.answer ?? a?.value ?? '')
         })));
     }, [courseAnswers]);
+
+    useEffect(() => {
+        setCvPreviewHtml('');
+        setCvPreviewErr('');
+        cvLoadKeyRef.current = '';
+    }, [cvFilename, cvEditHref]);
+
+    useEffect(() => {
+        if (cvHtml) setCvPreviewHtml(cvHtml);
+    }, [cvHtml]);
+
+    useEffect(() => {
+        if (dockTab !== 'cv') return;
+        const key = `${cvFilename}|${cvEditHref}`;
+        if (cvPreviewHtml || cvLoadKeyRef.current === key) return;
+        if (typeof onLoadCvRef.current !== 'function') {
+            setCvPreviewErr('No CV for this job yet.');
+            return;
+        }
+        let cancelled = false;
+        cvLoadKeyRef.current = key;
+        setCvPreviewBusy(true);
+        setCvPreviewErr('');
+        onLoadCvRef.current()
+            .then((html) => {
+                if (cancelled) return;
+                const text = String(html || '').trim();
+                if (!text) setCvPreviewErr('No CV yet. Generate it first.');
+                else setCvPreviewHtml(text);
+            })
+            .catch((err) => {
+                if (cancelled) return;
+                cvLoadKeyRef.current = '';
+                setCvPreviewErr(err?.message || 'Could not load CV');
+            })
+            .finally(() => {
+                if (!cancelled) setCvPreviewBusy(false);
+            });
+        return () => { cancelled = true; };
+    }, [dockTab, cvFilename, cvEditHref, cvPreviewHtml]);
 
     useEffect(() => {
         if (dockTab !== 'manual' || !onListFormQuestions) return;
@@ -571,6 +619,20 @@ export default function BidMonitorDock({
                         State
                     </Button>
                 ) : null}
+                {hasCv ? (
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className={btn}
+                        disabled={cvPreviewBusy}
+                        onClick={() => { setDockTab('cv'); }}
+                        title="Preview the generated CV"
+                    >
+                        <FileText className={btnIcon} />
+                        Preview CV
+                    </Button>
+                ) : null}
                 {hasCv && cvDownloadUrl ? (
                     <Button type="button" size="sm" variant="ghost" className={btn} asChild>
                         <a href={cvDownloadUrl} target="_blank" rel="noreferrer">
@@ -908,6 +970,17 @@ export default function BidMonitorDock({
                         >
                             Answers{answerDrafts.length ? ` · ${answerDrafts.length}` : ''}
                         </button>
+                        <button
+                            type="button"
+                            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
+                                dockTab === 'cv'
+                                    ? 'bg-white/10 text-white'
+                                    : 'text-white/45 hover:text-white/70'
+                            }`}
+                            onClick={() => setDockTab('cv')}
+                        >
+                            CV
+                        </button>
                     </div>
 
                     {dockTab === 'live' ? (
@@ -1037,6 +1110,39 @@ export default function BidMonitorDock({
                                 </div>
                             ) : null}
                         </>
+                    ) : dockTab === 'cv' ? (
+                        <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-white">
+                            <div className="flex items-center justify-between gap-2 border-b border-black/10 px-2 py-1">
+                                <span className="truncate text-[10px] font-medium text-black/55">
+                                    {cvFilename || 'CV preview'}
+                                </span>
+                                <button
+                                    type="button"
+                                    className="text-[10px] text-sky-700 hover:underline"
+                                    onClick={() => {
+                                        cvLoadKeyRef.current = '';
+                                        setCvPreviewHtml('');
+                                    }}
+                                >
+                                    Refresh
+                                </button>
+                            </div>
+                            <div className="max-h-[min(46vh,24rem)] overflow-auto">
+                                {cvPreviewBusy ? (
+                                    <p className="px-3 py-8 text-center text-[11px] text-black/45">Loading CV…</p>
+                                ) : cvPreviewErr ? (
+                                    <p className="px-3 py-8 text-center text-[11px] text-black/55">{cvPreviewErr}</p>
+                                ) : cvPreviewHtml ? (
+                                    <div
+                                        className="resume-preview"
+                                        style={{ fontSize: '11px', lineHeight: 1.35, padding: '0.75rem', color: '#111', background: '#fff' }}
+                                        dangerouslySetInnerHTML={{ __html: cvPreviewHtml }}
+                                    />
+                                ) : (
+                                    <p className="px-3 py-8 text-center text-[11px] text-black/45">No CV yet.</p>
+                                )}
+                            </div>
+                        </div>
                     ) : (
                         <div className="space-y-2">
                             <div className="flex flex-wrap gap-1.5">

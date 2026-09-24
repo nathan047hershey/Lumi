@@ -17,6 +17,15 @@ function parseProfileYearsOfExperience(raw) {
     return 0;
 }
 
+/** Exact years phrase for the Summary opener ("15+" or "12 years"). */
+function formatCandidateYearsPhrase(profile, facts = null) {
+    const raw = String(profile?.years_of_experience || '').trim();
+    const n = Number(facts?.totalYears) || parseProfileYearsOfExperience(raw);
+    if (!n) return '';
+    if (/\+/.test(raw)) return `${n}+`;
+    return `${n} years`;
+}
+
 /**
  * Stable background for prompts: structured work/education first, then notes.
  * Without work_experience, the model invents job dates every generate.
@@ -103,7 +112,8 @@ function extractCareerFacts(profile, _resumeHtml = '') {
         currentTitle,
         totalYears,
         earliestYear,
-        latestTitle: currentTitle
+        latestTitle: currentTitle,
+        yearsPhrase: formatCandidateYearsPhrase(profile, { totalYears })
     };
 }
 
@@ -153,7 +163,14 @@ function scrubBannedSummaryPhrases(summaryInnerHtml) {
         [/\bin a collaborative environment\.?/gi, ''],
         [/\bdeployment velocities\b/gi, 'deployment speed'],
         [/\bcomprehensive monitoring solutions\b/gi, 'monitoring'],
-        [/\blimited observability\b/gi, 'weak visibility']
+        [/\blimited observability\b/gi, 'weak visibility'],
+        [/\bcloud-native\b/gi, 'cloud'],
+        [/\bhigh-throughput\b/gi, 'busy'],
+        [/\bcustomer-first digital experiences\b/gi, 'product work'],
+        [/\bscalable front-end architectures\b/gi, 'front-end systems'],
+        [/\btranslates naturally to\b/gi, 'fits'],
+        [/\bwork spans the full loop\b/gi, 'owned the work'],
+        [/\bfrom ideation through\b/gi, 'from planning through']
     ];
     for (const [re, rep] of replacements) {
         s = s.replace(re, rep);
@@ -217,7 +234,7 @@ function skillTokenAllowed(skill, allow, _coreList = []) {
 }
 
 /**
- * Cap Core Skills to 5 lines; bold category + skills. Keep rich LLM lists —
+ * Cap Core Skills to 6 lines; bold category + skills. Keep rich LLM lists —
  * only drop obvious fluff, not JD/profile allow mismatches (that was
  * shrinking "many skills" down to a handful).
  */
@@ -234,10 +251,10 @@ function trimCoreSkillsSection(resumeHtml, allow, coreSkills = '') {
             if (!paras.length) return block;
             const kept = [];
             for (const pm of paras) {
-                if (kept.length >= 5) break;
+                if (kept.length >= 6) break;
                 const lines = splitSkillCategoryHtmlLines(pm[1]);
                 for (const lineInner of lines) {
-                    if (kept.length >= 5) break;
+                    if (kept.length >= 6) break;
                     const catMatch = lineInner.match(
                         /^(?:<strong>)?([^<:]+?)(?:<\/strong>)?\s*:\s*([\s\S]+)$/i
                     );
@@ -316,7 +333,7 @@ function categorizeCoreStacks(coreSkills = '') {
     }
     return buckets
         .filter((b) => b.keys.length)
-        .slice(0, 5)
+        .slice(0, 6)
         .map((b) => ({
             label: b.label,
             skills: b.keys.slice(0, 8)
@@ -391,7 +408,6 @@ function expandCoreSkillsFromJd(coreSkills = '', jobDescription = '') {
         ordered.push(s);
     };
     for (const part of String(coreSkills || '').split(/[,;|]/)) add(part);
-    for (const sk of DEFAULT_BASELINE_SKILLS) add(sk);
     const jd = String(jobDescription || '');
     if (jd) {
         for (const rule of JD_TOOL_RULES) {
@@ -635,70 +651,42 @@ function summaryHasBoldTitleAndYears(summaryHtml) {
 }
 
 /**
- * Ensure Summary first sentence opens with bold title + bold years.
+ * Pin Summary years to the profile fact. Do not rewrite into
+ * "<strong>Title</strong> with <strong>N years</strong>…" — JD-first
+ * summaries lead with the years phrase, then bench employer.
  */
-function ensureSummaryOpener(resumeHtml, facts) {
-    const title = (facts?.currentTitle || '').trim();
+function ensureSummaryOpener(resumeHtml, facts, profile = null) {
     const years = Number(facts?.totalYears) || 0;
-    if (!title || years < 1) return resumeHtml;
+    if (years < 1) return resumeHtml;
+    const plus = /\+/.test(String(profile?.years_of_experience || facts?.yearsPhrase || ''));
+    const yearsInner = plus ? `${years}+ years` : `${years} years`;
+    const yearsHtml = `<strong>${yearsInner}</strong>`;
 
     return String(resumeHtml).replace(
         /(<h2\b[^>]*>[\s\S]*?(?:summary|profile)[\s\S]*?<\/h2>)([\s\S]*?)(?=<h2\b|$)/i,
         (block, heading, body) => {
-            const pMatch = body.match(/<p\b[^>]*>([\s\S]*?)<\/p>/i);
+            const pMatch = body.match(/<p\b([^>]*)>([\s\S]*?)<\/p>/i);
             if (!pMatch) {
-                const opener =
-                    `<p><strong>${escapeHtml(title)}</strong> with <strong>${years} years</strong> ` +
-                    `owning production systems end to end.</p>`;
-                return heading + '\n' + opener + body;
+                return heading + `\n<p class="resume-summary">${yearsHtml} of experience.</p>` + body;
             }
 
-            let inner = pMatch[1];
-            inner = scrubBannedSummaryPhrases(inner);
-            // Always pin the bold YoE digit to the profile fact — LLM invents 10/11/12/13.
+            let inner = scrubBannedSummaryPhrases(pMatch[2]);
             inner = inner.replace(
                 /<strong>\s*\d+\+?\s*years?(?:\s+of\s+experience)?\s*<\/strong>/gi,
-                `<strong>${years} years</strong>`
+                yearsHtml
             );
-            const { hasBoldTitle, hasBoldYears } = summaryHasBoldTitleAndYears(inner);
-
-            if (hasBoldTitle && hasBoldYears) {
-                const fixed = body.replace(pMatch[0], `<p>${inner}</p>`);
-                return heading + fixed;
-            }
-
-            // Strip an existing weak first clause before injecting opener
-            let rest = inner
-                .replace(/^<strong>[^<]{0,80}<\/strong>\s*(with\s+)?(<strong>[^<]*<\/strong>\s*)?/i, '')
-                .replace(/^\s*(with\s+)?\d+\+?\s*years?(?:\s+of\s+experience)?\s*/i, '')
-                .replace(/^(?:[A-Z][A-Za-z0-9 ./-]{2,50})\s+with\s+\d+\+?\s*years?(?:\s+of\s+experience)?\s*/i, '')
-                .replace(/^(?:[A-Z][A-Za-z0-9 ./-]{2,50})\s+with\s+/i, '')
-                .replace(/^[,:.\-\s]+/, '')
-                .trim();
-            if (!rest) {
-                rest = 'owning production systems end to end.';
-            }
-            // Prefer gerund continuation after "with N years"
-            let cont = rest.replace(
-                /^(owns|owned|building|builds|working|works)\b/i,
-                (m) => ({
-                    owns: 'owning',
-                    owned: 'owning',
-                    builds: 'building',
-                    building: 'building',
-                    works: 'working',
-                    working: 'working'
-                })[m.toLowerCase()] || m.toLowerCase()
+            inner = inner.replace(
+                /<strong>\s*\d+\+\s*<\/strong>/gi,
+                `<strong>${years}+</strong>`
             );
-            if (/^[A-Z]/.test(cont) && !cont.startsWith('<')) {
-                cont = cont.charAt(0).toLowerCase() + cont.slice(1);
+
+            const plain = inner.replace(/<[^>]+>/g, ' ');
+            if (!/\d+\+?\s*years?/i.test(plain) && !new RegExp(String(years) + '\\+').test(plain)) {
+                inner = `${yearsHtml} of experience. ${inner}`;
             }
 
-            const openerInner =
-                `<strong>${escapeHtml(title)}</strong> with <strong>${years} years</strong> ${cont}`;
-            const newP = `<p>${openerInner}</p>`;
-            const fixed = body.replace(pMatch[0], newP);
-            return heading + fixed;
+            const newP = `<p${pMatch[1]}>${inner}</p>`;
+            return heading + body.replace(pMatch[0], newP);
         }
     );
 }
@@ -792,30 +780,14 @@ function ensureRequiredStacksInSkills(resumeHtml, coreSkills = '') {
                     paras.push(`<p><strong>Additional Skills</strong>: ${otherExtra}</p>`);
                 }
             }
-            return heading + '\n' + paras.slice(0, 5).join('\n') + '\n';
+            return heading + '\n' + paras.slice(0, 6).join('\n') + '\n';
         }
     );
 }
 
-/** Pad a thin Summary to ~90 words so depth checks pass. */
+/** Leave 55–90 word summaries alone. Do not pad with engineer filler. */
 function padThinSummary(resumeHtml) {
-    const FILLER =
-        ' Owns production infrastructure end to end, including on call coverage,'
-        + ' deployment automation, and monitoring across distributed services.'
-        + ' Comfortable partnering with platform and application teams on reliability work.';
-    return String(resumeHtml).replace(
-        /(<h2\b[^>]*>[\s\S]*?(?:summary|profile)[\s\S]*?<\/h2>)([\s\S]*?)(?=<h2\b|$)/i,
-        (block, heading, body) => {
-            const pMatch = body.match(/<p\b[^>]*>([\s\S]*?)<\/p>/i);
-            if (!pMatch) return block;
-            if (/Owns production infrastructure end to end/i.test(pMatch[1])) return block;
-            const words = pMatch[1].replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean);
-            if (words.length >= 90) return block;
-            const newInner = `${pMatch[1].replace(/\s+$/, '')}${FILLER}`;
-            const newP = pMatch[0].replace(pMatch[1], newInner);
-            return heading + body.replace(pMatch[0], newP);
-        }
-    );
+    return String(resumeHtml || '');
 }
 
 /**
@@ -885,7 +857,7 @@ function polishResumeHtml(resumeHtml, { profile, coreSkills = '', jobDescription
     html = ensureBulletPeriods(html);
 
     const facts = extractCareerFacts(profile);
-    html = ensureSummaryOpener(html, facts);
+    html = ensureSummaryOpener(html, facts, profile);
     html = unwrapWholeBoldSummary(html);
 
     // Scrub banned phrases anywhere in summary section body
@@ -917,6 +889,7 @@ function polishResumeHtml(resumeHtml, { profile, coreSkills = '', jobDescription
 module.exports = {
     extractCareerFacts,
     parseProfileYearsOfExperience,
+    formatCandidateYearsPhrase,
     buildCandidateBackground,
     polishResumeHtml,
     stripControlAndSoftHyphens,
