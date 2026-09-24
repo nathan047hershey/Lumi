@@ -21,6 +21,11 @@ export function detectAtsFromUrl(url) {
     if (/smartrecruiters\.com/i.test(u)) return { id: 'smartrecruiters', label: 'SmartRecruiters' };
     if (/bamboohr\.com/i.test(u)) return { id: 'bamboohr', label: 'BambooHR' };
     if (/rippling\.com/i.test(u)) return { id: 'rippling', label: 'Rippling' };
+    if (/jobvite\.com/i.test(u)) return { id: 'jobvite', label: 'Jobvite' };
+    if (/paycomonline\.net/i.test(u)) return { id: 'paycom', label: 'Paycom' };
+    if (/applytojob\.com/i.test(u)) return { id: 'applytojob', label: 'ApplyToJob' };
+    if (/paylocity\.com/i.test(u)) return { id: 'paylocity', label: 'Paylocity' };
+    if (/successfactors\.com|sapsf\./i.test(u)) return { id: 'successfactors', label: 'SuccessFactors' };
     return { id: 'generic', label: 'Generic / custom ATS' };
 }
 

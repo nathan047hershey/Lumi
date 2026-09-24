@@ -395,7 +395,7 @@ function parseSuccessFactorsHtml(html) {
 
 function isSuccessFactorsCareerUrl(url) {
     const s = String(url || '');
-    return /successfactors\.com/i.test(s)
+    return /successfactors\.com|sapsf\./i.test(s)
         || /\/job\/[^/?#]+\/\d{6,}/i.test(s);
 }
 
@@ -666,16 +666,23 @@ async function fetchGemApi(url) {
  * API: https://{company}.wdN.myworkdayjobs.com/wday/cxs/{company}/{site}/job/{slug}
  */
 function parseWorkdayJobUrl(url) {
-    const m = String(url || '').match(
-        /^https?:\/\/([^.]+)\.(wd\d+)\.myworkdayjobs\.com\/([^/?#]+)\/job\/([^/?#]+)\/([^/?#]+)/i
-    );
-    if (!m) return null;
+    let parsed;
+    try {
+        parsed = new URL(String(url || ''));
+    } catch (_) {
+        return null;
+    }
+    const host = parsed.hostname.match(/^([^.]+)\.(wd\d+)\.(?:my)?workdayjobs\.com$/i);
+    if (!host) return null;
+    const parts = parsed.pathname.split('/').filter(Boolean);
+    const jobIdx = parts.findIndex((part) => part.toLowerCase() === 'job');
+    if (jobIdx < 1 || jobIdx >= parts.length - 1) return null;
     return {
-        company: m[1],
-        wd: m[2],
-        site: m[3],
-        locationPath: m[4],
-        slug: decodeURIComponent(m[5]).replace(/\/+$/, '')
+        company: host[1],
+        wd: host[2],
+        site: parts[jobIdx - 1],
+        locationPath: parts.length - jobIdx > 2 ? parts[jobIdx + 1] : null,
+        slug: decodeURIComponent(parts[parts.length - 1]).replace(/\/+$/, '')
     };
 }
 
@@ -733,7 +740,7 @@ async function fetchStructuredAts(url) {
         }
         if (/ashbyhq\.com/i.test(url)) return await fetchAshbyApi(url);
         if (/jobs\.gem\.com/i.test(url)) return await fetchGemApi(url);
-        if (/myworkdayjobs\.com/i.test(url)) return await fetchWorkdayCxs(url);
+        if (/myworkdayjobs\.com|workdayjobs\.com/i.test(url)) return await fetchWorkdayCxs(url);
         if (isSuccessFactorsCareerUrl(url)) return await fetchSuccessFactorsPage(url);
     } catch (err) {
         console.warn('[scraper] structured ATS fetch failed:', err.message);
@@ -882,5 +889,6 @@ module.exports = {
     leverScrapeUrl,
     isLeverUrl,
     parseGemJobUrl,
-    fetchGemApi
+    fetchGemApi,
+    parseWorkdayJobUrl
 };
