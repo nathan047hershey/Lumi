@@ -125,6 +125,7 @@ export default function BidMonitorDock({
     cvDownloadUrl = '',
     cvEditHref = '',
     cvHtml = '',
+    cvCourseId = '',
     onLoadCv = null,
     courseAnswers = [],
     onListFormQuestions = null,
@@ -167,6 +168,8 @@ export default function BidMonitorDock({
     const [answersBusy, setAnswersBusy] = useState(false);
     const [answersMsg, setAnswersMsg] = useState('');
     const answersSigRef = useRef('');
+    const answersDirtyRef = useRef(false);
+    const answersJobRef = useRef('');
     const [dockTab, setDockTab] = useState('live');
     const [instructText, setInstructText] = useState('');
     const [instructBusy, setInstructBusy] = useState(false);
@@ -175,6 +178,7 @@ export default function BidMonitorDock({
     const [cvPreviewHtml, setCvPreviewHtml] = useState('');
     const [cvPreviewBusy, setCvPreviewBusy] = useState(false);
     const [cvPreviewErr, setCvPreviewErr] = useState('');
+    const [cvReload, setCvReload] = useState(0);
     const autoLoadedQsRef = useRef('');
     const cvLoadKeyRef = useRef('');
     const onLoadCvRef = useRef(onLoadCv);
@@ -187,6 +191,12 @@ export default function BidMonitorDock({
 
     useEffect(() => {
         const list = Array.isArray(courseAnswers) ? courseAnswers : [];
+        const jobKey = list.map((a) => String(a?.id || a?.label || '')).join('|');
+        if (answersJobRef.current !== jobKey) {
+            answersJobRef.current = jobKey;
+            answersDirtyRef.current = false;
+        }
+        if (answersDirtyRef.current) return;
         const sig = list.map((a) => `${a?.id}|${a?.label}|${a?.answer || a?.value || ''}`).join('||');
         if (sig === answersSigRef.current) return;
         answersSigRef.current = sig;
@@ -200,19 +210,23 @@ export default function BidMonitorDock({
     }, [courseAnswers]);
 
     useEffect(() => {
-        setCvPreviewHtml('');
+        if (!cvHtml) return;
+        setCvPreviewHtml(cvHtml);
         setCvPreviewErr('');
-        cvLoadKeyRef.current = '';
-    }, [cvFilename, cvEditHref]);
-
-    useEffect(() => {
-        if (cvHtml) setCvPreviewHtml(cvHtml);
     }, [cvHtml]);
 
     useEffect(() => {
         if (dockTab !== 'cv') return;
-        const key = `${cvFilename}|${cvEditHref}`;
-        if (cvPreviewHtml || cvLoadKeyRef.current === key) return;
+        const key = `${cvCourseId}|${cvReload}`;
+        if (cvLoadKeyRef.current === key) return;
+        if (!cvCourseId && !cvHtml) {
+            setCvPreviewErr('No CV for this job yet.');
+            return;
+        }
+        if (!cvCourseId && cvHtml) {
+            setCvPreviewHtml(cvHtml);
+            return;
+        }
         if (typeof onLoadCvRef.current !== 'function') {
             setCvPreviewErr('No CV for this job yet.');
             return;
@@ -231,13 +245,13 @@ export default function BidMonitorDock({
             .catch((err) => {
                 if (cancelled) return;
                 cvLoadKeyRef.current = '';
-                setCvPreviewErr(err?.message || 'Could not load CV');
+                setCvPreviewErr(err?.response?.data?.error || err?.message || 'Could not load CV');
             })
             .finally(() => {
                 if (!cancelled) setCvPreviewBusy(false);
             });
         return () => { cancelled = true; };
-    }, [dockTab, cvFilename, cvEditHref, cvPreviewHtml]);
+    }, [dockTab, cvCourseId, cvReload]);
 
     useEffect(() => {
         if (dockTab !== 'manual' || !onListFormQuestions) return;
@@ -254,6 +268,7 @@ export default function BidMonitorDock({
         try {
             const qs = await onListFormQuestions();
             const incoming = Array.isArray(qs) ? qs : [];
+            answersDirtyRef.current = true;
             setAnswerDrafts((prev) => {
                 const byKey = new Map(
                     prev.map((r) => [String(r.id || r.label).toLowerCase(), r])
@@ -1121,25 +1136,23 @@ export default function BidMonitorDock({
                                     className="text-[10px] text-sky-700 hover:underline"
                                     onClick={() => {
                                         cvLoadKeyRef.current = '';
-                                        setCvPreviewHtml('');
+                                        setCvReload((n) => n + 1);
                                     }}
                                 >
                                     Refresh
                                 </button>
                             </div>
-                            <div className="max-h-[min(46vh,24rem)] overflow-auto">
-                                {cvPreviewBusy ? (
-                                    <p className="px-3 py-8 text-center text-[11px] text-black/45">Loading CV…</p>
-                                ) : cvPreviewErr ? (
-                                    <p className="px-3 py-8 text-center text-[11px] text-black/55">{cvPreviewErr}</p>
-                                ) : cvPreviewHtml ? (
+                            <div className="min-h-[16rem] max-h-[min(46vh,24rem)] overflow-auto bg-white text-black">
+                                {cvPreviewHtml ? (
                                     <div
                                         className="resume-preview"
                                         style={{ fontSize: '11px', lineHeight: 1.35, padding: '0.75rem', color: '#111', background: '#fff' }}
                                         dangerouslySetInnerHTML={{ __html: cvPreviewHtml }}
                                     />
+                                ) : cvPreviewBusy ? (
+                                    <p className="px-3 py-8 text-center text-[11px] text-black/45">Loading CV…</p>
                                 ) : (
-                                    <p className="px-3 py-8 text-center text-[11px] text-black/45">No CV yet.</p>
+                                    <p className="px-3 py-8 text-center text-[11px] text-black/55">{cvPreviewErr || 'No CV yet.'}</p>
                                 )}
                             </div>
                         </div>
@@ -1189,6 +1202,7 @@ export default function BidMonitorDock({
                                                     value={row.label}
                                                     onChange={(e) => {
                                                         const v = e.target.value;
+                                                        answersDirtyRef.current = true;
                                                         setAnswerDrafts((prev) => prev.map((r, i) => (
                                                             i === idx ? { ...r, label: v, id: r.id || v } : r
                                                         )));
@@ -1212,6 +1226,7 @@ export default function BidMonitorDock({
                                                 value={row.answer}
                                                 onChange={(e) => {
                                                     const v = e.target.value;
+                                                    answersDirtyRef.current = true;
                                                     setAnswerDrafts((prev) => prev.map((r, i) => (
                                                         i === idx ? { ...r, answer: v } : r
                                                     )));

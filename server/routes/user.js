@@ -3729,6 +3729,26 @@ router.post('/bid-courses/:id/correct-answer', async (req, res) => {
 });
 
 // GET screenshot file for a course
+router.get('/bid-courses/:id/cv-html', (req, res) => {
+    try {
+        const id = parseInt(req.params.id, 10);
+        const course = userIsAdmin(req)
+            ? getOne('SELECT application_id FROM bid_courses WHERE id = ?', [id])
+            : getOne('SELECT application_id FROM bid_courses WHERE id = ? AND user_id = ?', [id, req.user.id]);
+        if (!course) return res.status(404).json({ error: 'Course not found' });
+        const app = getOne(
+            'SELECT draft_html, resume_filename FROM job_applications WHERE id = ?',
+            [course.application_id]
+        );
+        res.json({
+            html: app?.draft_html || '',
+            resume_filename: app?.resume_filename || ''
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message || 'Failed to load CV' });
+    }
+});
+
 router.get('/bid-courses/:id/screenshots/:filename', (req, res) => {
     try {
         const id = parseInt(req.params.id, 10);

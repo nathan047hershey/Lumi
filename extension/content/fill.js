@@ -3472,7 +3472,7 @@
         return el.value || '';
     }
 
-    async function fillForm({ fields, answers, profile, jobDescription, companyName = '', jobRole = '', skipQuestions = false }) {
+    async function fillForm({ fields, answers, profile, jobDescription, companyName = '', jobRole = '', skipQuestions = false, preferPanelAnswers = false }) {
         // Close any leftover phone dial-code / select menus from a prior attempt.
         // Must fully dismiss iti (Escape) — display:none alone leaves keydown handlers active.
         // Do NOT set display:none on .select__menu — Greenhouse fixtures / some ATS only
@@ -3570,6 +3570,11 @@
                 if (!/^(yes|y)\b/i.test(String(value).trim())) value = 'Yes';
             } else if (field.kind === 'question') {
                 const qLabEarly = String(field.label || '');
+                const forcedKind = classifyPersonal(qLabEarly, field.name || '', '');
+                const panelValue = preferPanelAnswers ? String(lookupAnswer(field) || '').trim() : '';
+                if (panelValue) {
+                    value = panelValue;
+                } else {
                 const isEssayLike = field.inputType === 'textarea' || field.type === 'textarea'
                     || /\b(why|interest|motivat|tell us|describe|cover letter|additional information|what attracts|passion|excited about|why do you want|why are you)\b/i.test(qLabEarly);
                 // Short "If yes, describe a project" is profile stub — not a long essay.
@@ -3582,7 +3587,6 @@
                     continue;
                 }
                 // Hard locks first — never take API Yes for sponsorship / prior-employer.
-                const forcedKind = classifyPersonal(qLabEarly, field.name || '', '');
                 if (forcedKind === 'salary_comfort_yes' || isSalaryComfortYesNo(qLabEarly, field.name || '')) {
                     value = 'Yes';
                 } else if (labelLooksLikeAuthorizedWithoutSponsorship(qLabEarly) || forcedKind === 'work_authorization') {
@@ -3627,9 +3631,13 @@
                         }
                     }
                 }
+                }
                 // Absolute: any disability-looking question must stay No even if API said Yes.
-                if (/\b(disabilit(?:y|ies)|disabled|\bada\b)\b/i.test(qLabEarly)
-                    || forcedKind === 'disability_status') {
+                // A value typed in the control panel is kept.
+                if (!panelValue && (
+                    /\b(disabilit(?:y|ies)|disabled|\bada\b)\b/i.test(qLabEarly)
+                    || forcedKind === 'disability_status'
+                )) {
                     value = 'No, I do not have a disability';
                 }
                 // Radio/select with known options: snap paraphrased AI text onto an exact choice.
@@ -8047,7 +8055,8 @@
                         jobDescription: msg.payload?.jobDescription || '',
                         companyName: msg.payload?.companyName || msg.payload?.company_name || '',
                         jobRole: msg.payload?.jobRole || msg.payload?.job_role || '',
-                        skipQuestions: !!(msg.payload?.skipQuestions || msg.payload?.profileOnly)
+                        skipQuestions: !!(msg.payload?.skipQuestions || msg.payload?.profileOnly),
+                        preferPanelAnswers: !!msg.payload?.preferPanelAnswers
                     });
                     const gatedUploadStats = resumeGate.uploadStats || uploadStats;
                     const readiness = evaluateSubmitReadiness(form, fillStats, gatedUploadStats);

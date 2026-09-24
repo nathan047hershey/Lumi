@@ -3591,12 +3591,13 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             cvFilename={dockCvFilename}
             cvDownloadUrl={dockCvDownloadUrl}
             cvEditHref={dockCvEditHref}
+            cvCourseId={detail?.course?.id || ''}
             cvHtml={detail?.application?.draft_html || ''}
             onLoadCv={async () => {
                 const courseId = detail?.course?.id;
                 if (!courseId) return detail?.application?.draft_html || '';
-                const { data } = await coursesApi.getBidCourse(courseId);
-                return data?.application?.draft_html || '';
+                const { data } = await coursesApi.getBidCourseCvHtml(courseId);
+                return data?.html || detail?.application?.draft_html || '';
             }}
             settingsHref={isAdmin ? '/admin/bidder-settings' : '/user/bidder-settings'}
             prefsSummary={lumiPrefs}

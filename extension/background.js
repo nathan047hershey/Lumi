@@ -9272,6 +9272,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                     answers,
                     autoSubmit: false,
                     answersOnly: true,
+                    preferPanelAnswers: true,
                     engine: 'control-panel-answers'
                 });
                 if (appId) {

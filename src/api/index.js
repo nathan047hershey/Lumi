@@ -90,6 +90,7 @@ export const adminAPI = {
     getBidCourse: (id, opts = {}) => api.get(`/admin/bid-courses/${id}`, {
         params: opts.lite ? { lite: 1 } : undefined
     }),
+    getBidCourseCvHtml: (id) => api.get(`/admin/bid-courses/${id}/cv-html`),
     clearBidCourses: () => api.post('/admin/bid-courses/clear'),
     getBidCourseScreenshot: (id, filename, opts = {}) =>
         api.get(`/admin/bid-courses/${id}/screenshots/${encodeURIComponent(filename)}`, {
@@ -364,6 +365,7 @@ export const userAPI = {
     getBidCourse: (id, opts = {}) => api.get(`/user/bid-courses/${id}`, {
         params: opts.lite ? { lite: 1 } : undefined
     }),
+    getBidCourseCvHtml: (id) => api.get(`/user/bid-courses/${id}/cv-html`),
     clearBidCourses: (payload = {}) => api.post('/user/bid-courses/clear', payload),
     correctBidCourseAnswer: (id, payload) => api.post(`/user/bid-courses/${id}/correct-answer`, payload),
     downloadResumeFolder: (params = {}) => api.get('/user/resume-folder', {
