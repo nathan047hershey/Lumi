@@ -541,10 +541,7 @@ function scheduleAutoCvKick(jobLinkId) {
             );
             return null;
         });
-    if (process.env.VERCEL) {
-        cvChain = cvChain.then(run, run);
-        return cvChain;
-    }
+    if (process.env.VERCEL) return run();
     setImmediate(run);
     return Promise.resolve();
 }
@@ -1020,9 +1017,9 @@ async function scrapeRow(row) {
         console.log(`[jobLinkScraper] row ${row.id} disabled — requires ${clearance}`);
     }
 
-    // JD is already saved. CV generation must not hold the scrape open,
-    // or the page stays on Scraping JD until the model finishes.
-    scheduleAutoCvKick(row.id);
+    // The description is already saved. On the live site, generate the
+    // matching CVs before this request ends — there is no background worker.
+    await scheduleAutoCvKick(row.id);
 
     return { ok: true, ...parsed, clearance_required: clearance || null, is_available: availableAfterScrape };
 }

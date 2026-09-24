@@ -197,6 +197,19 @@ function pumpLocal() {
  * uses the in-process serial queue (never throws for "broker down").
  */
 async function enqueueGeneration(profileId, jobLinkId, opts = {}) {
+    if (process.env.VERCEL) {
+        const { processQueuedPair } = require('./jobMatchService');
+        await processQueuedPair({
+            profileId: Number(profileId),
+            jobLinkId: Number(jobLinkId),
+            correlationId: opts.correlationId || null,
+            force: !!opts.force
+        });
+        processedTotal += 1;
+        lastMessageAt = new Date();
+        mode = 'inline';
+        return { ok: true, mode: 'inline' };
+    }
     try {
         const ch = await connect();
         const payload = {
