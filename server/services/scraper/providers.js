@@ -774,7 +774,7 @@ async function nodeFetch(url) {
             return structured;
         }
 
-        const chromiumBin = probeChromium();
+        const chromiumBin = process.env.VERCEL ? null : probeChromium();
         if (chromiumBin && !process.env.LUMI_SCRAPER_CHROME_LOGGED) {
             process.env.LUMI_SCRAPER_CHROME_LOGGED = '1';
             console.log('[scraper] Chromium binary:', chromiumBin);
@@ -848,6 +848,9 @@ const nodeBuiltin = {
  * disabled).
  */
 async function selectProvider() {
+    if (process.env.VERCEL) {
+        return nodeBuiltin;
+    }
     const want = (process.env.JOB_LINKS_SCRAPER_PROVIDER || 'auto').toLowerCase();
     if (want === 'node') {
         console.log('[scraper] provider=nodeBuiltin (forced via env)');

@@ -211,7 +211,11 @@ const BACKOFF_BASE_MS = parseInt(process.env.JOB_LINKS_BACKOFF_BASE_MS || 45 * 1
 // to avoid double-scraping, which is great until the worker that
 // set the flag dies). 2 minutes is generous enough to absorb a
 // full scrape timeout (default 30s) plus retries.
-const STALE_FETCHING_MS = parseInt(process.env.JOB_LINKS_STALE_FETCHING_MS || 2 * 60 * 1000, 10);
+const STALE_FETCHING_MS = parseInt(
+    process.env.JOB_LINKS_STALE_FETCHING_MS
+        || (process.env.VERCEL ? 15 * 1000 : 2 * 60 * 1000),
+    10
+);
 
 // In-memory state -------------------------------------------------------------
 

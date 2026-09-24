@@ -51,6 +51,11 @@ let lastConnectFailLogAt = 0;
 let mode = 'inline';
 
 async function connect() {
+    if (process.env.VERCEL) {
+        const err = new Error('RabbitMQ skipped on Vercel');
+        err.code = 'RABBITMQ_SKIPPED_VERCEL';
+        throw err;
+    }
     if (channel) return channel;
     if (Date.now() < brokerDownUntil) {
         const err = new Error(lastError || 'RabbitMQ temporarily unavailable');
@@ -120,15 +125,18 @@ function scheduleReconnect() {
 async function scrapeNextDueInline() {
     if (!process.env.VERCEL) return null;
     cleanupStaleFetching();
-    const ids = listDueJobLinkIds(1);
+    const ids = listDueJobLinkIds(3);
     if (!ids.length) return null;
-    try {
-        return await scrapeJobLinkById(ids[0]);
-    } catch (err) {
-        lastError = formatError(err);
-        console.warn('[jobDetailFetch] list-triggered scrape failed:', lastError);
-        return null;
+    const results = [];
+    for (const id of ids) {
+        try {
+            results.push(await scrapeJobLinkById(id));
+        } catch (err) {
+            lastError = formatError(err);
+            console.warn('[jobDetailFetch] list-triggered scrape failed:', lastError);
+        }
     }
+    return results;
 }
 
 async function refreshQueueDepth() {
