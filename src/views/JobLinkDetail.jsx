@@ -607,7 +607,13 @@ export default function JobLinkDetail() {
     const load = useCallback(async () => {
         const requestId = ++loadRequestRef.current;
         try {
-            const res = await adminAPI.getJobLinkApplications(jobLinkId, listFilters);
+            let remembered = [];
+            try {
+                const parsed = JSON.parse(localStorage.getItem('lumi.jobLinks.visible.v1') || 'null');
+                const row = (parsed?.rows || []).find((r) => Number(r.id) === jobLinkId);
+                if (row) remembered = [row];
+            } catch (_) { /* ignore */ }
+            const res = await adminAPI.getJobLinkApplications(jobLinkId, { ...listFilters, remembered });
             if (requestId !== loadRequestRef.current) return;
             setData(res.data?.data || null);
             setError(null);

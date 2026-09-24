@@ -254,8 +254,15 @@ export const adminAPI = {
     //   - The on-demand `/scrape` endpoint stays admin-only because
     //     it makes outbound requests to LinkedIn from the server's
     //     IP — we don't want non-admins to be able to burst fetches.
-    listJobLinks: (page = 1, limit = 10, filters = {}) =>
-        api.get('/job-links', { params: { page, limit, ...filters } }),
+    listJobLinks: (page = 1, limit = 10, filters = {}) => {
+        const remembered = filters.remembered;
+        const rest = { ...filters };
+        delete rest.remembered;
+        if (Array.isArray(remembered) && remembered.length) {
+            return api.post('/job-links/query', { page, limit, ...rest, remembered });
+        }
+        return api.get('/job-links', { params: { page, limit, ...rest } });
+    },
     getJobLink: (id) => api.get(`/job-links/${id}`),
     getJobLinkCronStatus: () => api.get('/job-links/cron-status'),
     createJobLink: (payload) => api.post('/job-links', payload),
@@ -264,8 +271,15 @@ export const adminAPI = {
     // New detail-page endpoints. The detail page renders
     // /job-links/:id/applications which returns the job_link +
     // joined profile rows for every auto / user application.
-    getJobLinkApplications: (id, filters = {}) =>
-        api.get(`/job-links/${id}/applications`, { params: filters }),
+    getJobLinkApplications: (id, filters = {}) => {
+        const remembered = filters.remembered;
+        const rest = { ...filters };
+        delete rest.remembered;
+        if (Array.isArray(remembered) && remembered.length) {
+            return api.post(`/job-links/${id}/applications`, { ...rest, remembered });
+        }
+        return api.get(`/job-links/${id}/applications`, { params: rest });
+    },
     regenerateApplication: (jobLinkId, appId) =>
         api.post(`/job-links/${jobLinkId}/applications/${appId}/regenerate`),
     // Manually enqueue a resume-generation message for a single

@@ -1537,7 +1537,7 @@ function JobLinks({ embedded = false }) {
     const VISIBLE_CACHE_KEY = 'lumi.jobLinks.visible.v1';
     const readVisibleCache = () => {
         try {
-            const parsed = JSON.parse(sessionStorage.getItem(VISIBLE_CACHE_KEY) || 'null');
+            const parsed = JSON.parse(localStorage.getItem(VISIBLE_CACHE_KEY) || 'null');
             if (!parsed || parsed.cleared || !Array.isArray(parsed.rows) || !parsed.rows.length) return null;
             if (Date.now() - Number(parsed.at) > 30 * 60 * 1000) return null;
             return parsed;
@@ -1547,7 +1547,7 @@ function JobLinks({ embedded = false }) {
     };
     const writeVisibleCache = (nextRows, nextTotal) => {
         try {
-            sessionStorage.setItem(VISIBLE_CACHE_KEY, JSON.stringify({
+            localStorage.setItem(VISIBLE_CACHE_KEY, JSON.stringify({
                 at: Date.now(),
                 rows: nextRows,
                 total: nextTotal,
@@ -1832,6 +1832,8 @@ function JobLinks({ embedded = false }) {
                     filters.created_before = range.created_before;
                 }
             }
+            const remembered = readVisibleCache();
+            if (remembered?.rows?.length) filters.remembered = remembered.rows;
             if (hasGeneratedResumeFilter) filters.has_generated_resume = 1;
             if (bidStateFilter && bidStateFilter !== 'all') filters.bid_state = bidStateFilter;
             if (sortFilter && sortFilter !== 'latest') filters.sort = sortFilter;
@@ -2410,7 +2412,11 @@ function JobLinks({ embedded = false }) {
                 onCreated={(row) => {
                     if (row?.id) {
                         rememberCreated(row);
-                        setRows((prev) => mergeJustCreated(prev));
+                        setRows((prev) => {
+                            const next = mergeJustCreated(prev);
+                            writeVisibleCache(next, Math.max(next.length, 1));
+                            return next;
+                        });
                         setTotal((t) => (justCreatedRef.current.has(row.id) ? Math.max(t, 1) : t));
                     }
                     if (page !== 1) setPage(1);

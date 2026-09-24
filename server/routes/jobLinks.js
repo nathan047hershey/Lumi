@@ -38,6 +38,7 @@ const {
     scrapeJobLinkById,
     getCronStatus
 } = require('../services/jobLinkScraper');
+const { restoreRememberedJobLinks } = require('../services/jobLinkRestore');
 const {
     normalizeUrl,
     canonicalJobLinkUrl,
@@ -448,8 +449,21 @@ function jobLinkNeighborQuery(sort, jobLink) {
 // -----------------------------------------------------------------------------
 // GET /job-links — paginated list with filters (any user)
 // -----------------------------------------------------------------------------
+function requestFilters(req) {
+    const body = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    return { ...req.query, ...body };
+}
+
 async function listHandler(req, res) {
     try {
+        const source = requestFilters(req);
+        if (Array.isArray(source.remembered) && source.remembered.length) {
+            try {
+                restoreRememberedJobLinks(source.remembered, req.user && req.user.id);
+            } catch (err) {
+                console.warn('[job-links] restore skipped:', err.message);
+            }
+        }
         if (process.env.VERCEL) {
             try {
                 const jobDetailFetchService = require('../services/jobDetailFetchService');
@@ -458,14 +472,14 @@ async function listHandler(req, res) {
                 console.warn('[job-links] inline scrape skipped:', err.message);
             }
         }
-        const page = Math.max(1, parseInt(req.query.page) || 1);
+        const page = Math.max(1, parseInt(source.page) || 1);
         // Default page size: 10. Clients can override with `?limit=N`
         // up to 100; below 1 we clamp to 1.
-        const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 10));
+        const limit = Math.min(100, Math.max(1, parseInt(source.limit) || 10));
         const offset = (page - 1) * limit;
 
-        const { where, params } = jobLinkListWhereClause(req.query);
-        const orderSql = jobLinkListOrderSql(req.query.sort);
+        const { where, params } = jobLinkListWhereClause(source);
+        const orderSql = jobLinkListOrderSql(source.sort);
 
         const total = getOne(`SELECT COUNT(*) AS total FROM job_links ${where}`, params)?.total || 0;
         const rows = getAll(
@@ -1052,6 +1066,15 @@ function applicationsListHandler(req, res) {
         const id = parseInt(req.params.id);
         if (!id) return res.status(400).json({ error: 'Invalid id' });
 
+        const source = requestFilters(req);
+        if (Array.isArray(source.remembered) && source.remembered.length) {
+            try {
+                restoreRememberedJobLinks(source.remembered, req.user && req.user.id);
+            } catch (err) {
+                console.warn('[job-links] restore skipped:', err.message);
+            }
+        }
+
         const jobLink = getOne('SELECT * FROM job_links WHERE id = ?', [id]);
         if (!jobLink) return res.status(404).json({ error: 'Job link not found' });
 
@@ -1067,8 +1090,8 @@ function applicationsListHandler(req, res) {
         // Links list uses. Query params mirror GET /job-links filters
         // (techstack, search, etc.) so Next/Prev on the detail page
         // stay inside the user's current view.
-        const { conds: filterConds, params: filterParams } = buildJobLinkListFilters(req.query);
-        const neighbors = jobLinkNeighborQuery(req.query.sort, jobLink);
+        const { conds: filterConds, params: filterParams } = buildJobLinkListFilters(source);
+        const neighbors = jobLinkNeighborQuery(source.sort, jobLink);
         const prevConds = [...filterConds, neighbors.prev.cond];
         const nextConds = [...filterConds, neighbors.next.cond];
         const prev = getOne(
@@ -1283,6 +1306,7 @@ function jobLinkMarkExpiredHandler(req, res) {
 // Open routes (any authenticated user). Mounted at top-level `/` in
 // index.js, so the full paths are `/job-links/...`.
 router.get('/job-links',                  listHandler);
+router.post('/job-links/query',            listHandler);
 router.get('/job-links/cron-status',      cronStatusHandler);
 router.get('/job-links/:id',              getHandler);
 router.post('/job-links',                 createHandler);
@@ -1293,6 +1317,7 @@ router.delete('/job-links/:id',           deleteHandler);
 // directory is already shared; the inner `:appId` makes it
 // impossible to accidentally target a row from another job.
 router.get('/job-links/:id/applications',                       applicationsListHandler);
+router.post('/job-links/:id/applications',                      applicationsListHandler);
 router.post('/job-links/:id/applications/:appId/regenerate',    applicationRegenerateHandler);
 router.post('/job-links/:id/applications/:appId/apply',         applicationMarkAppliedHandler);
 // Bulk "Apply to this whole job" — flips every still-pending

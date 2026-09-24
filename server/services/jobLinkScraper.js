@@ -518,27 +518,30 @@ function cleanupStaleFetching() {
  * waiting for the next auto-apply cron tick.
  */
 function scheduleAutoCvKick(jobLinkId) {
-    if (!jobLinkId) return;
-    setImmediate(() => {
-        Promise.resolve()
-            .then(() => {
-                const jobMatchService = require('./jobMatchService');
-                return jobMatchService.reconcileJobLinkAfterMetadataChange(jobLinkId);
-            })
-            .then((r) => {
-                if (r && r.enqueued > 0) {
-                    console.log(
-                        `[jobLinkScraper] auto-enqueued ${r.enqueued} CV(s) for job_link=${jobLinkId}`
-                    );
-                }
-            })
-            .catch((err) => {
-                console.warn(
-                    `[jobLinkScraper] auto CV kick failed for job_link=${jobLinkId}:`,
-                    err && err.message ? err.message : err
+    if (!jobLinkId) return Promise.resolve();
+    const run = () => Promise.resolve()
+        .then(() => {
+            const jobMatchService = require('./jobMatchService');
+            return jobMatchService.reconcileJobLinkAfterMetadataChange(jobLinkId);
+        })
+        .then((r) => {
+            if (r && r.enqueued > 0) {
+                console.log(
+                    `[jobLinkScraper] auto-enqueued ${r.enqueued} CV(s) for job_link=${jobLinkId}`
                 );
-            });
-    });
+            }
+            return r;
+        })
+        .catch((err) => {
+            console.warn(
+                `[jobLinkScraper] auto CV kick failed for job_link=${jobLinkId}:`,
+                err && err.message ? err.message : err
+            );
+            return null;
+        });
+    if (process.env.VERCEL) return run();
+    setImmediate(run);
+    return Promise.resolve();
 }
 
 async function scrapeRow(row) {
@@ -1009,7 +1012,8 @@ async function scrapeRow(row) {
     }
 
     // Kick CV generation as soon as the JD lands — don't wait for cron.
-    scheduleAutoCvKick(row.id);
+    // On the live site this has to finish inside the request.
+    await scheduleAutoCvKick(row.id);
 
     return { ok: true, ...parsed, clearance_required: clearance || null, is_available: availableAfterScrape };
 }
