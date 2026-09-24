@@ -44,6 +44,10 @@ const {
     urlsReferToSameJob,
     resolveStoredJobUrls
 } = require('../services/scraper/jobLinkUrl');
+const {
+    parseGreenhouseBoardAndJob,
+    canonicalizeGreenhouseApplyUrl
+} = require('../services/scraper/greenhouseUrl');
 const jobMatchService = require('../services/jobMatchService');
 const { platformFilterSql } = require('../services/scraper/jobLinkPlatform');
 const { easternDayUtcRange, datePresetRange, nowSqliteUtc, sqliteUtcToIso } = require('../utils/time');
@@ -162,7 +166,17 @@ function buildJobLinkListFilters(query = {}) {
     const params = [];
 
     if (search) {
-        conds.push(`(
+        const needles = new Set([search]);
+        const gh = parseGreenhouseBoardAndJob(search);
+        if (gh) {
+            const canon = canonicalizeGreenhouseApplyUrl(search);
+            if (canon) needles.add(canon);
+            if (gh.jobId) needles.add(String(gh.jobId));
+        } else {
+            const canon = canonicalJobLinkUrl(search);
+            if (canon && canon !== search) needles.add(canon);
+        }
+        const group = `(
             techstack LIKE ? OR
             company_name LIKE ? OR
             position_title LIKE ? OR
@@ -179,9 +193,12 @@ function buildJobLinkListFilters(query = {}) {
                     OR (IFNULL(cp.first_name, '') || ' ' || IFNULL(cp.last_name, '')) LIKE ?
                   )
             )
-        )`);
-        const like = `%${search}%`;
-        for (let i = 0; i < 9; i += 1) params.push(like);
+        )`;
+        conds.push(needles.size === 1 ? group : `(${[...needles].map(() => group).join(' OR ')})`);
+        for (const needle of needles) {
+            const like = `%${needle}%`;
+            for (let i = 0; i < 9; i += 1) params.push(like);
+        }
     }
 
     if (techstack && techstack !== 'all' && VALID_TECHSTACKS.includes(techstack)) {
@@ -201,11 +218,11 @@ function buildJobLinkListFilters(query = {}) {
         conds.push('is_available = 0');
     }
 
-    if (createdAfter) {
+    if (createdAfter && !/^https?:\/\//i.test(search)) {
         conds.push(`${createdAtExpr} >= datetime(?)`);
         params.push(createdAfter);
     }
-    if (createdBefore) {
+    if (createdBefore && !/^https?:\/\//i.test(search)) {
         conds.push(`${createdAtExpr} < datetime(?)`);
         params.push(createdBefore);
     }
@@ -335,10 +352,13 @@ function findExistingJobLinkByUrl(url) {
 // -----------------------------------------------------------------------------
 // Sort whitelist for list + detail prev/next (never interpolate raw user input)
 // -----------------------------------------------------------------------------
+const CREATED_AT_SQL = `datetime(substr(replace(replace(IFNULL(created_at, ''), 'T', ' '), 'Z', ''), 1, 19))`;
+const CREATED_AT_PARAM_SQL = `datetime(substr(replace(replace(IFNULL(?, ''), 'T', ' '), 'Z', ''), 1, 19))`;
+
 function jobLinkListOrderSql(sort) {
     switch (String(sort || 'latest').toLowerCase()) {
         case 'oldest':
-            return 'ORDER BY created_at ASC, id ASC';
+            return `ORDER BY ${CREATED_AT_SQL} ASC, id ASC`;
         case 'updated':
             return 'ORDER BY COALESCE(updated_at, created_at) DESC, id DESC';
         case 'title':
@@ -347,7 +367,7 @@ function jobLinkListOrderSql(sort) {
             return 'ORDER BY company_name COLLATE NOCASE ASC, id DESC';
         case 'latest':
         default:
-            return 'ORDER BY created_at DESC, id DESC';
+            return `ORDER BY ${CREATED_AT_SQL} DESC, id DESC`;
     }
 }
 
@@ -356,13 +376,13 @@ function jobLinkNeighborQuery(sort, jobLink) {
     if (s === 'oldest') {
         return {
             prev: {
-                cond: '(created_at, id) < (?, ?)',
-                order: 'ORDER BY created_at DESC, id DESC',
+                cond: `(${CREATED_AT_SQL}, id) < (${CREATED_AT_PARAM_SQL}, ?)`,
+                order: `ORDER BY ${CREATED_AT_SQL} DESC, id DESC`,
                 params: [jobLink.created_at, jobLink.id]
             },
             next: {
-                cond: '(created_at, id) > (?, ?)',
-                order: 'ORDER BY created_at ASC, id ASC',
+                cond: `(${CREATED_AT_SQL}, id) > (${CREATED_AT_PARAM_SQL}, ?)`,
+                order: `ORDER BY ${CREATED_AT_SQL} ASC, id ASC`,
                 params: [jobLink.created_at, jobLink.id]
             }
         };
@@ -413,13 +433,13 @@ function jobLinkNeighborQuery(sort, jobLink) {
     // latest (DESC by created_at)
     return {
         prev: {
-            cond: '(created_at, id) > (?, ?)',
-            order: 'ORDER BY created_at ASC, id ASC',
+            cond: `(${CREATED_AT_SQL}, id) > (${CREATED_AT_PARAM_SQL}, ?)`,
+            order: `ORDER BY ${CREATED_AT_SQL} ASC, id ASC`,
             params: [jobLink.created_at, jobLink.id]
         },
         next: {
-            cond: '(created_at, id) < (?, ?)',
-            order: 'ORDER BY created_at DESC, id DESC',
+            cond: `(${CREATED_AT_SQL}, id) < (${CREATED_AT_PARAM_SQL}, ?)`,
+            order: `ORDER BY ${CREATED_AT_SQL} DESC, id DESC`,
             params: [jobLink.created_at, jobLink.id]
         }
     };

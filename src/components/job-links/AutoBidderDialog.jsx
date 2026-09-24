@@ -630,7 +630,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     const [dockMinimized, setDockMinimized] = useState(() => readMonitorStorage().minimized);
     const [monitorFrameFollowLive, setMonitorFrameFollowLive] = useState(true);
     const [monitorFrameIndex, setMonitorFrameIndex] = useState(0);
-    const [monitorActive, setMonitorActive] = useState(() => readMonitorStorage().active);
+    const [monitorActive, setMonitorActive] = useState(false);
     const monitorActiveRef = useRef(monitorActive);
     monitorActiveRef.current = monitorActive;
 
@@ -642,14 +642,6 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             writeMonitorStorage({ active: false });
         }
     }, [monitorActive, dockMinimized]);
-
-    // Restore selected course after refresh so Live monitor can reload screenshots.
-    useEffect(() => {
-        const saved = readMonitorStorage();
-        if (saved.courseId && !selectedId) {
-            setSelectedId(saved.courseId);
-        }
-    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     useEffect(() => {
         if (selectedId) writeMonitorStorage({ courseId: Number(selectedId) });
@@ -664,14 +656,15 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                 if (!alive) return;
                 const st = res?.result || res?.data || null;
                 setQueueState(st);
-                if (Array.isArray(st?.uiMessageLog)) {
-                    setExtNotifs(st.uiMessageLog);
-                }
                 const active = !!(
                     st?.running
                     || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_next)$/i.test(String(st?.status || ''))
                 );
                 if (active) {
+                    if (Array.isArray(st?.uiMessageLog)) setExtNotifs(st.uiMessageLog);
+                    const savedId = readMonitorStorage().courseId;
+                    const liveId = st?.currentId || st?.captchaApplicationId || savedId || null;
+                    if (liveId) setSelectedId((prev) => prev || liveId);
                     setMonitorActive(true);
                     setDockOpen(true);
                     writeMonitorStorage({ active: true });
@@ -680,13 +673,14 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                             ? 'Restored — Lumi paused on CAPTCHA / login'
                             : 'Restored — Lumi still running'
                     );
+                } else {
+                    setExtNotifs([]);
+                    setLocalNotifs([]);
+                    writeMonitorStorage({ active: false, courseId: null });
                 }
             } catch (_) {
-                // Extension offline — keep localStorage monitor flag if set
-                if (readMonitorStorage().active) {
-                    setMonitorActive(true);
-                    setDockOpen(true);
-                }
+                setExtNotifs([]);
+                writeMonitorStorage({ active: false, courseId: null });
             }
         })();
         return () => { alive = false; };
@@ -1537,7 +1531,11 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         const applyState = (st) => {
             if (!st || typeof st !== 'object') return;
             setQueueState(st);
-            if (Array.isArray(st.uiMessageLog)) {
+            const live = !!(
+                st.running
+                || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_next|awaiting_manual_submit|awaiting_cv_regen)$/i.test(String(st.status || ''))
+            );
+            if (live && Array.isArray(st.uiMessageLog)) {
                 setExtNotifs(st.uiMessageLog);
             }
         };

@@ -170,6 +170,7 @@ export default function BidMonitorDock({
     const answersSigRef = useRef('');
     const answersDirtyRef = useRef(false);
     const answersJobRef = useRef('');
+    const [panelTab, setPanelTab] = useState('main');
     const [dockTab, setDockTab] = useState('live');
     const [instructText, setInstructText] = useState('');
     const [instructBusy, setInstructBusy] = useState(false);
@@ -641,7 +642,7 @@ export default function BidMonitorDock({
                         variant="ghost"
                         className={btn}
                         disabled={cvPreviewBusy}
-                        onClick={() => { setDockTab('cv'); }}
+                        onClick={() => { setPanelTab('main'); setDockTab('cv'); }}
                         title="Preview the generated CV"
                     >
                         <FileText className={btnIcon} />
@@ -958,10 +959,35 @@ export default function BidMonitorDock({
                         </div>
                     ) : null}
 
-                    {/* Actions — always visible tools */}
-                    {actionBar}
+                    <div className="flex gap-1 rounded-lg bg-black/40 p-0.5">
+                        <button
+                            type="button"
+                            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
+                                panelTab === 'main'
+                                    ? 'bg-white/15 text-white'
+                                    : 'text-white/45 hover:text-white/70'
+                            }`}
+                            onClick={() => setPanelTab('main')}
+                        >
+                            Main
+                        </button>
+                        <button
+                            type="button"
+                            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
+                                panelTab === 'actions'
+                                    ? 'bg-white/15 text-white'
+                                    : 'text-white/45 hover:text-white/70'
+                            }`}
+                            onClick={() => setPanelTab('actions')}
+                        >
+                            Actions
+                        </button>
+                    </div>
 
-                    {/* Tabs */}
+                    {panelTab === 'actions' ? actionBar : null}
+
+                    {panelTab === 'main' ? (
+                    <>
                     <div className="flex gap-1 rounded-lg bg-black/25 p-0.5">
                         <button
                             type="button"
@@ -1239,6 +1265,8 @@ export default function BidMonitorDock({
                             {answersMsg ? <p className="text-[10px] text-white/45">{answersMsg}</p> : null}
                         </div>
                     )}
+                    </>
+                    ) : null}
                 </div>
             )}
 
