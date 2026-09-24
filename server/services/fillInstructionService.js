@@ -15,19 +15,71 @@ function stripReasoning(text) {
 function compactFields(fields) {
     return (Array.isArray(fields) ? fields : [])
         .map((f) => {
-            const label = String(f.label || f.name || f.id || '').trim().slice(0, 160);
+            const label = String(f.label || f.name || f.id || '').trim().slice(0, 220);
             const value = String(f.value ?? f.answer ?? '').trim().slice(0, 400);
             if (!label && !value) return null;
+            const options = Array.isArray(f.options)
+                ? f.options.map((o) => (typeof o === 'string' ? o : (o?.label || o?.value || ''))).filter(Boolean).slice(0, 24)
+                : undefined;
             return {
-                id: String(f.id || label).slice(0, 80),
+                id: String(f.id || label).slice(0, 120),
                 label: label || '(untitled)',
                 value: value || '',
+                kind: String(f.kind || '').slice(0, 40),
                 required: !!(f.required || f.ariaRequired),
-                empty: !value
+                empty: !value,
+                options
             };
         })
         .filter(Boolean)
-        .slice(0, 60);
+        .slice(0, 120);
+}
+
+function normalizeHint(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+}
+
+function findFieldByHint(snapshot, hint) {
+    const h = normalizeHint(hint);
+    if (!h || h.length < 2) return null;
+    const list = Array.isArray(snapshot) ? snapshot : [];
+    return list.find((x) => {
+        const lab = normalizeHint(x.label);
+        const kind = normalizeHint(x.kind);
+        return lab === h || lab.includes(h) || h.includes(lab.slice(0, 24)) || kind === h;
+    }) || null;
+}
+
+/** "Disability = No", "Sponsorship: No", "Location is Reston, VA" */
+function parseAssignmentFills(instruction, snapshot) {
+    const text = String(instruction || '').trim();
+    if (!text) return [];
+    const chunks = text.split(/\s*;\s*|\n+/).flatMap((part) => {
+        const m = part.match(/^(.+?)\s*(?:=|:|→|is)\s+(.+)$/i);
+        if (m) return [part.trim()];
+        return part.split(/\s*,\s+(?=[A-Za-z][A-Za-z0-9 /&'’-]{1,40}\s*(?:=|:))/);
+    }).map((c) => String(c || '').trim()).filter(Boolean);
+    const seen = new Set();
+    const fills = [];
+    const toParse = chunks.length ? chunks : [text];
+    for (const chunk of toParse) {
+        const m = String(chunk || '').trim().match(/^(.{2,80}?)\s*(?:=|:|→|is)\s+(.{1,400})$/i);
+        if (!m) continue;
+        const hint = m[1].trim();
+        const answer = m[2].trim().replace(/^["']|["']$/g, '');
+        if (!answer) continue;
+        if (/^(pause|resume|stop|submit|next|skip|re-?autofill|continue|please)$/i.test(hint)) continue;
+        const f = findFieldByHint(snapshot, hint);
+        const key = `${f?.id || hint}::${answer}`.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
+        fills.push({
+            id: f?.id,
+            label: f?.label || hint,
+            answer
+        });
+    }
+    return fills;
 }
 
 function profileFacts(profile) {
@@ -241,9 +293,52 @@ async function interpretFillInstruction({
             summary: `Gender = ${facts.gender || 'Male'}`
         });
     }
+    if (/\bveteran\b/.test(t) && /\b(no|not|false)\b/.test(t)) {
+        const f = snapshot.find((x) => /veteran|military/i.test(x.label));
+        return okResult({
+            fills: [{
+                id: f?.id,
+                label: f?.label || 'Veteran status',
+                answer: facts.veteran || 'I am not a protected veteran'
+            }],
+            fieldKey: 'veteran_status',
+            issueKey: 'veteran|no',
+            summary: 'Veteran = No'
+        });
+    }
+    if (/\b(over\s*18|18\s*or\s*older)\b/.test(t) && /\byes\b/.test(t)) {
+        const f = snapshot.find((x) => /18|age of majority/i.test(x.label));
+        return okResult({
+            fills: [{ id: f?.id, label: f?.label || 'Over 18', answer: 'Yes' }],
+            fieldKey: 'over_18',
+            issueKey: 'over_18|yes',
+            summary: 'Over 18 = Yes'
+        });
+    }
+    if (/\brelocat/.test(t) && /\b(yes|no)\b/.test(t)) {
+        const yn = /\byes\b/.test(t) ? 'Yes' : 'No';
+        const f = snapshot.find((x) => /relocat/i.test(x.label));
+        return okResult({
+            fills: [{ id: f?.id, label: f?.label || 'Willing to relocate', answer: yn }],
+            fieldKey: 'willing_to_relocate',
+            issueKey: `relocate|${yn.toLowerCase()}`,
+            summary: `Relocate = ${yn}`
+        });
+    }
+
+    const assigned = parseAssignmentFills(text, snapshot);
+    if (assigned.length) {
+        return okResult({
+            fills: assigned,
+            clickSubmit: /\bsubmit\b/.test(t),
+            fieldKey: assigned[0]?.label || 'form',
+            issueKey: 'user_instruct|assignment',
+            summary: assigned.map((a) => `${a.label} = ${a.answer}`).join('; ').slice(0, 180)
+        });
+    }
 
     // Fast path — location free-text
-    if (/location|city|zip|postal/i.test(text) && /type|enter|fill|add|manual|free.?text|city.?state/i.test(text)) {
+    if (/location|city|zip|postal/i.test(text) && /type|enter|fill|add|manual|free.?text|city.?state|from profile|profile/i.test(text)) {
         const answer = facts.location_line
             || (facts.city && facts.state ? `${facts.city}, ${facts.state}${facts.zip ? ` ${facts.zip}` : ''}` : facts.city);
         if (answer) {
@@ -345,9 +440,9 @@ QUEUE / CONTROL (set queueControl OR reAutofill when asked):
 - reAutofill true = re-run autofill on this tab
 
 FILL RULES:
-- Prefer empty/wrong required fields.
-- When OPTIONS exist in the field value or label, copy an option EXACTLY.
-- Multiple fields OK (up to 8).
+- Prefer empty/wrong required fields. Use the full field list — do not ignore EEO, location, education, or custom essays.
+- When OPTIONS exist, copy an option EXACTLY.
+- Multiple fields OK (up to 12).
 - clickSubmit true only if user says submit OR form is clearly ready after your fills.
 - fieldKey: short key (location, salary, sponsorship, why_company, skill_experience…).
 - issueKey: host-agnostic like location|no_dropdown_match or why|rewrite.
@@ -465,5 +560,6 @@ Return JSON ONLY (no chat):
 module.exports = {
     interpretFillInstruction,
     compactFields,
-    profileFacts
+    profileFacts,
+    parseAssignmentFills
 };

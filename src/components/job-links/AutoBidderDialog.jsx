@@ -2151,8 +2151,15 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     };
 
     const listFormQuestions = async () => {
-        const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_LIST_QUESTIONS', 20000, {});
+        const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_LIST_QUESTIONS', 25000, {
+            applicationId: detailAppId
+                || queueState?.currentId
+                || queueState?.lastApplicationId
+                || undefined,
+            url: captchaApplyUrl || queueState?.currentJobUrl || undefined
+        });
         const body = res?.result || res?.data || res || {};
+        if (body.ok === false && body.error) throw new Error(body.error);
         const questions = Array.isArray(body.questions) ? body.questions : [];
         return questions;
     };

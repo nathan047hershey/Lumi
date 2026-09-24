@@ -1126,6 +1126,44 @@
         return false;
     }
 
+    /** First real answer stays. Later sweeps must not rewrite it. */
+    function shouldKeepExistingAnswer(field, got, wanted) {
+        if (isPlaceholderValue(got) || !String(got || '').trim()) return false;
+        const kind = effectiveFieldKind(field) || field?.kind || '';
+        const lab = String(field?.label || '');
+        const cur = String(got || '').trim();
+        const want = String(wanted || '').trim();
+        const wrongYesEssay = /^yes\.?$/i.test(cur)
+            && (labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab)
+                || kind === 'skill_list' || kind === 'skill_project_brief');
+        if (wrongYesEssay) return false;
+        if (kind === 'gender' && want) {
+            const wantMale = /\bmale\b/i.test(want) && !/\bfemale\b/i.test(want);
+            if (wantMale && /\bfemale\b/i.test(cur) && !/\bmale\b/i.test(cur.replace(/female/ig, ''))) {
+                return false;
+            }
+        }
+        const polarityKind = kind === 'disability_status'
+            || kind === 'requires_sponsorship'
+            || kind === 'previous_employer_no'
+            || kind === 'hispanic_latino'
+            || kind === 'sanctioned_countries_no'
+            || kind === 'employee_relationship_no'
+            || kind === 'non_compete_no';
+        if (polarityKind) {
+            if (kind === 'disability_status') {
+                const hasDisability = /^yes\b/i.test(cur)
+                    && /disabilit|have had/i.test(cur)
+                    && !/do not|don'?t|have not had/i.test(cur);
+                if (hasDisability) return false;
+                return true;
+            }
+            if (/^yes\b/i.test(cur) && /^no\b/i.test(want)) return false;
+            return true;
+        }
+        return true;
+    }
+
     /** Resolve kind from label when scrape misclassified contractor/prior-employer as question. */
     function effectiveFieldKind(field) {
         const kind = String(field?.kind || '');
@@ -1193,6 +1231,7 @@
             w = 'No';
         }
         if (w && valuesMatch(w, got, kind)) return true;
+        if (shouldKeepExistingAnswer(field, got, w)) return true;
         if (isPlaceholderValue(got)) {
             // No answer generated and field still empty → incomplete (esp. essays).
             if (!w && (field?.type === 'textarea' || kind === 'question')) return false;
@@ -2628,6 +2667,13 @@
     async function sweepRequiredSelects(profile, answersById, answersByLabel, jobDescription) {
         let swept = 0;
         const fields = collectFields();
+        const tryFillEmpty = async (f, want) => {
+            const got = readCurrentValue(f);
+            if (shouldKeepExistingAnswer(f, got, want)) return false;
+            if (!want) return false;
+            const r = await fillOne(f, want, 2, profile);
+            return !!r?.ok;
+        };
         // 1) Force Disability No even if previously wrong Yes.
         for (const f of fields) {
             const kind = effectiveFieldKind(f) || f.kind || '';
@@ -2639,8 +2685,7 @@
                 && !/do not|don'?t|have not had/i.test(got);
             const empty = !got || isPlaceholderValue(got);
             if (wrongYes || empty) {
-                const r = await fillOne(f, 'No, I do not have a disability', 2, profile);
-                if (r?.ok) swept += 1;
+                if (await tryFillEmpty(f, 'No, I do not have a disability')) swept += 1;
                 await sleep(120);
             }
         }
@@ -2677,8 +2722,7 @@
                 const empty = !got || isPlaceholderValue(got);
                 const wrongYes = /^yes\b/i.test(String(got || '').trim());
                 if (wrongYes || empty) {
-                    const r = await fillOne(f, spec.want, 2, profile);
-                    if (r?.ok) swept += 1;
+                    if (await tryFillEmpty(f, spec.want)) swept += 1;
                     await sleep(100);
                 }
             }
@@ -2726,9 +2770,8 @@
                 const got = readCurrentValue(f);
                 const empty = !got || isPlaceholderValue(got);
                 const wrongNo = /^no\b/i.test(String(got || '').trim());
-                if (wrongNo || empty) {
-                    const r = await fillOne(f, spec.want, 2, profile);
-                    if (r?.ok) swept += 1;
+                if (empty) {
+                    if (await tryFillEmpty(f, spec.want)) swept += 1;
                     await sleep(100);
                 }
             }
@@ -2744,8 +2787,7 @@
             const wrong = (wantMale && /\bfemale\b/i.test(got))
                 || !got || isPlaceholderValue(got);
             if (wrong) {
-                const r = await fillOne(f, wantMale ? 'Male' : want, 2, profile);
-                if (r?.ok) swept += 1;
+                if (await tryFillEmpty(f, wantMale ? 'Male' : want)) swept += 1;
                 await sleep(120);
             }
         }
@@ -2758,11 +2800,8 @@
             if (kind === 'race_ethnicity' || /\bidentify your race\b/i.test(lab)) {
                 const want = 'Black or African American';
                 const empty = !got || isPlaceholderValue(got);
-                const helper = cm();
-                const mismatch = !empty && helper && helper.scoreChoice(want, got, '') < 60;
-                if (empty || mismatch) {
-                    const r = await fillOne(f, want, 2, profile);
-                    if (r?.ok) swept += 1;
+                if (empty) {
+                    if (await tryFillEmpty(f, want)) swept += 1;
                     await sleep(120);
                 }
                 continue;
@@ -2771,15 +2810,12 @@
                 || /\bbest describes.{0,40}experience\b/i.test(lab)
                 || /\bwritten.{0,40}production\b/i.test(lab))
                 && yoeSweep >= 1) {
-                if (isWeakSkillOption(got) || !got || isPlaceholderValue(got)) {
+                if (!got || isPlaceholderValue(got)) {
                     const want = kind === 'years_of_experience'
                         ? yearsExperienceFillFromProfile(profile)
                         : skillExperienceWantAliases(profile, lab)[0];
-                    if (want) {
-                        const r = await fillOne(f, want, 2, profile);
-                        if (r?.ok) swept += 1;
-                        await sleep(120);
-                    }
+                    if (want && await tryFillEmpty(f, want)) swept += 1;
+                    await sleep(120);
                 }
             }
         }
@@ -2813,8 +2849,7 @@
                 f, profile, answersById, answersByLabel, jobDescription
             );
             if (!wanted) continue;
-            const r = await fillOne(f, wanted, 2, profile);
-            if (r?.ok) swept += 1;
+            if (await tryFillEmpty(f, wanted)) swept += 1;
             await sleep(120);
         }
         return swept;
@@ -3318,23 +3353,10 @@
                     continue;
                 }
                 // One-time fill: do not keep rewriting a real answer.
-                if (!isPlaceholderValue(already) && String(already || '').trim()) {
-                    const lab = String(field.label || '');
-                    const kindNow = effectiveFieldKind(field) || field.kind || '';
-                    const wrongYesEssay = /^yes\.?$/i.test(already)
-                        && (labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab)
-                            || kindNow === 'skill_list' || kindNow === 'skill_project_brief');
-                    const polarityKind = kindNow === 'disability_status'
-                        || kindNow === 'requires_sponsorship'
-                        || kindNow === 'previous_employer_no'
-                        || kindNow === 'hispanic_latino'
-                        || kindNow === 'sanctioned_countries_no';
-                    const polarityWrong = polarityKind && wanted && !valuesMatch(wanted, already, kindNow);
-                    if (!wrongYesEssay && !polarityWrong) {
-                        filled += 1;
-                        if (field.required) requiredOk += 1;
-                        continue;
-                    }
+                if (shouldKeepExistingAnswer(field, already, wanted)) {
+                    filled += 1;
+                    if (field.required) requiredOk += 1;
+                    continue;
                 }
 
                 let ok = false;
@@ -3436,17 +3458,19 @@
                         progress: Math.min(88, 50 + (3 - gaps.length) * 8),
                         left: gaps.length
                     });
-                    // Same course: keep filling leftover empties — do not skip prior misses.
+                    // Same course: only leftover empties — never rewrite a first-pass answer.
                     for (const f of gaps) {
+                        const current = readCurrentValue(f);
+                        const wanted = wantedForField(
+                            f, profile, answersById, answersByLabel, payload.jobDescription
+                        );
+                        if (shouldKeepExistingAnswer(f, current, wanted)) continue;
                         const el = findEl(f);
                         if (el) {
                             try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (_) { /* ignore */ }
                             await sleep(120);
                         }
-                        const wanted = wantedForField(
-                            f, profile, answersById, answersByLabel, payload.jobDescription
-                        ) || 'Yes';
-                        const r = await fillOne(f, wanted, 2 + round, profile);
+                        const r = await fillOne(f, wanted || (isSelectLikeField(f) ? 'Yes' : ''), 2 + round, profile);
                         if (r?.ok && !isPlaceholderValue(readCurrentValue(f))) n += 1;
                         closeOpenSelectMenus();
                         await sleep(120);
@@ -3692,11 +3716,6 @@
         }
         if (msg?.type === 'BIDDER_ENGINE_COLLECT') {
             try {
-                try {
-                    if (window !== window.top) return false;
-                } catch (_) {
-                    return false;
-                }
                 const ats = detectAts();
                 if (ats !== 'greenhouse') {
                     // Soft handoff — background uses fill.js for Oracle/Workday/etc.
@@ -3710,22 +3729,17 @@
                     return false;
                 }
                 const fields = collectFields();
-                const API_KINDS = new Set([
-                    'question', 'salary', 'work_authorization', 'requires_sponsorship',
-                    'previous_employer_no', 'years_of_experience', 'skill_experience',
-                    'skill_list', 'skill_project_brief', 'interview_attend_yes', 'willing_to_relocate',
-                    'over_18', 'how_heard', 'data_protection', 'employer_count',
-                    'high_school_performance', 'high_school_rationale', 'degree_result',
-                    'sanctioned_countries_no', 'export_control_us_citizen', 'immigration_na_if_citizen',
-                    'onsite_hub_yes', 'us_person_yes', 'disability_status'
-                ]);
+                const SKIP_KINDS = new Set(['first_name', 'last_name', 'full_name', 'email', 'phone', 'linkedin', 'github']);
                 const questions = fields
-                    .filter((f) => API_KINDS.has(f.kind))
+                    .filter((f) => f.label && !SKIP_KINDS.has(f.kind))
                     .map((f) => ({
                         id: f.id,
                         label: f.label,
                         kind: f.kind,
                         type: f.type,
+                        required: !!f.required,
+                        value: String(f.value || '').trim(),
+                        answer: String(f.value || '').trim(),
                         answer_type: f.kind === 'salary'
                             ? 'salary'
                             : (f.kind === 'skill_experience' || f.kind === 'years_of_experience'

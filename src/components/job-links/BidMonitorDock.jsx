@@ -170,6 +170,7 @@ export default function BidMonitorDock({
     const [instructBusy, setInstructBusy] = useState(false);
     const [instructMsg, setInstructMsg] = useState('');
     const [showAsk, setShowAsk] = useState(false);
+    const autoLoadedQsRef = useRef('');
 
     useEffect(() => {
         setMounted(true);
@@ -190,6 +191,14 @@ export default function BidMonitorDock({
         })));
     }, [courseAnswers]);
 
+    useEffect(() => {
+        if (dockTab !== 'manual' || !onListFormQuestions) return;
+        const sig = `${ownedTabId || ''}|${title || ''}`;
+        if (autoLoadedQsRef.current === sig) return;
+        autoLoadedQsRef.current = sig;
+        loadQuestionsFromForm().catch(() => {});
+    }, [dockTab, ownedTabId, title]);
+
     const loadQuestionsFromForm = async () => {
         if (!onListFormQuestions) return;
         setAnswersBusy(true);
@@ -204,11 +213,14 @@ export default function BidMonitorDock({
                 const next = incoming.map((q, i) => {
                     const key = String(q.id || q.label || i).toLowerCase();
                     const old = byKey.get(key);
+                    const live = String(q.answer ?? q.value ?? '').trim();
                     return {
                         key: String(q.id || q.label || `q-${i}`),
                         id: String(q.id || q.label || ''),
                         label: String(q.label || q.id || `Question ${i + 1}`),
-                        answer: old?.answer || ''
+                        required: !!q.required,
+                        kind: q.kind || '',
+                        answer: old?.answer || live
                     };
                 });
                 if (!next.length) {
@@ -222,7 +234,7 @@ export default function BidMonitorDock({
                 return next;
             });
             setAnswersMsg(incoming.length
-                ? `Loaded ${incoming.length} question(s)`
+                ? `Loaded ${incoming.length} question(s) from the apply form`
                 : 'No questions detected — add manually');
             setDockTab('manual');
         } catch (err) {
@@ -1003,7 +1015,7 @@ export default function BidMonitorDock({
                                                 </Button>
                                             </div>
                                             <div className="flex flex-wrap gap-1">
-                                                {['Pause', 'Disability = No', 'Re-autofill', 'Submit now'].map((ex) => (
+                                                {['Pause', 'Disability = No', 'Sponsorship = No', 'Location from profile', 'Re-autofill', 'Submit now'].map((ex) => (
                                                     <button
                                                         key={ex}
                                                         type="button"
@@ -1067,7 +1079,7 @@ export default function BidMonitorDock({
                                                 <input
                                                     type="text"
                                                     className="h-8 min-w-0 flex-1 rounded-lg border border-white/10 bg-black/25 px-2 text-[11px] font-medium text-white outline-none focus:border-cyan-400/40"
-                                                    placeholder="Question"
+                                                    placeholder={row.required ? 'Question *' : 'Question'}
                                                     value={row.label}
                                                     onChange={(e) => {
                                                         const v = e.target.value;

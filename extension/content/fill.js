@@ -1995,7 +1995,7 @@
                     || labelLooksLikeSponsorship(label)
             });
 
-            // Send written + eligibility Yes/No / selects to the answers API (profile fills name/email/phone).
+            // Send written + eligibility + location/EEO/education to the panel + answers API.
             const API_KINDS = new Set([
                 'question', 'salary', 'salary_comfort_yes', 'work_authorization', 'requires_sponsorship',
                 'previous_employer_no', 'years_of_experience', 'willing_to_relocate',
@@ -2003,12 +2003,18 @@
                 'high_school_performance', 'high_school_rationale', 'degree_result',
                 'sanctioned_countries_no', 'export_control_us_citizen', 'immigration_na_if_citizen',
                 'onsite_hub_yes', 'us_person_yes', 'skill_list', 'skill_project_brief',
-                'interview_attend_yes', 'skill_experience'
+                'interview_attend_yes', 'skill_experience',
+                'city', 'city_state', 'state', 'country', 'postal_code', 'address', 'address_line2',
+                'school', 'degree', 'discipline', 'education_level',
+                'disability_status', 'gender', 'veteran_status', 'race_ethnicity', 'hispanic_latino',
+                'pronouns', 'website_url', 'preferred_name', 'willing_to_travel',
+                'education_start_month', 'education_start_year'
             ]);
-            if (API_KINDS.has(kind)) {
-                if (/\b(disabilit(?:y|ies)|gender|sex|veteran|race|ethnicity|hispanic|latino)\b/i.test(label || '')) {
-                    continue;
-                }
+            const profileOnly = new Set(['first_name', 'last_name', 'full_name', 'email', 'phone', 'linkedin', 'github']);
+            const listAsQuestion = API_KINDS.has(kind)
+                || (!profileOnly.has(kind) && !['resume', 'cover_letter', 'todays_date'].includes(kind)
+                    && (isRequiredField(el, label) || /\?/.test(label || '') || type === 'textarea'));
+            if (listAsQuestion) {
                 let options;
                 if (el.tagName === 'SELECT') {
                     options = [...el.options]
@@ -2030,11 +2036,16 @@
                     fields[fields.length - 1].kind = 'salary_comfort_yes';
                 }
                 const isChoice = !!(options?.length);
+                const cur = String(el.value || el.getAttribute('aria-valuetext') || '').trim();
                 questions.push({
                     id,
                     label: label || id,
                     type,
                     kind,
+                    required: !!(el.required || el.getAttribute('aria-required') === 'true'
+                        || isRequiredField(el, label)),
+                    value: cur,
+                    answer: cur,
                     answer_type: kind === 'salary'
                         ? 'salary'
                         : (isChoice ? 'choice' : 'written'),
@@ -2141,38 +2152,74 @@
                     || kind === 'requires_sponsorship'
                     || labelLooksLikeSponsorship(label)
             });
-            if (
-                kind === 'question'
-                || kind === 'salary'
-                || kind === 'salary_comfort_yes'
-                || kind === 'work_authorization'
-                || kind === 'requires_sponsorship'
-                || kind === 'previous_employer_no'
-                || kind === 'years_of_experience'
-                || kind === 'willing_to_relocate'
-                || kind === 'over_18'
-                || kind === 'how_heard'
-                || kind === 'data_protection'
-                || kind === 'sanctioned_countries_no'
-                || kind === 'export_control_us_citizen'
-                || kind === 'immigration_na_if_citizen'
-                || kind === 'onsite_hub_yes'
-                || kind === 'us_person_yes'
-            ) {
-                if (/\b(disabilit(?:y|ies)|gender|sex|veteran|race|ethnicity|hispanic|latino)\b/i.test(label || '')) {
-                    // demographics stay profile-only
-                } else {
-                    questions.push({
-                        id,
-                        label: label || id,
-                        type: 'radio',
-                        kind,
-                        answer_type: kind === 'salary' ? 'salary' : 'choice',
-                        selected: false,
-                        options: options.map((o) => o.label || o.value).filter(Boolean)
-                    });
-                }
+            const checked = group.find((g) => g.checked);
+            const checkedLabel = checked
+                ? (radioOptionText(checked) || labelFor(checked) || checked.value || '')
+                : '';
+            if (kind !== 'first_name' && kind !== 'last_name' && kind !== 'email' && kind !== 'phone') {
+                questions.push({
+                    id,
+                    label: label || id,
+                    type: 'radio',
+                    kind,
+                    required: group.some((g) => isRequiredField(g, label)),
+                    value: String(checkedLabel || '').trim(),
+                    answer: String(checkedLabel || '').trim(),
+                    answer_type: kind === 'salary' ? 'salary' : 'choice',
+                    selected: false,
+                    options: options.map((o) => o.label || o.value).filter(Boolean)
+                });
             }
+        }
+
+        // Ashby / modern ATS: role=radio without input[type=radio].
+        const roleRadios = [...document.querySelectorAll('[role="radio"]')].filter(visible);
+        const byGroup = new Map();
+        for (const el of roleRadios) {
+            const groupEl = el.closest('[role="radiogroup"], fieldset, [class*="question"]') || el.parentElement;
+            const key = groupEl
+                ? `role_${groupEl.id || labelFor(groupEl) || groupEl.className || 'g'}`
+                : `role_${labelFor(el)}`;
+            if (!byGroup.has(key)) byGroup.set(key, []);
+            byGroup.get(key).push(el);
+        }
+        for (const [gkey, group] of byGroup) {
+            if (!group.length) continue;
+            const label = radioGroupQuestionLabel(group)
+                || group[0].closest('[role="radiogroup"], fieldset')?.querySelector('legend, [class*="label"]')?.textContent?.trim()
+                || labelFor(group[0])
+                || gkey;
+            const id = `role_radio_${gkey}`.slice(0, 140);
+            if (seenIds.has(id)) continue;
+            seenIds.add(id);
+            let kind = classifyPersonal(label, gkey, '');
+            const options = group.map((el) => String(el.innerText || el.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim()).filter(Boolean);
+            const checked = group.find((el) => el.getAttribute('aria-checked') === 'true');
+            const checkedLabel = checked
+                ? String(checked.innerText || checked.getAttribute('aria-label') || '').replace(/\s+/g, ' ').trim()
+                : '';
+            fields.push({
+                id,
+                label,
+                kind,
+                type: 'radio',
+                name: gkey,
+                tag: 'div',
+                inputType: 'radio',
+                options: options.map((t) => ({ value: t, label: t })),
+                required: /required|\*/i.test(label)
+            });
+            questions.push({
+                id,
+                label: label || id,
+                type: 'radio',
+                kind,
+                required: /required|\*/i.test(label),
+                value: checkedLabel,
+                answer: checkedLabel,
+                answer_type: 'choice',
+                options
+            });
         }
 
         const selectedQuestions = questions.filter((q) => q.selected);
@@ -3780,6 +3827,17 @@
             if (!wrongSponsorYes && !wrongDisabilityYes && current && valuesRoughlyMatch(value, current, field.kind)) {
                 skippedAlready += 1;
                 continue;
+            }
+            // One-time fill: keep the first real answer (later AI / leftover / top-up must not rewrite).
+            if (!wrongSponsorYes && !wrongDisabilityYes && current && !isPlaceholderValue(current)) {
+                const labKeep = String(field.label || '');
+                const wrongYesEssay = /^yes\.?$/i.test(String(current).trim())
+                    && (labelLooksLikeSkillList(labKeep) || labelLooksLikeSkillDescribe(labKeep)
+                        || field.kind === 'skill_list' || field.kind === 'skill_project_brief');
+                if (!wrongYesEssay) {
+                    skippedAlready += 1;
+                    continue;
+                }
             }
             // Soft skip: controlMatch score ≥ 70 (long Disability / EEO options).
             try {
@@ -7594,7 +7652,14 @@
             const filled = (cur && !/^select/i.test(cur)) || (shown && !/^select/i.test(shown) && shown.length > 1);
             return !filled;
         });
-        if (!fields.length) fields = form.fields || [];
+        if (!fields.length) {
+            return {
+                filled: 0,
+                requiredComplete: true,
+                adapter: window.__lumiFillShared?.ENGINE_FILL_V3 || 'autofill-engine-v3',
+                strategy: 'topup'
+            };
+        }
         const fillStats = await fillForm({
             fields,
             answers: payload.answers,

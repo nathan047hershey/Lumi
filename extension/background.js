@@ -838,9 +838,96 @@ async function scrapeActiveTab() {
 }
 
 async function collectForm(tabId) {
+    const richest = await collectRichestApplySnap(tabId);
+    if (richest?.form) return richest.form;
     const response = await sendTabMessage(tabId, { type: 'COLLECT_FORM' });
     if (!response?.ok) throw new Error(response?.error || 'Failed to collect form');
     return response.data;
+}
+
+async function listApplyFrameIds(tabId) {
+    try {
+        const rows = await chrome.scripting.executeScript({
+            target: { tabId, allFrames: true },
+            func: () => {
+                const n = document.querySelectorAll(
+                    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea, select, [role="combobox"], [role="radio"]'
+                ).length;
+                return { n, href: String(location.href || '') };
+            }
+        });
+        return (rows || [])
+            .map((r) => ({
+                frameId: r.frameId,
+                n: Number(r.result?.n) || 0,
+                href: r.result?.href || ''
+            }))
+            .filter((r) => r.frameId != null);
+    } catch {
+        return [{ frameId: 0, n: 1, href: '' }];
+    }
+}
+
+async function sendTabMessageFrame(tabId, message, frameId) {
+    if (frameId == null) return sendTabMessage(tabId, message);
+    return chrome.tabs.sendMessage(tabId, message, { frameId });
+}
+
+/** Prefer the iframe that actually hosts the apply form (parent often has 0 fields). */
+async function collectRichestApplySnap(tabId) {
+    const frames = await listApplyFrameIds(tabId);
+    const ranked = [...frames].sort((a, b) => b.n - a.n);
+    let bestForm = null;
+    let bestEngine = null;
+    let bestScore = -1;
+    let bestFrameId = 0;
+    for (const fr of ranked.slice(0, 8)) {
+        try {
+            const res = await sendTabMessageFrame(tabId, { type: 'COLLECT_FORM' }, fr.frameId);
+            const form = res?.data || (res?.ok === false ? null : res);
+            const score = (form?.fields?.length || 0) + (form?.questions?.length || 0);
+            if (form && score > bestScore) {
+                bestForm = form;
+                bestScore = score;
+                bestFrameId = fr.frameId;
+            }
+        } catch (_) { /* frame has no listener */ }
+        try {
+            const eng = await sendTabMessageFrame(tabId, { type: 'BIDDER_ENGINE_COLLECT' }, fr.frameId);
+            if (eng?.ok && Array.isArray(eng.fields) && eng.fields.length) {
+                if (!bestEngine || (eng.fields.length > (bestEngine.fields?.length || 0))) {
+                    bestEngine = eng;
+                }
+            }
+        } catch (_) { /* ignore */ }
+    }
+    return { form: bestForm, engine: bestEngine, frameId: bestFrameId, score: bestScore };
+}
+
+function panelQuestionFromField(f) {
+    const label = String(f?.label || f?.id || '').replace(/\s+/g, ' ').trim();
+    if (!label) return null;
+    const kind = String(f?.kind || 'question');
+    if (['first_name', 'last_name', 'full_name', 'email', 'phone', 'linkedin', 'github'].includes(kind)) {
+        return null;
+    }
+    if (['resume', 'cover_letter'].includes(kind)) return null;
+    const value = String(f?.value ?? f?.answer ?? '').trim();
+    const options = Array.isArray(f?.options)
+        ? f.options.map((o) => (typeof o === 'string' ? o : (o?.label || o?.value || ''))).filter(Boolean)
+        : undefined;
+    return {
+        id: String(f.id || label),
+        label,
+        type: f.type || 'text',
+        kind,
+        required: !!f.required,
+        value,
+        answer: value,
+        answer_type: f.answer_type
+            || (kind === 'salary' ? 'salary' : (options?.length ? 'choice' : 'written')),
+        options
+    };
 }
 
 /**
@@ -6120,6 +6207,9 @@ function mapBidderQuestions(rawQuestions) {
         label: q.label,
         kind: q.kind,
         type: q.type,
+        required: !!q.required,
+        value: q.value ?? q.answer ?? '',
+        answer: q.answer ?? q.value ?? '',
         answer_type: q.kind === 'salary' || q.answer_type === 'salary'
             ? 'salary'
             : (Array.isArray(q.options) && q.options.length ? 'choice' : (q.answer_type || 'written')),
@@ -6147,19 +6237,31 @@ function mergeBidderQuestions(...lists) {
 
 async function loadBidderQuestions(tabId, { ats, applyUrl, tabUrl, formSnap } = {}) {
     let collected = null;
-    try {
-        collected = await sendTabMessage(tabId, { type: 'BIDDER_ENGINE_COLLECT' });
-    } catch (_) {
-        collected = null;
-    }
     let snap = formSnap || null;
+    try {
+        const richest = await collectRichestApplySnap(tabId);
+        collected = richest?.engine || collected;
+        if (!snap || !Array.isArray(snap.questions) || !snap.questions.length) {
+            snap = richest?.form || snap;
+        }
+    } catch (_) { /* ignore */ }
+    if (!collected) {
+        try {
+            collected = await sendTabMessage(tabId, { type: 'BIDDER_ENGINE_COLLECT' });
+        } catch (_) {
+            collected = null;
+        }
+    }
     const needFormSnap = !snap || !Array.isArray(snap.questions) || !snap.questions.length;
     if (needFormSnap) {
         snap = await collectForm(tabId).catch(() => snap);
     }
+    const fieldQs = mapBidderQuestions(
+        (collected?.fields || snap?.fields || []).map(panelQuestionFromField).filter(Boolean)
+    );
     const engineQs = mapBidderQuestions(collected?.questions || []);
     const formQs = mapBidderQuestions(snap?.questions || []);
-    const questions = mergeBidderQuestions(engineQs, formQs);
+    const questions = mergeBidderQuestions(engineQs, formQs, fieldQs);
     const ghUrl = /greenhouse\.io/i.test(String(applyUrl || tabUrl || ''));
     const softHandoff = !!(
         collected
@@ -9077,27 +9179,51 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         (async () => {
             try {
                 const st = await getQueueState();
-                let tabId = Number(msg.tabId || st?.currentTabId || st?.captchaTabId || 0) || null;
-                if (tabId) {
-                    try { await chrome.tabs.get(tabId); } catch { tabId = null; }
-                }
+                const appId = Number(msg.applicationId || st?.currentId || st?.lastApplicationId || 0) || null;
+                let tabId = await resolveOpenApplyTabId({
+                    tabId: msg.tabId || st?.currentTabId || st?.captchaTabId,
+                    applicationId: appId,
+                    url: msg.url || st?.currentJobUrl || ''
+                });
                 if (!tabId) {
                     sendResponse({ ok: false, error: 'No apply tab open. Process or Open tab first.' });
                     return;
                 }
                 await ensureScripts(tabId);
-                const form = await collectForm(tabId).catch(() => null);
-                const questions = Array.isArray(form?.questions) ? form.questions : [];
-                sendResponse({
-                    ok: true,
-                    tabId,
-                    questions: questions.map((q) => ({
+                const packed = await loadBidderQuestions(tabId, {
+                    applyUrl: msg.url || st?.currentJobUrl || '',
+                    tabUrl: (await chrome.tabs.get(tabId).catch(() => null))?.url || ''
+                });
+                const filledQa = await sendTabMessage(tabId, { type: 'COLLECT_FILLED_QA' }).catch(() => null);
+                const byId = new Map();
+                for (const item of (filledQa?.items || [])) {
+                    const k = String(item.id || item.label || '').toLowerCase();
+                    if (k) byId.set(k, String(item.answer || '').trim());
+                }
+                const questions = mergeBidderQuestions(
+                    packed.questions || [],
+                    (packed.formSnap?.questions || []).map(panelQuestionFromField).filter(Boolean),
+                    (packed.formSnap?.fields || []).map(panelQuestionFromField).filter(Boolean),
+                    (packed.collected?.fields || []).map(panelQuestionFromField).filter(Boolean)
+                ).map((q) => {
+                    const key = String(q.id || q.label || '').toLowerCase();
+                    const fromLive = byId.get(key) || q.answer || q.value || '';
+                    return {
                         id: String(q.id || q.label || ''),
                         label: String(q.label || q.id || 'Question'),
                         type: q.type || 'text',
                         kind: q.kind || q.answer_type || 'written',
-                        answer: ''
-                    }))
+                        required: !!q.required,
+                        value: fromLive,
+                        answer: fromLive,
+                        options: q.options
+                    };
+                });
+                sendResponse({
+                    ok: true,
+                    tabId,
+                    count: questions.length,
+                    questions
                 });
             } catch (err) {
                 sendResponse({ ok: false, error: err?.message || String(err) });
@@ -9194,10 +9320,11 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                     || st?.lastApplicationId
                     || 0
                 ) || null;
-                let tabId = Number(msg.tabId || st?.currentTabId || st?.captchaTabId || 0) || null;
-                if (tabId) {
-                    try { await chrome.tabs.get(tabId); } catch { tabId = null; }
-                }
+                let tabId = await resolveOpenApplyTabId({
+                    tabId: msg.tabId || st?.currentTabId || st?.captchaTabId,
+                    applicationId: appId,
+                    url: msg.url || st?.currentJobUrl || ''
+                });
                 if (!tabId) {
                     sendResponse({ ok: false, error: 'No apply tab open. Process or Open tab first.' });
                     return;
@@ -9211,11 +9338,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                     host = new URL(tab.url || '').hostname.replace(/^www\./i, '');
                 } catch (_) { /* ignore */ }
 
-                const snap = await collectForm(tabId).catch(() => null);
-                const bidderSnap = await sendTabMessage(tabId, { type: 'BIDDER_ENGINE_COLLECT' }).catch(() => null);
-                const fieldRows = Array.isArray(bidderSnap?.fields) && bidderSnap.fields.length
-                    ? bidderSnap.fields
-                    : (Array.isArray(snap?.fields) ? snap.fields : []);
+                const richest = await collectRichestApplySnap(tabId).catch(() => null);
+                const snap = richest?.form || await collectForm(tabId).catch(() => null);
+                const bidderSnap = richest?.engine
+                    || await sendTabMessage(tabId, { type: 'BIDDER_ENGINE_COLLECT' }).catch(() => null);
+                const fieldRows = [
+                    ...(Array.isArray(bidderSnap?.fields) ? bidderSnap.fields : []),
+                    ...(Array.isArray(snap?.fields) ? snap.fields : []),
+                    ...(Array.isArray(snap?.questions) ? snap.questions : []),
+                    ...(Array.isArray(bidderSnap?.questions) ? bidderSnap.questions : [])
+                ];
 
                 await logCourseEvent(appId, 'user_instruction', {
                     instruction: instruction.slice(0, 400),
@@ -9232,10 +9364,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                     fields: fieldRows.map((f) => ({
                         id: f.id,
                         label: f.label,
-                        value: f.value ?? '',
-                        required: !!f.required
+                        value: f.value ?? f.answer ?? '',
+                        required: !!f.required,
+                        kind: f.kind || '',
+                        type: f.type || '',
+                        options: Array.isArray(f.options)
+                            ? f.options.map((o) => (typeof o === 'string' ? o : (o?.label || o?.value || ''))).filter(Boolean)
+                            : undefined
                     })),
-                    missing_required: bidderSnap?.missingRequired || snap?.missingRequired || []
+                    missing_required: fieldRows
+                        .filter((f) => f.required && !String(f.value || f.answer || '').trim())
+                        .map((f) => f.label || f.id)
+                        .filter(Boolean)
+                        .slice(0, 16)
                 });
 
                 if (!interpreted?.ok
