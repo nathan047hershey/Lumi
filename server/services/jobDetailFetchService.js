@@ -344,11 +344,15 @@ async function closeQueue() {
 }
 
 function getStatus() {
+    const onVercel = !!process.env.VERCEL;
+    const rabbitError = !channel && !onVercel
+        ? (lastError || 'RabbitMQ unavailable — inline scrape + retry scheduler')
+        : lastError;
     return {
-        connected: Boolean(connection && channel),
-        mode: channel ? 'rabbit' : 'inline',
+        connected: onVercel ? true : Boolean(connection && channel),
+        mode: onVercel ? 'inline' : (channel ? 'rabbit' : 'inline'),
         queueName: QUEUE,
-        amqpUrl: AMQP_URL.replace(/\/\/.*@/, '//***@'),
+        amqpUrl: onVercel ? 'inline' : AMQP_URL.replace(/\/\/.*@/, '//***@'),
         prefetch: PREFETCH,
         queueDepth,
         processingCount,
@@ -356,9 +360,7 @@ function getStatus() {
         failedTotal,
         workerStartedAt,
         lastMessageAt,
-        lastError: channel
-            ? lastError
-            : (lastError || 'RabbitMQ unavailable — inline scrape + retry scheduler'),
+        lastError: onVercel && /RabbitMQ/i.test(String(rabbitError || '')) ? null : rabbitError,
         retryScheduler: Boolean(retryTimer),
         retryPollMs: RETRY_POLL_MS,
         circuitOpen: Date.now() < brokerDownUntil

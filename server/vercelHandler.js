@@ -40,9 +40,15 @@ module.exports = async function vercelApi(req, res) {
         };
         const finishSharedDb = () => {
             const { flushSharedDatabase } = require('./config/dbShare');
+            const { flushPendingCvKicks } = require('./services/jobLinkScraper');
+            const work = (async () => {
+                await flushSharedDatabase();
+                await flushPendingCvKicks();
+                await flushSharedDatabase();
+            })();
             Promise.race([
-                flushSharedDatabase(),
-                new Promise((resolve) => setTimeout(resolve, 20000))
+                work,
+                new Promise((resolve) => setTimeout(resolve, 90000))
             ]).finally(done);
         };
         res.on('finish', finishSharedDb);

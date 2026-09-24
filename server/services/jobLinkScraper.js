@@ -517,6 +517,8 @@ function cleanupStaleFetching() {
  * enqueue CV generation for matching profiles immediately instead of
  * waiting for the next auto-apply cron tick.
  */
+let cvChain = Promise.resolve();
+
 function scheduleAutoCvKick(jobLinkId) {
     if (!jobLinkId) return Promise.resolve();
     const run = () => Promise.resolve()
@@ -539,9 +541,16 @@ function scheduleAutoCvKick(jobLinkId) {
             );
             return null;
         });
-    if (process.env.VERCEL) return run();
+    if (process.env.VERCEL) {
+        cvChain = cvChain.then(run, run);
+        return cvChain;
+    }
     setImmediate(run);
     return Promise.resolve();
+}
+
+function flushPendingCvKicks() {
+    return cvChain;
 }
 
 async function scrapeRow(row) {
@@ -1011,9 +1020,9 @@ async function scrapeRow(row) {
         console.log(`[jobLinkScraper] row ${row.id} disabled — requires ${clearance}`);
     }
 
-    // Kick CV generation as soon as the JD lands — don't wait for cron.
-    // On the live site this has to finish inside the request.
-    await scheduleAutoCvKick(row.id);
+    // JD is already saved. CV generation must not hold the scrape open,
+    // or the page stays on Scraping JD until the model finishes.
+    scheduleAutoCvKick(row.id);
 
     return { ok: true, ...parsed, clearance_required: clearance || null, is_available: availableAfterScrape };
 }
@@ -1361,5 +1370,6 @@ module.exports = {
     getCronStatus,
     // Re-exported for the recovery pass at boot and for tests.
     cleanupStaleFetching,
-    listDueJobLinkIds
+    listDueJobLinkIds,
+    flushPendingCvKicks
 };
