@@ -46,6 +46,7 @@ export const EMPTY_JOB_LINKS_LIST_STATE = {
     dateFrom: '',
     dateTo: '',
     today: false,
+    datePreset: '',
     sort: 'latest'
 };
 
@@ -66,6 +67,9 @@ export function parseJobLinksListState(searchParams) {
         dateFrom: asYmd(searchParams?.get?.('date_from') || ''),
         dateTo: asYmd(searchParams?.get?.('date_to') || ''),
         today: searchParams?.get?.('today') === '1',
+        datePreset: ['today', 'past_24h', 'this_week', 'past_week'].includes(searchParams?.get?.('date_preset') || '')
+            ? searchParams.get('date_preset')
+            : (searchParams?.get?.('today') === '1' ? 'today' : ''),
         sort
     };
 }
@@ -82,6 +86,7 @@ export function jobLinksListStateHasMemory(state) {
         || !!state.dateFrom
         || !!state.dateTo
         || !!state.today
+        || !!state.datePreset
         || (state.sort && state.sort !== 'latest');
 }
 
@@ -97,7 +102,8 @@ export function jobLinksListStateToQuery(state) {
     if (state.hasGeneratedResume) next.set('has_generated_resume', '1');
     if (state.dateFrom) next.set('date_from', state.dateFrom);
     if (state.dateTo) next.set('date_to', state.dateTo);
-    if (state.today) next.set('today', '1');
+    if (state.datePreset) next.set('date_preset', state.datePreset);
+    else if (state.today) next.set('today', '1');
     if (state.sort && state.sort !== 'latest') next.set('sort', state.sort);
     const q = next.toString();
     return q ? `?${q}` : '';
@@ -127,15 +133,24 @@ export function writeSavedJobLinksListState(state) {
 }
 
 function pinTodayDates(state) {
-    if (!state?.today) {
+    const datePreset = state?.datePreset
+        || (state?.today ? 'today' : '');
+    if (datePreset) {
         return {
             ...state,
-            dateFrom: asYmd(state?.dateFrom || ''),
-            dateTo: asYmd(state?.dateTo || '')
+            datePreset,
+            today: datePreset === 'today',
+            dateFrom: '',
+            dateTo: ''
         };
     }
-    const today = localYmd();
-    return { ...state, dateFrom: today, dateTo: today };
+    return {
+        ...state,
+        datePreset: '',
+        today: false,
+        dateFrom: asYmd(state?.dateFrom || ''),
+        dateTo: asYmd(state?.dateTo || '')
+    };
 }
 
 export function resolveJobLinksListState(searchParams) {

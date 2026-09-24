@@ -226,6 +226,50 @@ function easternLocalToUtcDate(ymd, hour = 0, minute = 0, second = 0) {
     return new Date(utc + (want - got));
 }
 
+function addEasternDays(ymd, days) {
+    const noon = easternLocalToUtcDate(ymd, 12, 0, 0);
+    if (!noon) return '';
+    return easternYmd(new Date(noon.getTime() + days * 24 * 60 * 60 * 1000));
+}
+
+/** Monday YYYY-MM-DD of the Eastern week that contains ymd. */
+function easternMondayYmd(ymd) {
+    const noon = easternLocalToUtcDate(ymd, 12, 0, 0);
+    if (!noon) return '';
+    const wd = new Intl.DateTimeFormat('en-US', {
+        timeZone: EASTERN_TZ,
+        weekday: 'short'
+    }).format(noon);
+    const offset = { Mon: 0, Tue: 1, Wed: 2, Thu: 3, Fri: 4, Sat: 5, Sun: 6 }[wd];
+    if (offset == null) return ymd;
+    return addEasternDays(ymd, -offset);
+}
+
+/**
+ * Job-link date presets, computed on the server in Eastern time.
+ * past_week is the previous Monday–Sunday, not a rolling 7 days.
+ */
+function datePresetRange(preset, now = new Date()) {
+    const key = String(preset || '').trim().toLowerCase();
+    const ymd = easternYmd(now);
+    if (key === 'today') return easternDayUtcRange(ymd, ymd);
+    if (key === 'past_24h') {
+        const start = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+        const end = new Date(now.getTime() + 1000);
+        return { created_after: toSqlDateTime(start), created_before: toSqlDateTime(end) };
+    }
+    if (key === 'this_week' || key === 'past_week') {
+        const monday = easternMondayYmd(ymd);
+        const startYmd = key === 'past_week' ? addEasternDays(monday, -7) : monday;
+        const endYmd = key === 'past_week' ? monday : addEasternDays(monday, 7);
+        const start = easternLocalToUtcDate(startYmd, 0, 0, 0);
+        const end = easternLocalToUtcDate(endYmd, 0, 0, 0);
+        if (!start || !end) return null;
+        return { created_after: toSqlDateTime(start), created_before: toSqlDateTime(end) };
+    }
+    return null;
+}
+
 function easternDayUtcRange(fromYmd, toYmd) {
     const from = String(fromYmd || '').trim();
     const to = String(toYmd || '').trim() || from;
@@ -254,5 +298,6 @@ module.exports = {
     localPickerToUTCIso,
     utcIsoToLocalPicker,
     easternYmd,
-    easternDayUtcRange
+    easternDayUtcRange,
+    datePresetRange
 };

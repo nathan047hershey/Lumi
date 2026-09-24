@@ -82,11 +82,9 @@ import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
 import { formatAddedTimeLabel } from '@/lib/easternTime';
 import { parseSqliteUtcMs } from '@/lib/sqliteDate';
 import {
-    clientTzOffsetMinutes,
     dateInputValue,
     jobLinksListStateToQuery,
     localDayUtcRange,
-    localYmd,
     resolveJobLinksListState,
     writeSavedJobLinksListState
 } from '@/lib/jobLinksListState';
@@ -1441,7 +1439,10 @@ function JobLinks({ embedded = false }) {
     // clears both bounds so the user gets back to the unfiltered
     // view. We track the state separately so the active-chip list
     // and the button label can react to it.
-    const [isTodayActive, setIsTodayActive] = useState(initialFiltersRef.current.today);
+    const [datePreset, setDatePreset] = useState(
+        initialFiltersRef.current.datePreset
+        || (initialFiltersRef.current.today ? 'today' : '')
+    );
 
     // Pagination. We mirror the page number to the URL search
     // params (?page=N) so the user lands back on the same page
@@ -1474,9 +1475,10 @@ function JobLinks({ embedded = false }) {
             available: availableFilter,
             bidState: bidStateFilter,
             hasGeneratedResume: hasGeneratedResumeFilter,
-            dateFrom: dateFrom || debouncedDateFrom,
-            dateTo: dateTo || debouncedDateTo,
-            today: isTodayActive,
+            dateFrom: datePreset ? '' : (dateFrom || debouncedDateFrom),
+            dateTo: datePreset ? '' : (dateTo || debouncedDateTo),
+            today: datePreset === 'today',
+            datePreset,
             sort: sortFilter
         };
         writeSavedJobLinksListState(snapshot);
@@ -1510,7 +1512,7 @@ function JobLinks({ embedded = false }) {
         hasGeneratedResumeFilter,
         debouncedDateFrom,
         debouncedDateTo,
-        isTodayActive,
+        datePreset,
         sortFilter
     ]);
     const [limit] = useState(DEFAULT_LIMIT);
@@ -1660,23 +1662,23 @@ function JobLinks({ embedded = false }) {
                 onClear: () => changeHasGeneratedResumeFilter(false)
             });
         }
-        if (debouncedDateFrom && !isTodayActive) {
+        if (debouncedDateFrom && !datePreset) {
             out.push({
                 key: 'date_from',
                 label: `From: ${debouncedDateFrom}`,
                 onClear: () => {
                     flushDateFrom('');
-                    setIsTodayActive(false);
+                    setDatePreset('');
                 }
             });
         }
-        if (debouncedDateTo && !isTodayActive) {
+        if (debouncedDateTo && !datePreset) {
             out.push({
                 key: 'date_to',
                 label: `To: ${debouncedDateTo}`,
                 onClear: () => {
                     flushDateTo('');
-                    setIsTodayActive(false);
+                    setDatePreset('');
                 }
             });
         }
@@ -1687,20 +1689,24 @@ function JobLinks({ embedded = false }) {
                 onClear: () => flushSearch('')
             });
         }
-        if (isTodayActive) {
+        if (datePreset) {
+            const presetLabel = {
+                today: 'Today',
+                past_24h: 'Past 24 hours',
+                this_week: 'This week',
+                past_week: 'Past week'
+            }[datePreset] || datePreset;
             out.push({
-                key: 'today',
-                label: 'Today',
+                key: 'date_preset',
+                label: presetLabel,
                 onClear: () => {
                     setPage(1);
-                    setIsTodayActive(false);
-                    flushDateFrom('');
-                    flushDateTo('');
+                    setDatePreset('');
                 }
             });
         }
         return out;
-    }, [techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, debouncedSearch, isTodayActive, changeTechstackFilter, changePlatformFilter, changeAvailableFilter, changeBidStateFilter, changeSortFilter, changeHasGeneratedResumeFilter, flushDateFrom, flushDateTo, flushSearch, setPage]);
+    }, [techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, debouncedSearch, datePreset, changeTechstackFilter, changePlatformFilter, changeAvailableFilter, changeBidStateFilter, changeSortFilter, changeHasGeneratedResumeFilter, flushDateFrom, flushDateTo, flushSearch, setPage]);
 
     const resetFilters = () => {
         flushSearch('');
@@ -1712,29 +1718,19 @@ function JobLinks({ embedded = false }) {
         setHasGeneratedResumeFilter(false);
         flushDateFrom('');
         flushDateTo('');
-        setIsTodayActive(false);
+        setDatePreset('');
         setPage(1);
     };
 
-    const syncTodayFromDates = (from, to) => {
-        const today = localYmd();
-        setIsTodayActive(!!from && from === to && from === today);
-    };
-
-    // "Today" is a shortcut for the date bounds. When toggled on,
-    // we pin both From and To to today's Eastern (EST/EDT) calendar day.
-    const handleToggleToday = () => {
+    const handleDatePreset = (value) => {
         setPage(1);
-        if (isTodayActive) {
-            setIsTodayActive(false);
-            flushDateFrom('');
-            flushDateTo('');
-        } else {
-            const today = localYmd();
-            setIsTodayActive(true);
-            flushDateFrom(today);
-            flushDateTo(today);
+        if (!value || value === 'all') {
+            setDatePreset('');
+            return;
         }
+        setDatePreset(value);
+        flushDateFrom('');
+        flushDateTo('');
     };
 
     // Reset to page 1 when debounced filters actually change. Compare
@@ -1802,15 +1798,12 @@ function JobLinks({ embedded = false }) {
             if (techstackFilter !== 'all') filters.techstack = techstackFilter;
             if (platformFilter !== 'all') filters.platform = platformFilter;
             if (availableFilter !== 'all') filters.available = availableFilter;
-            if (debouncedDateFrom)   filters.date_from = debouncedDateFrom;
-            if (debouncedDateTo)     filters.date_to = debouncedDateTo;
-            if (isTodayActive)       filters.today = 1;
-            if (debouncedDateFrom || debouncedDateTo || isTodayActive) {
-                filters.tz_offset = clientTzOffsetMinutes();
-                const range = localDayUtcRange(
-                    isTodayActive ? localYmd() : debouncedDateFrom,
-                    isTodayActive ? localYmd() : debouncedDateTo
-                );
+            if (datePreset) {
+                filters.date_preset = datePreset;
+            } else if (debouncedDateFrom || debouncedDateTo) {
+                if (debouncedDateFrom) filters.date_from = debouncedDateFrom;
+                if (debouncedDateTo) filters.date_to = debouncedDateTo;
+                const range = localDayUtcRange(debouncedDateFrom, debouncedDateTo);
                 if (range) {
                     filters.created_after = range.created_after;
                     filters.created_before = range.created_before;
@@ -1869,7 +1862,7 @@ function JobLinks({ embedded = false }) {
                 if (!silent) setTableLoading(false);
             }
         }
-    }, [page, limit, debouncedSearch, techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, isTodayActive, mergeJustCreated]);
+    }, [page, limit, debouncedSearch, techstackFilter, platformFilter, availableFilter, bidStateFilter, sortFilter, hasGeneratedResumeFilter, debouncedDateFrom, debouncedDateTo, datePreset, mergeJustCreated]);
 
     useEffect(() => {
         load();
@@ -1995,9 +1988,10 @@ function JobLinks({ embedded = false }) {
             available: availableFilter,
             bidState: bidStateFilter,
             hasGeneratedResume: hasGeneratedResumeFilter,
-            dateFrom,
-            dateTo,
-            today: isTodayActive
+            dateFrom: datePreset ? '' : dateFrom,
+            dateTo: datePreset ? '' : dateTo,
+            today: datePreset === 'today',
+            datePreset
         };
         writeSavedJobLinksListState(snapshot);
         navigate(`${detailPrefix}/${rowId}${jobLinksListStateToQuery(snapshot)}`);
@@ -2211,7 +2205,7 @@ function JobLinks({ embedded = false }) {
                                         onChange={(e) => {
                                             const v = dateInputValue(e);
                                             flushDateFrom(v);
-                                            syncTodayFromDates(v, typeof dateTo === 'string' ? dateTo : '');
+                                            setDatePreset('');
                                         }}
                                         placeholder="From"
                                     />
@@ -2222,20 +2216,23 @@ function JobLinks({ embedded = false }) {
                                         onChange={(e) => {
                                             const v = dateInputValue(e);
                                             flushDateTo(v);
-                                            syncTodayFromDates(typeof dateFrom === 'string' ? dateFrom : '', v);
+                                            setDatePreset('');
                                         }}
                                         placeholder="To"
                                     />
                                 </div>
-                                <Button
-                                    type="button"
-                                    variant={isTodayActive ? 'default' : 'outline'}
-                                    size="sm"
-                                    className="h-9"
-                                    onClick={handleToggleToday}
-                                >
-                                    Today
-                                </Button>
+                                <Select value={datePreset || 'all'} onValueChange={handleDatePreset}>
+                                    <SelectTrigger className="h-9 w-[10.5rem] border-white/10 bg-black/20">
+                                        <SelectValue placeholder="Date" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                        <SelectItem value="all">All dates</SelectItem>
+                                        <SelectItem value="today">Today</SelectItem>
+                                        <SelectItem value="past_24h">Past 24 hours</SelectItem>
+                                        <SelectItem value="this_week">This week</SelectItem>
+                                        <SelectItem value="past_week">Past week</SelectItem>
+                                    </SelectContent>
+                                </Select>
                                 <label
                                     htmlFor="has-generated-resume"
                                     className={cn(

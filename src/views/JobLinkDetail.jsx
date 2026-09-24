@@ -58,7 +58,7 @@ import { adminAPI } from '@/api';
 import { useAuth } from '@/context/AuthContext';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
 import { formatAddedTimeLabel } from '@/lib/easternTime';
-import { clientTzOffsetMinutes, jobLinksListQueryFromLocation, localDayUtcRange, localYmd } from '@/lib/jobLinksListState';
+import { jobLinksListQueryFromLocation, localDayUtcRange } from '@/lib/jobLinksListState';
 import { openResume } from '@/lib/resumeUrl';
 import AppPage from '@/components/AppPage';
 import { PageLoader, Loader } from '@/components/Loader';
@@ -516,22 +516,22 @@ function listFiltersFromSearchParams(searchParams) {
     if (bidState && bidState !== 'all') filters.bid_state = bidState;
     const sort = searchParams.get('sort');
     if (sort && sort !== 'latest') filters.sort = sort;
-    if (dateFrom) filters.date_from = dateFrom;
-    if (dateTo) filters.date_to = dateTo;
-    if (searchParams.get('has_generated_resume') === '1') filters.has_generated_resume = 1;
-    if (searchParams.get('today') === '1') {
-        const today = localYmd();
-        filters.date_from = today;
-        filters.date_to = today;
-    }
-    if (filters.date_from || filters.date_to) {
-        filters.tz_offset = clientTzOffsetMinutes();
-        const range = localDayUtcRange(filters.date_from, filters.date_to);
-        if (range) {
-            filters.created_after = range.created_after;
-            filters.created_before = range.created_before;
+    const datePreset = searchParams.get('date_preset')
+        || (searchParams.get('today') === '1' ? 'today' : '');
+    if (datePreset) {
+        filters.date_preset = datePreset;
+    } else {
+        if (dateFrom) filters.date_from = dateFrom;
+        if (dateTo) filters.date_to = dateTo;
+        if (filters.date_from || filters.date_to) {
+            const range = localDayUtcRange(filters.date_from, filters.date_to);
+            if (range) {
+                filters.created_after = range.created_after;
+                filters.created_before = range.created_before;
+            }
         }
     }
+    if (searchParams.get('has_generated_resume') === '1') filters.has_generated_resume = 1;
     return filters;
 }
 
@@ -554,11 +554,19 @@ function activeFilterChips(searchParams) {
         chips.push(`Bid: ${searchParams.get('bid_state').toUpperCase()}`);
     }
     if (searchParams.get('has_generated_resume') === '1') chips.push('Resume generated');
-    if (searchParams.get('today') === '1') chips.push('Today');
+    const datePreset = searchParams.get('date_preset')
+        || (searchParams.get('today') === '1' ? 'today' : '');
+    const presetLabel = {
+        today: 'Today',
+        past_24h: 'Past 24 hours',
+        this_week: 'This week',
+        past_week: 'Past week'
+    }[datePreset];
+    if (presetLabel) chips.push(presetLabel);
     const dateFrom = searchParams.get('date_from');
     const dateTo = searchParams.get('date_to');
-    if (dateFrom && !searchParams.get('today')) chips.push(`From ${dateFrom}`);
-    if (dateTo && !searchParams.get('today')) chips.push(`To ${dateTo}`);
+    if (dateFrom && !datePreset) chips.push(`From ${dateFrom}`);
+    if (dateTo && !datePreset) chips.push(`To ${dateTo}`);
     return chips;
 }
 

@@ -46,7 +46,7 @@ const {
 } = require('../services/scraper/jobLinkUrl');
 const jobMatchService = require('../services/jobMatchService');
 const { platformFilterSql } = require('../services/scraper/jobLinkPlatform');
-const { easternDayUtcRange, easternYmd, nowSqliteUtc, sqliteUtcToIso } = require('../utils/time');
+const { easternDayUtcRange, datePresetRange, nowSqliteUtc, sqliteUtcToIso } = require('../utils/time');
 
 const router = express.Router();
 const adminWriteRouter = express.Router();
@@ -142,18 +142,18 @@ function buildJobLinkListFilters(query = {}) {
     let dateTo = /^\d{4}-\d{2}-\d{2}$/.test((query.date_to || '').trim())
         ? (query.date_to || '').trim()
         : '';
+    const presetRaw = String(query.date_preset || '').trim().toLowerCase();
     const todayFlag = ['1', 'true', 'yes'].includes(String(query.today || '').trim().toLowerCase());
-    if (todayFlag) {
-        const todayEst = easternYmd();
-        dateFrom = todayEst;
-        dateTo = todayEst;
-    }
-    const estRange = (dateFrom || dateTo)
-        ? easternDayUtcRange(dateFrom || dateTo, dateTo || dateFrom)
-        : null;
+    const preset = presetRaw || (todayFlag ? 'today' : '');
+    const presetRange = datePresetRange(preset);
+    const estRange = presetRange
+        || ((dateFrom || dateTo)
+            ? easternDayUtcRange(dateFrom || dateTo, dateTo || dateFrom)
+            : null);
     const createdAfter = estRange?.created_after || sqliteUtcStamp(query.created_after);
     const createdBefore = estRange?.created_before || sqliteUtcStamp(query.created_before);
-    const createdAtExpr = `datetime(replace(created_at, 'T', ' '))`;
+    // Strip T / Z / fractional seconds so ISO and sqlite stamps compare.
+    const createdAtExpr = `datetime(substr(replace(replace(IFNULL(created_at, ''), 'T', ' '), 'Z', ''), 1, 19))`;
     const fetchStatus = (query.fetch_status || 'all').trim();
     const hasGeneratedResumeRaw = (query.has_generated_resume || '').trim().toLowerCase();
     const hasGeneratedResume = ['1', 'true', 'yes'].includes(hasGeneratedResumeRaw);
