@@ -9,6 +9,11 @@ let sqlFactory = null;
 
 // Initialize database
 async function initDatabase() {
+  try {
+    await require('./dbShare').pullSharedDatabase();
+  } catch (err) {
+    console.warn('[db-share] pull skipped:', err.message);
+  }
   const SQL = await initSqlJs();
   sqlFactory = SQL;
 
@@ -2093,6 +2098,11 @@ function saveDatabase() {
     const data = db.export();
     const buffer = Buffer.from(data);
     fs.writeFileSync(DB_PATH, buffer);
+    try {
+      require('./dbShare').noteDatabaseSaved(buffer);
+    } catch (err) {
+      console.warn('[db-share] save skipped:', err.message);
+    }
   }
 }
 

@@ -1534,6 +1534,27 @@ function JobLinks({ embedded = false }) {
     const [rows, setRows] = useState([]);
     const rowsRef = useRef([]);
     rowsRef.current = rows;
+    const VISIBLE_CACHE_KEY = 'lumi.jobLinks.visible.v1';
+    const readVisibleCache = () => {
+        try {
+            const parsed = JSON.parse(sessionStorage.getItem(VISIBLE_CACHE_KEY) || 'null');
+            if (!parsed || parsed.cleared || !Array.isArray(parsed.rows) || !parsed.rows.length) return null;
+            if (Date.now() - Number(parsed.at) > 30 * 60 * 1000) return null;
+            return parsed;
+        } catch (_) {
+            return null;
+        }
+    };
+    const writeVisibleCache = (nextRows, nextTotal) => {
+        try {
+            sessionStorage.setItem(VISIBLE_CACHE_KEY, JSON.stringify({
+                at: Date.now(),
+                rows: nextRows,
+                total: nextTotal,
+                cleared: !nextRows.length
+            }));
+        } catch (_) { /* private mode */ }
+    };
     const addedClockLive = rows.some((r) => {
         const ms = parseSqliteUtcMs(r?.created_at);
         return Number.isFinite(ms) && Date.now() - ms < 60 * 60 * 1000;
@@ -1845,17 +1866,37 @@ function JobLinks({ embedded = false }) {
             if (requestId !== loadRequestRef.current) return;
             const apiRows = Array.isArray(listRes.data?.data) ? listRes.data.data : [];
             const merged = mergeJustCreated(apiRows);
-            // A background refresh during CV generation must not wipe the
-            // list when this response comes back empty. The row is still
-            // on screen and a later poll can fill it in again.
-            if (silent && merged.length === 0 && rowsRef.current.length > 0) {
+            const apiTotal = listRes.data?.pagination?.total || 0;
+            const extra = Math.max(0, merged.length - apiRows.length);
+            const narrowing = !!(
+                debouncedSearch
+                || techstackFilter !== 'all'
+                || platformFilter !== 'all'
+                || availableFilter !== 'all'
+                || datePreset
+                || debouncedDateFrom
+                || debouncedDateTo
+                || hasGeneratedResumeFilter
+                || (bidStateFilter && bidStateFilter !== 'all')
+            );
+            let nextRows = merged;
+            let nextTotal = apiTotal + extra;
+            // Opening the page hits a fresh server copy. An empty reply
+            // must not hide a link this browser just added.
+            if (nextRows.length === 0 && !narrowing && page === 1) {
+                const cached = readVisibleCache();
+                if (cached) {
+                    nextRows = cached.rows;
+                    nextTotal = cached.total || cached.rows.length;
+                }
+            }
+            if (silent && nextRows.length === 0 && rowsRef.current.length > 0) {
                 if (cronRes?.data) setCronStatus(cronRes.data);
                 return;
             }
-            setRows(merged);
-            const apiTotal = listRes.data?.pagination?.total || 0;
-            const extra = Math.max(0, merged.length - apiRows.length);
-            setTotal(apiTotal + extra);
+            setRows(nextRows);
+            setTotal(nextTotal);
+            if (merged.length > 0) writeVisibleCache(merged, apiTotal + extra);
             if (cronRes?.data) setCronStatus(cronRes.data);
         } catch (err) {
             if (requestId !== loadRequestRef.current) return;
@@ -1975,6 +2016,13 @@ function JobLinks({ embedded = false }) {
         if (!window.confirm(`Delete this job link (${TECHSTACK_LABEL[row.techstack] || row.techstack})?`)) return;
         try {
             await adminAPI.deleteJobLink(row.id);
+            const cached = readVisibleCache();
+            if (cached) {
+                writeVisibleCache(
+                    cached.rows.filter((r) => r.id !== row.id),
+                    Math.max(0, (cached.total || cached.rows.length) - 1)
+                );
+            }
             // If we just removed the only row on this page, fall back
             // to the previous page so the user doesn't see an empty
             // table.

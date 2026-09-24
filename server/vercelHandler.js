@@ -38,8 +38,15 @@ module.exports = async function vercelApi(req, res) {
             settled = true;
             resolve();
         };
-        res.on('finish', done);
-        res.on('close', done);
+        const finishSharedDb = () => {
+            const { flushSharedDatabase } = require('./config/dbShare');
+            Promise.race([
+                flushSharedDatabase(),
+                new Promise((resolve) => setTimeout(resolve, 20000))
+            ]).finally(done);
+        };
+        res.on('finish', finishSharedDb);
+        res.on('close', finishSharedDb);
         res.on('error', (err) => {
             if (settled) return;
             settled = true;
