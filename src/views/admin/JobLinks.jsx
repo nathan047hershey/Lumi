@@ -1947,7 +1947,11 @@ function JobLinks({ embedded = false }) {
             || (!(r.job_description && String(r.job_description).trim())
                 && !/^(failed|dead|success)$/i.test(String(r.fetch_status || '')))
         );
-        if (!busy && !scraping) return undefined;
+        const missingCv = (rows || []).some((r) =>
+            String(r.job_description || '').trim()
+            && (r.available_profiles || []).some((p) => !p.generation_status)
+        );
+        if (!busy && !scraping && !missingCv) return undefined;
         const t = setInterval(() => {
             load({ silent: true });
         }, 2000);
