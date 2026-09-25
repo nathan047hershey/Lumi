@@ -20,9 +20,10 @@ const TEMPLATES_DIR = path.join(__dirname, '..', 'templates');
 // "Default" entry in the picker is always present.
 // Brandon's uploaded template, with experience bullets one tab (0.5")
 // to the right of the role line. This is the system default.
-const DEFAULT_STYLE_SPEC = JSON.parse(
-    fs.readFileSync(path.join(__dirname, 'defaultStyleSpec.json'), 'utf8')
-);
+// require() so the serverless bundle includes this file. A runtime
+// readFileSync path is dropped from the Vercel function and crashes
+// every API route, including login.
+const DEFAULT_STYLE_SPEC = require('./defaultStyleSpec.json');
 
 // Web-safe font whitelist. Anything outside this list is rejected with a
 // helpful message; users cannot upload font files (out of scope for this
