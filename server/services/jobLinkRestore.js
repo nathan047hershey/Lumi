@@ -103,15 +103,27 @@ function restoreRememberedApplications(rows) {
                 [profileId, linkId]
             );
             if (existing) {
-                if ((rank[status] || 0) > (rank[existing.generation_status] || 0)) {
+                const promote = (rank[status] || 0) > (rank[existing.generation_status] || 0);
+                const fillGaps = status === 'ready' && (
+                    profile.resume_filename || profile.draft_html || row.job_apply_url
+                );
+                if (promote || fillGaps) {
                     runQuery(
                         `UPDATE job_applications
-                            SET generation_status = ?,
-                                resume_filename = COALESCE(?, resume_filename),
-                                draft_html = COALESCE(?, draft_html),
+                            SET generation_status = CASE WHEN ? = 1 THEN ? ELSE generation_status END,
+                                resume_filename = COALESCE(NULLIF(TRIM(resume_filename), ''), ?),
+                                draft_html = COALESCE(NULLIF(TRIM(draft_html), ''), ?),
+                                job_url = COALESCE(NULLIF(TRIM(job_url), ''), ?),
                                 updated_at = CURRENT_TIMESTAMP
                           WHERE id = ?`,
-                        [status, profile.resume_filename || null, profile.draft_html || null, existing.id]
+                        [
+                            promote ? 1 : 0,
+                            status,
+                            profile.resume_filename || null,
+                            profile.draft_html || null,
+                            row.job_apply_url || row.source_url || null,
+                            existing.id
+                        ]
                     );
                     restored += 1;
                 }

@@ -35,6 +35,10 @@ export function rememberCvDraft({ filename, draft_html, profile_id }) {
     } catch (_) { /* private mode or quota */ }
 }
 
+export function lookupCvDraft(filename) {
+    return readCvDraft(filename);
+}
+
 function readCvDraft(filename) {
     const name = resumeFilename(filename);
     if (!name) return null;

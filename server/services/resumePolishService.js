@@ -849,6 +849,69 @@ function ensureRequiredStacksInExperience(resumeHtml, _coreSkills = '') {
  * Full deterministic polish pass.
  * @returns {{ html: string, polish_ms: number, facts: object }}
  */
+/** Bold metrics, stack names, and skill keywords outside existing <strong>. */
+function boldHighlightSegment(text, stacks) {
+    const sorted = [...stacks].sort((a, b) => b.length - a.length);
+    const withMetrics = String(text || '').replace(
+        /(?:\$\d[\d,]*(?:\.\d+)?(?:\s*[kKmMbB])?|\d+(?:\.\d+)?%|\d{1,3}(?:,\d{3})+\+?|\d+\+|\d+(?:\.\d+)?x\b)/g,
+        (m) => `<strong>${m}</strong>`
+    );
+    return withMetrics.split(/(<strong\b[^>]*>[\s\S]*?<\/strong>)/gi).map((part) => {
+        if (/^<strong\b/i.test(part)) return part;
+        let s = part;
+        for (const sk of sorted) {
+            const token = String(sk || '').trim();
+            if (token.length < 2 || token.length > 40) continue;
+            const esc = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            s = s.replace(new RegExp(`\\b(${esc})\\b`, 'gi'), '<strong>$1</strong>');
+        }
+        return s;
+    }).join('');
+}
+
+function boldOutsideStrong(inner, stacks) {
+    return String(inner || '').split(/(<strong\b[^>]*>[\s\S]*?<\/strong>)/gi)
+        .map((part) => (/^<strong\b/i.test(part) ? part : boldHighlightSegment(part, stacks)))
+        .join('');
+}
+
+function boldWorkingHighlights(resumeHtml, coreSkills = '', jobDescription = '') {
+    const stacks = [];
+    const seen = new Set();
+    const add = (raw) => {
+        const s = String(raw || '').replace(/<\/?strong>/gi, '').trim();
+        const k = s.toLowerCase();
+        if (!s || seen.has(k)) return;
+        seen.add(k);
+        stacks.push(s);
+    };
+    for (const sk of expandCoreSkillsFromJd(coreSkills, jobDescription)) add(sk);
+    const skillsBody = String(resumeHtml).match(
+        /<h2\b[^>]*>[\s\S]*?skills[\s\S]*?<\/h2>([\s\S]*?)(?=<h2\b|$)/i
+    );
+    if (skillsBody) {
+        for (const sk of extractSkillsFromSectionBody(skillsBody[1])) add(sk);
+    }
+    if (!stacks.length && !/\$|\d/.test(resumeHtml)) return resumeHtml;
+
+    let html = String(resumeHtml);
+    html = html.replace(
+        /(<h2\b[^>]*>[\s\S]*?experience[\s\S]*?<\/h2>)([\s\S]*?)(?=<h2\b|$)/i,
+        (block, heading, body) => heading + body.replace(
+            /<li\b([^>]*)>([\s\S]*?)<\/li>/gi,
+            (full, attrs, inner) => `<li${attrs}>${boldOutsideStrong(inner, stacks)}</li>`
+        )
+    );
+    html = html.replace(
+        /(<h2\b[^>]*>[\s\S]*?(?:summary|profile)[\s\S]*?<\/h2>)([\s\S]*?)(?=<h2\b|$)/i,
+        (block, heading, body) => heading + body.replace(
+            /<p\b([^>]*)>([\s\S]*?)<\/p>/gi,
+            (full, attrs, inner) => `<p${attrs}>${boldOutsideStrong(inner, stacks)}</p>`
+        )
+    );
+    return html;
+}
+
 function polishResumeHtml(resumeHtml, { profile, coreSkills = '', jobDescription = '' } = {}) {
     const t0 = Date.now();
     let html = String(resumeHtml || '');
@@ -873,6 +936,7 @@ function polishResumeHtml(resumeHtml, { profile, coreSkills = '', jobDescription
     html = rebuildCoreSkillsIfThin(html, coreSkills, jobDescription);
     html = ensureRequiredStacksInSkills(html, expandedSkills);
     html = boldStacksInSummary(html, coreSkills, jobDescription);
+    html = boldWorkingHighlights(html, coreSkills, jobDescription);
     html = forceBoldSkillTokens(html);
     html = stripInjectedStackBullets(html);
     html = densifyExperienceBullets(html);
@@ -906,6 +970,7 @@ module.exports = {
     DEFAULT_BASELINE_SKILLS,
     isBaselineSkill,
     boldStacksInSummary,
+    boldWorkingHighlights,
     forceBoldSkillTokens,
     ensureRequiredStacksInSkills,
     densifyExperienceBullets,

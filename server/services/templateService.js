@@ -18,30 +18,11 @@ const TEMPLATES_DIR = path.join(__dirname, '..', 'templates');
 // The spec for the built-in default. Captured so that resume generation
 // keeps working even before any admin-uploaded template exists, and so the
 // "Default" entry in the picker is always present.
-const DEFAULT_STYLE_SPEC = {
-    source: { file: 'builtin:default', parsed_at: null },
-    fonts: {
-        heading: 'Arial',
-        body: 'Arial',
-        default: 'Arial'
-    },
-    heading: {
-        1: { rank: 1, font: 'Arial', size_half_pt: 32, bold: true,  align: 'center', color: null, space_before_pt: 0, space_after_pt: 5,  border_bottom: null },
-        2: { rank: 2, font: 'Arial', size_half_pt: 28, bold: true,  align: 'left',   color: null, space_before_pt: 10, space_after_pt: 3, border_bottom: { style: 'single', size_pt: 0.75, color: '000000', space_pt: 1 } },
-        3: { rank: 3, font: 'Arial', size_half_pt: 22, bold: true,  align: 'left',   color: null, space_before_pt: 6,  space_after_pt: 2, border_bottom: null }
-    },
-    body: {
-        font: 'Arial',
-        size_half_pt: 20,
-        align: 'left',
-        line_spacing: 1.35,
-        space_after_pt: 2
-    },
-    name:     { font: 'Arial', size: 16, bold: true,  align: 'center' },
-    contact:  { font: 'Arial', size: 10, bold: false, align: 'center' },
-    list:     { bullet_char: '•' },
-    section_order: ['summary', 'skills', 'experience', 'education']
-};
+// Brandon's uploaded template, with experience bullets one tab (0.5")
+// to the right of the role line. This is the system default.
+const DEFAULT_STYLE_SPEC = JSON.parse(
+    fs.readFileSync(path.join(__dirname, 'defaultStyleSpec.json'), 'utf8')
+);
 
 // Web-safe font whitelist. Anything outside this list is rejected with a
 // helpful message; users cannot upload font files (out of scope for this
@@ -151,25 +132,61 @@ function normaliseFontName(name) {
     return null;
 }
 
+function fixBrandonBulletIndent() {
+    try {
+        const branded = getAll(
+            `SELECT id, style_spec FROM user_resume_templates WHERE lower(name) = 'brandon'`
+        );
+        for (const row of branded) {
+            let spec = {};
+            try { spec = JSON.parse(row.style_spec || '{}'); } catch (_) { spec = {}; }
+            const left = Number(spec.list?.indent_left_pt) || 0;
+            const hanging = Number(spec.list?.indent_hanging_pt) || 0;
+            if (left - hanging >= 36) continue;
+            spec.list = {
+                ...(spec.list || {}),
+                indent_left_pt: (hanging || 18) + 36,
+                indent_hanging_pt: hanging || 18
+            };
+            runQuery(
+                `UPDATE user_resume_templates SET style_spec = ? WHERE id = ?`,
+                [JSON.stringify(spec), row.id]
+            );
+        }
+    } catch (_) { /* table may be absent on a fresh boot */ }
+}
+
 // Ensure the templates directory exists and that the built-in default
 // template row is seeded. Idempotent.
 function ensureDefaultTemplate() {
     if (!fs.existsSync(TEMPLATES_DIR)) {
         fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
     }
-    const existing = getOne('SELECT id FROM resume_templates WHERE is_default = 1 LIMIT 1');
-    if (existing) return existing;
+    const description = 'System default (Brandon layout). Experience bullets sit one tab right of the role.';
+    const specJson = JSON.stringify(DEFAULT_STYLE_SPEC);
+    const existing = getOne('SELECT id, style_spec FROM resume_templates WHERE is_default = 1 LIMIT 1');
+    if (existing) {
+        let stored = {};
+        try { stored = JSON.parse(existing.style_spec || '{}'); } catch (_) { stored = {}; }
+        const bulletAt = (Number(stored.list?.indent_left_pt) || 0) - (Number(stored.list?.indent_hanging_pt) || 0);
+        const legacy = !stored.experience_row
+            || stored.source?.file === 'builtin:default'
+            || (stored.source?.file === 'builtin:brandon' && bulletAt < 36);
+        if (legacy) {
+            runQuery(
+                `UPDATE resume_templates SET style_spec = ?, description = ?, name = 'Default' WHERE id = ?`,
+                [specJson, description, existing.id]
+            );
+        }
+        fixBrandonBulletIndent();
+        return { id: existing.id };
+    }
+    fixBrandonBulletIndent();
     const result = runQuery(
         `INSERT INTO resume_templates
             (name, description, filename, file_size, style_spec, is_default, uploaded_by)
          VALUES (?, ?, ?, ?, ?, 1, NULL)`,
-        [
-            'Default',
-            'Built-in default template (Arial, classic heading bar under each section).',
-            'default',
-            0,
-            JSON.stringify(DEFAULT_STYLE_SPEC)
-        ]
+        ['Default', description, 'default', 0, specJson]
     );
     return { id: result.lastInsertRowid };
 }

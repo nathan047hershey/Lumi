@@ -14,6 +14,7 @@ import {
     ZoomOut
 } from 'lucide-react';
 import { userAPI, adminAPI } from '@/api';
+import { lookupCvDraft } from '@/lib/resumeUrl';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -442,6 +443,55 @@ function primaryJobUrl(row) {
     return row?.job_apply_url || row?.source_url || row?.job_url || '';
 }
 
+function rememberedBidLinks(links) {
+    return (links || []).map((link) => ({
+        id: link.id,
+        techstack: link.techstack,
+        job_apply_url: link.job_apply_url || link.job_url || link.source_url || '',
+        source_url: link.source_url || null,
+        company_name: link.company_name || null,
+        position_title: link.position_title || null,
+        job_description: link.job_description || null,
+        available_profiles: (link.available_profiles || [])
+            .filter((p) => p?.generation_status === 'ready' || p?.generation_status === 'failed')
+            .map((p) => ({
+                profile_id: p.profile_id || p.id,
+                generation_status: p.generation_status,
+                resume_filename: p.resume_filename || null,
+                draft_html: p.draft_html || lookupCvDraft(p.resume_filename)?.html || null,
+                application_id: p.application_id || null
+            }))
+    })).filter((row) => row.job_apply_url && row.available_profiles.length);
+}
+
+function readyItemsFromLinks(links, profileId) {
+    const items = [];
+    for (const link of links || []) {
+        const profile = (link.available_profiles || []).find((p) => (
+            String(p.profile_id || p.id) === String(profileId)
+            && p.generation_status === 'ready'
+            && p.application_id
+            && String(p.status || 'pending').toLowerCase() === 'pending'
+        ));
+        if (!profile) continue;
+        const url = primaryJobUrl(link);
+        if (!url) continue;
+        items.push({
+            id: profile.application_id,
+            profile_id: Number(profile.profile_id || profile.id),
+            company_name: link.company_name,
+            job_role: link.position_title,
+            job_url: url,
+            open_url: url,
+            job_link_id: link.id,
+            resume_filename: profile.resume_filename || null,
+            generation_status: 'ready',
+            status: 'pending'
+        });
+    }
+    return items;
+}
+
 function isUnsupportedAtsLink(url) {
     return !detectAtsFromUrl(url).supported;
 }
@@ -539,6 +589,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     const [workspaceTab, setWorkspaceTab] = useState('setup');
     const [detail, setDetail] = useState(null);
     const [readyPreview, setReadyPreview] = useState([]);
+    const [readyBlockReason, setReadyBlockReason] = useState('');
     const [profiles, setProfiles] = useState([]);
     const [profileId, setProfileId] = useState('');
     const [showAllProfiles, setShowAllProfiles] = useState(false);
@@ -1155,6 +1206,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     const loadReadyPreview = useCallback(async () => {
         if (!jobLinkIds.length) {
             setReadyPreview([]);
+            setReadyBlockReason('');
             return;
         }
         try {
@@ -1163,12 +1215,28 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                 job_link_ids: jobLinkIds.join(',')
             };
             if (profileId) params.profile_id = profileId;
+            const remembered = rememberedBidLinks(selectedLinks);
+            if (remembered.length) params.remembered = remembered;
             const { data } = await userAPI.listBidderReady(params);
-            setReadyPreview(data?.items || []);
+            const skipped = data?.filter?.skipped_eligibility || [];
+            const skippedIds = new Set(skipped.map((s) => Number(s.id)));
+            let items = data?.items || [];
+            if (!items.length && profileId) {
+                items = readyItemsFromLinks(selectedLinks, profileId)
+                    .filter((item) => !skippedIds.has(Number(item.id)));
+            }
+            setReadyPreview(items);
+            setReadyBlockReason(
+                items.length
+                    ? ''
+                    : skipped.map((s) => s.message).filter(Boolean).slice(0, 3).join(' ')
+            );
         } catch {
-            setReadyPreview([]);
+            const fallback = profileId ? readyItemsFromLinks(selectedLinks, profileId) : [];
+            setReadyPreview(fallback);
+            setReadyBlockReason('');
         }
-    }, [jobLinkIds, profileId]);
+    }, [jobLinkIds, profileId, selectedLinks]);
 
     const loadDetail = useCallback(async (courseId, opts = {}) => {
         if (!courseId) {
@@ -2329,7 +2397,8 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         }
         if (!readyPreview.length) {
             setError(
-                'This profile has no ready CV for the selected link(s). Generate CV until Ready, or pick another profile.'
+                readyBlockReason
+                    || 'This profile has no ready CV for the selected link(s). Generate CV until Ready, or pick another profile.'
             );
             return;
         }
@@ -2465,6 +2534,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         return runExt('JOB_APPLY_BIDDER_PROCESS_QUEUE', 'Starting selected bids', {
             jobLinkIds,
             applicationIds,
+            remembered: rememberedBidLinks(selectedLinks),
             token,
             user,
             selectedProfileId: Number(profileId),

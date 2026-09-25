@@ -392,7 +392,14 @@ export const userAPI = {
             params: opts.t != null ? { t: opts.t } : undefined,
             headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
         }),
-    listBidderReady: (params = {}) => api.get('/user/bidder/ready', { params }),
+    listBidderReady: (params = {}) => {
+        const remembered = params.remembered;
+        if (Array.isArray(remembered) && remembered.length) {
+            const { remembered: _drop, ...query } = params;
+            return api.post('/user/bidder/ready', { remembered }, { params: query });
+        }
+        return api.get('/user/bidder/ready', { params });
+    },
     getExtensionInfo: () => api.get('/user/extension/info'),
     downloadExtension: () => api.get('/user/extension/download', { responseType: 'blob' }),
     getWebFillBookmarklet: (params = {}) => api.get('/user/web-fill/bookmarklet', { params }),

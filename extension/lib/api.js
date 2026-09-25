@@ -314,14 +314,18 @@ export async function getBidderEngineVersion() {
     return request('/user/bidder/brain/version');
 }
 
-export async function listBidderReady(limit = 50, profileId = null, jobLinkIds = null) {
+export async function listBidderReady(limit = 50, profileId = null, jobLinkIds = null, remembered = null) {
     const q = new URLSearchParams();
     q.set('limit', String(limit));
     if (profileId) q.set('profile_id', String(profileId));
     if (Array.isArray(jobLinkIds) && jobLinkIds.length) {
         q.set('job_link_ids', jobLinkIds.map((id) => String(id)).join(','));
     }
-    return request(`/user/bidder/ready?${q.toString()}`);
+    const path = `/user/bidder/ready?${q.toString()}`;
+    if (Array.isArray(remembered) && remembered.length) {
+        return request(path, { method: 'POST', body: { remembered } });
+    }
+    return request(path);
 }
 
 export async function logBidCourseEvent(payload) {

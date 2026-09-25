@@ -4038,8 +4038,17 @@ router.post('/analyze/run', async (req, res) => {
 // GET /api/user/bidder/ready — Auto Bidder queue: CV-ready apps (oldest first)
 // Optional: job_link_ids=1,2,3 to bid only selected Job Links rows.
 // Eligibility: bidEligibilityRules (stack clash, same title+JD, 3-day company cooldown).
-router.get('/bidder/ready', (req, res) => {
+function listBidderReadyHandler(req, res) {
     try {
+        const remembered = req.body?.remembered;
+        if (Array.isArray(remembered) && remembered.length) {
+            const {
+                restoreRememberedJobLinks,
+                restoreRememberedApplications
+            } = require('../services/jobLinkRestore');
+            restoreRememberedJobLinks(remembered, req.user?.id);
+            restoreRememberedApplications(remembered);
+        }
         const {
             filterEligibleReadyApps,
             COMPANY_COOLDOWN_DAYS
@@ -4084,7 +4093,8 @@ router.get('/bidder/ready', (req, res) => {
         params.push(fetchLimit);
 
         const rows = getAll(`
-      SELECT a.id, a.profile_id, a.company_name, a.job_role, a.job_url,
+      SELECT a.id, a.profile_id, a.company_name, a.job_role,
+             COALESCE(NULLIF(TRIM(a.job_url), ''), NULLIF(TRIM(jl.job_apply_url), ''), NULLIF(TRIM(jl.source_url), '')) AS job_url,
              a.job_description, a.core_skills,
              a.resume_filename, a.generation_status, a.status, a.source,
              a.job_link_id, a.match_score, a.created_at, a.updated_at,
@@ -4098,10 +4108,15 @@ router.get('/bidder/ready', (req, res) => {
         ${linkClause}
         AND a.generation_status = 'ready'
         AND COALESCE(a.status, 'pending') = 'pending'
-        AND a.resume_filename IS NOT NULL
-        AND TRIM(a.resume_filename) <> ''
-        AND a.job_url IS NOT NULL
-        AND TRIM(a.job_url) <> ''
+        AND (
+          (a.resume_filename IS NOT NULL AND TRIM(a.resume_filename) <> '')
+          OR (a.draft_html IS NOT NULL AND TRIM(a.draft_html) <> '')
+        )
+        AND (
+          (a.job_url IS NOT NULL AND TRIM(a.job_url) <> '')
+          OR (jl.job_apply_url IS NOT NULL AND TRIM(jl.job_apply_url) <> '')
+          OR (jl.source_url IS NOT NULL AND TRIM(jl.source_url) <> '')
+        )
         AND (a.job_link_id IS NULL OR COALESCE(jl.is_available, 1) = 1)
       ORDER BY a.created_at ASC, a.id ASC
       LIMIT ?
@@ -4171,7 +4186,10 @@ router.get('/bidder/ready', (req, res) => {
         console.error('Bidder ready list error:', error);
         res.status(500).json({ error: 'Failed to list ready applications' });
     }
-});
+}
+
+router.get('/bidder/ready', listBidderReadyHandler);
+router.post('/bidder/ready', listBidderReadyHandler);
 
 // GET /api/user/bidder/applications/:id — payload for extension fill
 router.get('/bidder/applications/:id', (req, res) => {

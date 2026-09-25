@@ -3431,7 +3431,8 @@ async function processReadyQueue(opts = {}) {
                 // When the user picks Job Links in the UI, bid those ready CVs
                 // even if Lumi's popup profile differs (fill uses each app's profile).
                 jobLinkIds.length || applicationIds.length ? null : settings.selectedProfileId,
-                jobLinkIds.length ? jobLinkIds : null
+                jobLinkIds.length ? jobLinkIds : null,
+                Array.isArray(opts.remembered) ? opts.remembered : null
             );
             items = data?.items || [];
             if (applicationIds.length) {
@@ -8669,6 +8670,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 const summary = await processReadyQueue({
                     jobLinkIds,
                     applicationIds,
+                    remembered: Array.isArray(msg.remembered) ? msg.remembered : null,
                     uploadCoverLetter: msg.uploadCoverLetter,
                     stayInApp: msg.stayInApp,
                     unattended: msg.unattended,

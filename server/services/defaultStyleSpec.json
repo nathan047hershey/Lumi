@@ -1,0 +1,190 @@
+{
+  "schema_version": 1,
+  "fonts": {
+    "heading": "Calibri",
+    "body": "Cambria",
+    "default": "Cambria"
+  },
+  "name": {
+    "font": "Calibri",
+    "size_half_pt": 40,
+    "bold": true,
+    "underline": false,
+    "italic": false,
+    "uppercase": true,
+    "color": "1F4E79",
+    "align": "center"
+  },
+  "contact": {
+    "font": "Calibri",
+    "size_half_pt": 18,
+    "bold": false,
+    "underline": false,
+    "italic": false,
+    "color": "000000",
+    "align": "center"
+  },
+  "blocks": [
+    {
+      "id": "summary",
+      "label": "Summary",
+      "visible": true
+    },
+    {
+      "id": "skills",
+      "label": "Skills",
+      "visible": true
+    },
+    {
+      "id": "experience",
+      "label": "Experience",
+      "visible": true
+    },
+    {
+      "id": "education",
+      "label": "Education",
+      "visible": true
+    }
+  ],
+  "contact_fields": [
+    {
+      "id": "city_state",
+      "label": "City, State",
+      "source": "city_state",
+      "visible": true
+    },
+    {
+      "id": "email",
+      "label": "Email",
+      "source": "email",
+      "visible": true
+    },
+    {
+      "id": "phone",
+      "label": "Phone",
+      "source": "phone",
+      "visible": true
+    },
+    {
+      "id": "linkedin",
+      "label": "LinkedIn URL",
+      "source": "linkedin_url",
+      "visible": true
+    },
+    {
+      "id": "github",
+      "label": "GitHub URL",
+      "source": "github_url",
+      "visible": true
+    }
+  ],
+  "contact_separator": "•",
+  "experience_row": {
+    "layout": "two_column",
+    "separator": "•",
+    "title_align": "left",
+    "company_align": "left",
+    "location_align": "left",
+    "dates_align": "right",
+    "title_italic": false,
+    "company_italic": false,
+    "location_italic": true,
+    "dates_italic": false,
+    "wrap_title_company": false,
+    "wrap_company_location": false,
+    "show_company": true,
+    "show_location": true,
+    "work_summary": false,
+    "job_gap_pt": 8
+  },
+  "heading": {
+    "1": {
+      "font": "Arial",
+      "size_half_pt": 32,
+      "bold": true,
+      "underline": false,
+      "italic": false,
+      "uppercase": false,
+      "color": null,
+      "align": "center",
+      "space_before_pt": 0,
+      "space_after_pt": 0
+    },
+    "2": {
+      "font": "Calibri",
+      "size_half_pt": 24,
+      "bold": true,
+      "underline": false,
+      "italic": false,
+      "uppercase": true,
+      "color": "1F4E79",
+      "align": "left",
+      "space_before_pt": 12,
+      "space_after_pt": 4,
+      "border_bottom": {
+        "style": "single",
+        "size_pt": 1.5,
+        "color": "333333",
+        "space_pt": 1
+      }
+    },
+    "3": {
+      "font": "Calibri",
+      "size_half_pt": 22,
+      "bold": true,
+      "underline": false,
+      "italic": false,
+      "uppercase": false,
+      "color": "1F4E79",
+      "align": "left",
+      "space_before_pt": 8,
+      "space_after_pt": 2
+    }
+  },
+  "body": {
+    "font": "Cambria",
+    "font_pool": [
+      "Calibri",
+      "Helvetica",
+      "Courier",
+      "Cambria"
+    ],
+    "size_half_pt": 20,
+    "align": "left",
+    "line_spacing": 1.15,
+    "space_after_pt": 2,
+    "color": null
+  },
+  "page": {
+    "paper_size": "letter",
+    "margin_top_pt": 36,
+    "margin_bottom_pt": 36,
+    "margin_left_pt": 45,
+    "margin_right_pt": 45
+  },
+  "theme": {
+    "accent_color": "1F4E79"
+  },
+  "list": {
+    "bullet_char": "▪",
+    "indent_left_pt": 54,
+    "indent_hanging_pt": 18,
+    "space_after_pt": 2
+  },
+  "section_order": [
+    "summary",
+    "skills",
+    "experience",
+    "education"
+  ],
+  "section_labels": {
+    "summary": "Summary",
+    "skills": "Skills",
+    "experience": "Experiences",
+    "education": "Education"
+  },
+  "source": {
+    "file": "builtin:brandon",
+    "parsed_at": null
+  }
+}

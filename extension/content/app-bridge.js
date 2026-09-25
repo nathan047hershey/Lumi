@@ -184,6 +184,9 @@
                 if (Array.isArray(event.data?.applicationIds)) {
                     payload.applicationIds = event.data.applicationIds;
                 }
+                if (Array.isArray(event.data?.remembered)) {
+                    payload.remembered = event.data.remembered;
+                }
                 if (event.data?.token) payload.token = event.data.token;
                 if (event.data?.user) payload.user = event.data.user;
                 if (event.data?.selectedProfileId != null) {

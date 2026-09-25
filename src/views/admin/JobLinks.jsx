@@ -2463,6 +2463,8 @@ function JobLinks({ embedded = false }) {
                                 job_url: primaryJobUrl(r),
                                 job_apply_url: r.job_apply_url,
                                 source_url: r.source_url,
+                                techstack: r.techstack,
+                                job_description: r.job_description,
                                 available_profiles: r.available_profiles || []
                             }))}
                     />

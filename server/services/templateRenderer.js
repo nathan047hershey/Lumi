@@ -778,11 +778,21 @@ function htmlToParagraph(html, styleSpec, font, sectionHint = null) {
 
         // Pick indent + hanging from the list spec if the user gave
         // us specific values; otherwise defer to the docx defaults.
-        const indentOpts = {};
-        const hanging = list.indent_hanging_pt;
-        const left     = list.indent_left_pt;
-        if (hanging != null) indentOpts.hanging = ptToTwip(hanging);
-        if (left     != null) indentOpts.left     = ptToTwip(left);
+        // One tab (0.5in / 36pt) to the right of the role line. A hanging
+        // indent equal to the left indent parks the bullet on the role's
+        // edge, so shift left until the marker itself sits at 36pt.
+        const TAB_PT = 36;
+        const hangingPt = list.indent_hanging_pt != null ? Number(list.indent_hanging_pt) : 18;
+        let leftPt = list.indent_left_pt != null ? Number(list.indent_left_pt) : hangingPt;
+        if (!Number.isFinite(hangingPt) || !Number.isFinite(leftPt)) {
+            leftPt = TAB_PT + 18;
+        } else if (leftPt - hangingPt < TAB_PT) {
+            leftPt += TAB_PT - (leftPt - hangingPt);
+        }
+        const indentOpts = {
+            hanging: ptToTwip(Number.isFinite(hangingPt) ? hangingPt : 18),
+            left: ptToTwip(leftPt)
+        };
 
         const bulletChar = (list.bullet_char && /^[•○▪■–—\-*\u2022◦‣]$/.test(list.bullet_char))
             ? list.bullet_char
@@ -1722,7 +1732,7 @@ function buildPdfCss(styleSpec, font) {
         .slot-summary_text strong, p.slot-summary_text strong { font-weight:bold; }
         .slot-body_text, p.slot-body_text { ${bodyDecls} }
         ${bulletDecls}
-        ul { list-style-type: '${String(bulletListStyle || '•').replace(/'/g, "\\'")}'; margin: 0 0 4pt 0; padding-left: 18pt; }
+        ul { list-style-type: '${String(bulletListStyle || '•').replace(/'/g, "\\'")}'; margin: 0 0 4pt 0; padding-left: 36pt; }
         p { margin: 0 0 ${(legacy.body?.space_after_pt ?? 2)}pt 0; }
         li { margin: 0 0 ${(legacy.body?.space_after_pt ?? 2)}pt 0; page-break-inside: avoid; }
         h1, h2 { page-break-after: avoid; }
