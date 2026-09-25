@@ -300,7 +300,7 @@ export default function OutlookMailbox() {
     const configured = !!(status?.configured || status?.config?.clientIdSet || status?.config?.configured);
 
     return (
-        <div className="flex h-[calc(100vh-3.5rem)] min-h-[32rem] flex-col overflow-hidden rounded-xl border border-white/[0.06] bg-[hsl(222_24%_8%/0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+        <div className="flex h-full min-h-[32rem] flex-col overflow-hidden bg-[hsl(222_24%_8%)]">
             {/* Ribbon */}
             <div className="flex flex-shrink-0 items-center gap-3 border-b border-white/[0.06] bg-[hsl(222_28%_10%/0.95)] px-4 py-2.5">
                 <div className="flex items-center gap-2">

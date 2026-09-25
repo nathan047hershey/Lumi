@@ -245,14 +245,7 @@ function AdminSettings() {
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Platform settings</p>
-                            <p className="truncate text-xs text-white/40">
-                                API keys, providers, local LLM, and Lumi
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button variant="outline" size="sm" className="h-10" onClick={load} disabled={loading || saving}>
                             {loading ? (

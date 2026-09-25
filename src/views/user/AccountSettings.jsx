@@ -105,17 +105,10 @@ function AccountSettings() {
         || additionalRoles.some((r) => ['admin', 'user', 'manager', 'caller'].includes(String(r || '').toLowerCase()));
 
     return (
-        <AppPage icon={User} title="Account Settings" description="Manage your profile, security, and Lumi">
+        <AppPage icon={User} title="Account Settings" description={`@${user.username} · profile, password, and Lumi`}>
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">@{user.username}</p>
-                            <p className="truncate text-xs text-white/40">
-                                Profile, password, and Lumi preferences
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button type="submit" form="account-settings-form" size="sm" className="h-10" disabled={loading}>
                             {loading ? (

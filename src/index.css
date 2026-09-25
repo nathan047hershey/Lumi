@@ -904,8 +904,8 @@ label { font-size: var(--font-size-sm); color: hsl(var(--foreground)); font-weig
 }
 .form-group label { font-size: var(--font-size-sm); font-weight: 500; margin-bottom: 0.25rem; }
 .card {
-  background: hsl(240 6% 10% / 0.82);
-  border: 1px solid hsl(0 0% 100% / 0.08);
+  background: hsl(222 24% 9% / 0.88);
+  border: 1px solid hsl(0 0% 100% / 0.07);
   border-radius: 1rem;
   padding: 1.1rem 1.2rem;
   margin-bottom: 1rem;

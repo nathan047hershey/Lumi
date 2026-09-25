@@ -283,7 +283,7 @@ function BidCourses({ embedded = false }) {
             embedded={embedded}
             icon={FileText}
             title="Bid Courses"
-            description={BID_COURSE_LEGEND}
+            description="Open a course to see screenshots and whether the bid succeeded, filled, or stopped."
         >
             <div className="flex min-h-[calc(100vh-8.5rem)] flex-col gap-3">
                 <PageCommandBar

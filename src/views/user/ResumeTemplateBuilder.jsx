@@ -1159,18 +1159,15 @@ export default function ResumeTemplateBuilder() {
         >
             <div className="space-y-4">
             <PageCommandBar
-                search={(
-                    <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-white/80">Template editor</p>
-                        <p className="truncate text-xs text-white/40">
-                            <Link to="/user/generate" className="inline-flex items-center text-primary hover:underline">
-                                <ArrowLeft className="mr-1 h-3.5 w-3.5" /> Back to Resume Generator
-                            </Link>
-                        </p>
-                    </div>
-                )}
+                search={null}
                 actions={(
                     <>
+                        <Button variant="outline" size="sm" className="h-10" asChild>
+                            <Link to="/user/generate">
+                                <ArrowLeft className="h-4 w-4" />
+                                <span className="hidden sm:inline">Resume</span>
+                            </Link>
+                        </Button>
                         <Button variant="outline" size="sm" className="h-10" onClick={duplicate} disabled={!currentId || saving}>
                             <Copy className="h-4 w-4" />
                             <span className="hidden sm:inline">Duplicate</span>

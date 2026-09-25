@@ -121,18 +121,11 @@ function ManagerDashboard() {
         <AppPage
             icon={ClipboardList}
             title="My Profiles"
-            description="Manage candidate profiles you created"
+            description={loading ? 'Profiles you created' : `${profiles.length} profile${profiles.length === 1 ? '' : 's'} you created`}
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Your profiles</p>
-                            <p className="truncate text-xs text-white/40">
-                                {loading ? 'Loading…' : `${profiles.length} profile${profiles.length === 1 ? '' : 's'}`}
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <>
                             <Button variant="outline" size="sm" className="h-10" onClick={loadProfiles} disabled={loading}>

@@ -52,14 +52,7 @@ function BidInsights({ embedded = false }) {
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Bid insights</p>
-                            <p className="truncate text-xs text-white/40">
-                                Interview patterns that guide autofill answers
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button variant="outline" size="sm" className="h-10" onClick={load} disabled={loading}>
                             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />

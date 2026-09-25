@@ -95,16 +95,7 @@ function ManagerProfileForm() {
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">
-                                {isEdit ? 'Edit candidate profile' : 'New candidate profile'}
-                            </p>
-                            <p className="truncate text-xs text-white/40">
-                                Personal details, experience, and resume prompt
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button variant="outline" size="sm" className="h-10" asChild>
                             <Link to="/manager/profiles">

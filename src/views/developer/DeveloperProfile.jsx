@@ -157,14 +157,7 @@ function DeveloperProfile() {
         >
         <div className="space-y-4">
             <PageCommandBar
-                search={(
-                    <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-white/80">Developer profile</p>
-                        <p className="truncate text-xs text-white/40">
-                            Skills, availability, contacts, and resume
-                        </p>
-                    </div>
-                )}
+                search={null}
                 actions={(
                     <>
                         {profile?.developer_resume ? (

@@ -113,18 +113,11 @@ function UserDashboard() {
         <AppPage
             icon={ClipboardList}
             title="My Profiles"
-            description="View your assigned candidate profiles and generate resumes"
+            description={loading ? 'Assigned candidate profiles' : `${profiles.length} assigned profile${profiles.length === 1 ? '' : 's'}`}
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Assigned profiles</p>
-                            <p className="truncate text-xs text-white/40">
-                                {loading ? 'Loading…' : `${profiles.length} profile${profiles.length === 1 ? '' : 's'}`}
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button variant="outline" size="sm" className="h-10" onClick={loadProfiles} disabled={loading}>
                             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />

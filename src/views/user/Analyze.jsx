@@ -304,14 +304,7 @@ function Analyze({ embedded = false }) {
         >
             <div className="space-y-3">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Analyze</p>
-                            <p className="truncate text-xs text-white/40">
-                                Last 30 days · denser read of bid outcomes
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <>
                             <Button asChild variant="outline" size="sm" className="h-10">

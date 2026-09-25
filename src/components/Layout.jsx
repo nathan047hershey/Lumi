@@ -17,7 +17,6 @@ import {
     BarChart3,
     CalendarClock,
     Sparkles,
-    ChevronDown,
     Home,
     TrendingUp,
     Mail
@@ -49,7 +48,7 @@ function NavItem({ to, label, icon: Icon, end, match, matchPrefix, onNavigate, n
             end={end}
             onClick={onNavigate}
             className={cn(
-                'group flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition',
+                'group flex items-center gap-2.5 rounded-lg px-3 py-1.5 text-[13px] font-medium transition',
                 nested && 'pl-9 py-1.5 text-[12px]',
                 active
                     ? 'bg-primary/15 text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.25)]'
@@ -61,30 +60,6 @@ function NavItem({ to, label, icon: Icon, end, match, matchPrefix, onNavigate, n
             ) : null}
             <span className="truncate">{label}</span>
         </NavLink>
-    );
-}
-
-function NavGroup({ label, icon: Icon, open, onToggle, children, active }) {
-    return (
-        <div className="space-y-0.5">
-            <button
-                type="button"
-                onClick={onToggle}
-                className={cn(
-                    'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition',
-                    active
-                        ? 'bg-white/[0.06] text-white'
-                        : 'text-white/55 hover:bg-white/[0.05] hover:text-white/90'
-                )}
-            >
-                {Icon ? <Icon className="h-4 w-4 shrink-0 opacity-80" /> : null}
-                <span className="flex-1 truncate text-left">{label}</span>
-                <ChevronDown
-                    className={cn('h-3.5 w-3.5 opacity-50 transition', open && 'rotate-180')}
-                />
-            </button>
-            {open ? <div className="space-y-0.5 pb-1">{children}</div> : null}
-        </div>
     );
 }
 
@@ -121,149 +96,105 @@ function buildNavTree({ isAdmin, isCaller, isManagerOnly, isDeveloperOnly, hasMa
 
     if (isAdmin) {
         return {
-            primary: [
-                { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard, match: ['/admin/dashboard'] },
+            sections: [
                 {
-                    id: 'pipeline',
-                    label: 'Pipeline',
-                    icon: Link2,
-                    match: ['/admin/pipeline'],
-                    children: [
+                    label: 'Jobs',
+                    items: [
                         { to: '/admin/pipeline', label: 'Job Links', icon: Link2, end: true, matchPrefix: '/admin/pipeline/links' },
                         { to: '/admin/pipeline/applications', label: 'Applications', icon: FileText, end: true },
-                        { to: '/admin/pipeline/interviews', label: 'Interviews', icon: CalendarClock, end: true }
-                    ]
-                },
-                {
-                    id: 'performance',
-                    label: 'Performance',
-                    icon: TrendingUp,
-                    match: ['/admin/performance'],
-                    children: [
+                        { to: '/admin/pipeline/interviews', label: 'Interviews', icon: CalendarClock, end: true },
                         { to: '/admin/performance', label: 'Bid Courses', icon: BarChart3, end: true, matchPrefix: '/admin/performance/courses' },
                         { to: '/admin/performance/analyze', label: 'Analyze', icon: Sparkles, end: true }
                     ]
                 },
-                { to: '/user/generate', label: 'Resume', icon: FileText, match: ['/user/generate'] },
-                { to: '/admin/mailbox', label: 'Mailbox', icon: Mail, match: ['/admin/mailbox', '/user/inbox'] },
                 {
-                    id: 'people',
+                    label: 'Work',
+                    items: [
+                        { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard, match: ['/admin/dashboard'] },
+                        { to: '/user/generate', label: 'Resume', icon: FileText, match: ['/user/generate'] },
+                        { to: '/admin/mailbox', label: 'Mailbox', icon: Mail, match: ['/admin/mailbox', '/user/inbox'] },
+                        { to: '/user/cv-quality', label: 'CV Quality', icon: ClipboardList }
+                    ]
+                },
+                {
                     label: 'People',
-                    icon: Users,
-                    match: ['/admin/profiles', '/admin/users', '/admin/assignments', '/admin/developers', '/admin/autofill-settings', '/admin/bidder-settings'],
-                    children: [
+                    items: [
                         { to: '/admin/profiles', label: 'Profiles', icon: ClipboardList, end: true },
-                        { to: '/admin/bidder-settings', label: 'Auto Bidder', icon: Bot, end: true },
-                        { to: '/admin/autofill-settings', label: 'Autofill', icon: PenLine, end: true },
-                        { to: '/admin/assignments', label: 'Assignments', icon: Link2, end: true },
                         { to: '/admin/users', label: 'Users', icon: Users, end: true },
+                        { to: '/admin/assignments', label: 'Assignments', icon: Link2, end: true },
                         { to: '/admin/developers', label: 'Developers', icon: Code2, end: true }
                     ]
+                },
+                {
+                    label: 'Setup',
+                    items: [
+                        { to: '/admin/bidder-settings', label: 'Auto Bidder', icon: Bot, end: true },
+                        { to: '/admin/autofill-settings', label: 'Autofill', icon: PenLine, end: true },
+                        { to: '/admin/resume-templates', label: 'Resume Templates', icon: LayoutTemplate },
+                        { to: '/user/templates', label: 'Template Builder', icon: PenLine }
+                    ]
                 }
-            ],
-            more: [
-                { to: '/user/cv-quality', label: 'CV Quality', icon: ClipboardList },
-                { to: '/admin/resume-templates', label: 'Resume Templates', icon: LayoutTemplate },
-                { to: '/user/templates', label: 'Template Builder', icon: PenLine }
             ]
         };
     }
 
-    const more = [
+    const setup = [
         { to: '/user/templates', label: 'Templates', icon: LayoutTemplate },
         { to: '/user/bidder-settings', label: 'Auto Bidder', icon: Bot },
-        { to: '/user/autofill-settings', label: 'Autofill Settings', icon: PenLine },
-        { to: '/user/dashboard', label: 'Dashboard', icon: LayoutDashboard }
+        { to: '/user/autofill-settings', label: 'Autofill', icon: PenLine },
+        { to: '/user/dashboard', label: 'Stats', icon: LayoutDashboard }
     ];
     if (hasManager && userRole !== 'manager') {
-        more.push({ to: '/manager/dashboard', label: 'Manager', icon: ClipboardList });
+        setup.push({ to: '/manager/dashboard', label: 'Manager', icon: ClipboardList });
     }
     if (hasDeveloper) {
-        more.push({ to: '/developer/dashboard', label: 'Developer Queue', icon: Code2 });
+        setup.push({ to: '/developer/dashboard', label: 'Developer Queue', icon: Code2 });
     }
 
     return {
-        primary: [
-            { to: '/user/profiles', label: 'Home', icon: Home, match: ['/user/profiles', '/user/dashboard'] },
+        sections: [
             {
-                id: 'pipeline',
-                label: 'Pipeline',
-                icon: Link2,
-                match: ['/user/pipeline'],
-                children: [
+                label: 'Jobs',
+                items: [
                     { to: '/user/pipeline', label: 'Job Links', icon: Link2, end: true, matchPrefix: '/user/pipeline/links' },
                     { to: '/user/pipeline/applications', label: 'Applications', icon: FileText, end: true },
-                    { to: '/user/pipeline/interviews', label: 'Interviews', icon: CalendarClock, end: true }
-                ]
-            },
-            {
-                id: 'performance',
-                label: 'Performance',
-                icon: TrendingUp,
-                match: ['/user/performance'],
-                children: [
+                    { to: '/user/pipeline/interviews', label: 'Interviews', icon: CalendarClock, end: true },
                     { to: '/user/performance', label: 'Bid Courses', icon: BarChart3, end: true, matchPrefix: '/user/performance/courses' },
                     { to: '/user/performance/insights', label: 'Bid Insights', icon: TrendingUp, end: true },
                     { to: '/user/performance/analyze', label: 'Analyze', icon: Sparkles, end: true }
                 ]
             },
-            { to: '/user/generate', label: 'Resume', icon: FileText, match: ['/user/generate'] },
-            { to: '/user/cv-quality', label: 'CV Quality', icon: ClipboardList, match: ['/user/cv-quality'] },
-            { to: '/user/inbox', label: 'Mailbox', icon: Mail, match: ['/user/inbox'] }
-        ],
-        more
+            {
+                label: 'Work',
+                items: [
+                    { to: '/user/profiles', label: 'Home', icon: Home, match: ['/user/profiles'] },
+                    { to: '/user/generate', label: 'Resume', icon: FileText, match: ['/user/generate'] },
+                    { to: '/user/cv-quality', label: 'CV Quality', icon: ClipboardList, match: ['/user/cv-quality'] },
+                    { to: '/user/inbox', label: 'Mailbox', icon: Mail, match: ['/user/inbox'] }
+                ]
+            },
+            { label: 'Setup', items: setup }
+        ]
     };
 }
 
 function SidebarNav({ tree, onNavigate }) {
-    const location = useLocation();
-    const [openGroups, setOpenGroups] = useState(() => ({
-        pipeline: true,
-        performance: true,
-        people: true
-    }));
-
-    const toggle = (id) => setOpenGroups((prev) => ({ ...prev, [id]: !prev[id] }));
+    const sections = tree.sections || [
+        { label: 'Menu', items: [...(tree.primary || []), ...(tree.more || [])] }
+    ];
 
     return (
-        <nav className="flex flex-1 flex-col gap-1 overflow-y-auto px-2 py-3">
-            {tree.primary.map((item) => {
-                if (item.children) {
-                    const groupActive = pathIn(location.pathname, item.match || []);
-                    const open = openGroups[item.id] ?? groupActive;
-                    return (
-                        <NavGroup
-                            key={item.id}
-                            label={item.label}
-                            icon={item.icon}
-                            open={open || groupActive}
-                            active={groupActive}
-                            onToggle={() => toggle(item.id)}
-                        >
-                            {item.children.map((child) => (
-                                <NavItem
-                                    key={child.to + child.label}
-                                    {...child}
-                                    nested
-                                    onNavigate={onNavigate}
-                                />
-                            ))}
-                        </NavGroup>
-                    );
-                }
-                return <NavItem key={item.to} {...item} onNavigate={onNavigate} />;
-            })}
-
-            {tree.more.length > 0 ? (
-                <>
-                    <p className="mt-4 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">
-                        More
+        <nav className="flex flex-1 flex-col gap-3 overflow-y-auto px-2 py-3">
+            {sections.map((section) => (
+                <div key={section.label} className="space-y-0.5">
+                    <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/35">
+                        {section.label}
                     </p>
-                    {tree.more.map((item) => (
-                        <NavItem key={item.to} {...item} onNavigate={onNavigate} />
+                    {section.items.map((item) => (
+                        <NavItem key={item.to + item.label} {...item} onNavigate={onNavigate} />
                     ))}
-                </>
-            ) : null}
+                </div>
+            ))}
         </nav>
     );
 }

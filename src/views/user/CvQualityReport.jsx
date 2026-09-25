@@ -222,14 +222,7 @@ export default function CvQualityReport() {
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Quality audit</p>
-                            <p className="truncate text-xs text-white/40">
-                                Four-pass CV check · regenerate only when needed
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <>
                             <Button variant="outline" size="sm" className="h-10" onClick={loadList} disabled={loadingList}>

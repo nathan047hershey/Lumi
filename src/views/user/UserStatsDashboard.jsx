@@ -43,14 +43,7 @@ function UserStatsDashboard() {
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Activity overview</p>
-                            <p className="truncate text-xs text-white/40">
-                                {lastUpdated || 'Your application funnel and volume'}
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button variant="outline" size="sm" className="h-10" onClick={loadStats} disabled={loading}>
                             <RefreshCw className={cn('h-4 w-4', loading && 'animate-spin')} />

@@ -28,7 +28,7 @@ export default function AuthLayout({ title, subtitle, children }) {
                         Apply with Lumi
                     </h1>
                     <p className="text-sm leading-relaxed text-white/50">
-                        Pipeline, performance, and resume tooling in one redesigned workspace.
+                        Jobs, resumes, and people in one workspace.
                     </p>
                 </div>
                 <BuildStamp className="relative" />

@@ -86,18 +86,11 @@ function ManagerUsers() {
         <AppPage
             icon={Users}
             title="User Management"
-            description="Manage users you created"
+            description={`${users.length} user${users.length === 1 ? '' : 's'} you created`}
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Your users</p>
-                            <p className="truncate text-xs text-white/40">
-                                {users.length} user{users.length === 1 ? '' : 's'} · create and delegate
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button
                             size="sm"

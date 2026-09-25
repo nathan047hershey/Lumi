@@ -90,16 +90,7 @@ function ProfileView() {
         >
             <div className="space-y-4">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">
-                                {`${profile.first_name} ${profile.middle_name || ''} ${profile.last_name}`.trim()}
-                            </p>
-                            <p className="truncate text-xs text-white/40">
-                                {profile.email || 'Candidate profile'}
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button asChild size="sm" className="h-10" variant="gradient">
                             <Link to={`/user/generate/${profile.id}`}>

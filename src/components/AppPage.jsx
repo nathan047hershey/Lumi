@@ -18,15 +18,14 @@ export default function AppPage({
     embedded = false,
     className
 }) {
-    // Embedded hub pages: title lives in subnav — only show a thin meta row if needed.
-    // Do NOT render a standalone actions strip (that looked like the old broken header).
-    const showTitleHeader = !embedded && !!(title || icon || description || meta || actions);
-    const showEmbeddedMeta = embedded && !!meta && !actions && !filters;
+    // Every page names itself. Hub routes used to hide this title, which left
+    // Job Links, Analyze, and the other sections looking like unlabeled tools.
+    const showTitleHeader = !!(title || icon || description || meta || actions);
 
     return (
         <div className={cn('flex min-h-full w-full flex-col', className)}>
             {showTitleHeader && (
-                <div className="shrink-0 border-b border-white/[0.06] px-3 py-3 sm:px-4 lg:px-5">
+                <div className="sticky top-0 z-20 shrink-0 border-b border-white/[0.06] bg-[hsl(222_28%_6%/0.92)] px-3 py-3 backdrop-blur-xl sm:px-4 lg:px-5">
                     <PageHeader
                         icon={icon}
                         title={title}
@@ -34,12 +33,6 @@ export default function AppPage({
                         meta={meta}
                         actions={actions}
                     />
-                </div>
-            )}
-
-            {showEmbeddedMeta && (
-                <div className="shrink-0 border-b border-white/[0.06] px-4 py-2 sm:px-6 lg:px-8">
-                    <p className="font-mono text-[11px] text-white/35">{meta}</p>
                 </div>
             )}
 

@@ -207,14 +207,7 @@ function AdminDashboard() {
         >
             <div className="space-y-6">
                 <PageCommandBar
-                    search={(
-                        <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Platform filters</p>
-                            <p className="truncate text-xs text-white/40">
-                                Scope stats by period and user
-                            </p>
-                        </div>
-                    )}
+                    search={null}
                     actions={(
                         <Button variant="outline" size="sm" className="h-10" onClick={refreshAll} disabled={statsLoading}>
                             <RefreshCw className={statsLoading ? 'h-4 w-4 animate-spin' : 'h-4 w-4'} />

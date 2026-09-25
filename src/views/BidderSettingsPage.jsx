@@ -47,12 +47,13 @@ export default function BidderSettingsPage() {
 
     return (
         <AppPage
+            icon={Bot}
             title="Auto Bidder"
             description="Hands-free apply: AFK, CAPTCHA helpers, fill timing — synced to the Chrome extension."
         >
+            <div className="space-y-4">
             <PageCommandBar
-                title="Auto Bidder settings"
-                description="Control queue behavior, waits, and how Lumi fills apply forms."
+                search={null}
                 actions={(
                     <div className="flex flex-wrap gap-2">
                         <Button type="button" variant="outline" className="h-10 gap-1.5" asChild>
@@ -133,6 +134,7 @@ export default function BidderSettingsPage() {
                 </Link>
                 . This page controls the Auto Bidder queue only.
             </p>
+            </div>
         </AppPage>
     );
 }
