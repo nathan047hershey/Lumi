@@ -80,6 +80,7 @@ import { DatePicker } from '@/components/DatePicker';
 import { cn } from '@/lib/utils';
 import { cvGenerationTimeLabel, useNowTick } from '@/lib/cvGenerationTime';
 import { rememberCvDraft } from '@/lib/resumeUrl';
+import { mergeCvStatusForward } from '@/lib/cvStatusMerge';
 import { formatAddedTimeLabel } from '@/lib/easternTime';
 import { parseSqliteUtcMs } from '@/lib/sqliteDate';
 import {
@@ -1909,9 +1910,10 @@ function JobLinks({ embedded = false }) {
                 if (cronRes?.data) setCronStatus(cronRes.data);
                 return;
             }
+            nextRows = mergeCvStatusForward(rowsRef.current, nextRows);
             setRows(nextRows);
             setTotal(nextTotal);
-            if (merged.length > 0) writeVisibleCache(merged, apiTotal + extra);
+            if (nextRows.length > 0) writeVisibleCache(nextRows, nextTotal);
             if (cronRes?.data) setCronStatus(cronRes.data);
         } catch (err) {
             if (requestId !== loadRequestRef.current) return;

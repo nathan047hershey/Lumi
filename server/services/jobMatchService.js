@@ -531,6 +531,25 @@ function enqueueForPair(jobLink, profile, score) {
         );
         return null;
     }
+    const existingReady = getOne(
+        `SELECT id FROM job_applications
+          WHERE profile_id = ? AND job_link_id = ? AND generation_status = 'ready'
+          LIMIT 1`,
+        [profile.id, jobLink.id]
+    );
+    if (existingReady) return null;
+    const existing = getOne(
+        `SELECT id, generation_status FROM job_applications
+          WHERE profile_id = ? AND job_link_id = ?
+          ORDER BY id DESC LIMIT 1`,
+        [profile.id, jobLink.id]
+    );
+    if (existing) {
+        if (existing.generation_status === 'pending' || existing.generation_status === 'generating') {
+            return existing.id;
+        }
+        return null;
+    }
     let applyUrl = jobLink.job_apply_url || '';
     try {
         const { canonicalizeGreenhouseApplyUrl, isGreenhouseUrl } = require('./scraper/greenhouseUrl');

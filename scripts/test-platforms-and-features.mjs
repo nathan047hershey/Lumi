@@ -5,6 +5,7 @@
  */
 import assert from 'assert';
 import { createRequire } from 'module';
+import { mergeCvStatusForward } from '../src/lib/cvStatusMerge.js';
 import { detectAtsFromUrl } from '../extension/lib/atsDetect.js';
 
 const require = createRequire(import.meta.url);
@@ -99,5 +100,12 @@ for (const preset of ['today', 'past_24h', 'this_week', 'past_week']) {
 const today = datePresetRange('today', now);
 assert.ok('2026-09-24 05:15:00' >= today.created_after && '2026-09-24 05:15:00' < today.created_before);
 assert.ok('2026-09-24 01:15:00' < today.created_after);
+
+const merged = mergeCvStatusForward(
+    [{ id: 1, fetch_status: 'success', job_description: 'jd', available_profiles: [{ profile_id: 2, generation_status: 'ready', resume_filename: 'a.docx' }] }],
+    [{ id: 1, fetch_status: 'success', job_description: 'jd', available_profiles: [{ profile_id: 2, generation_status: null }, { profile_id: 3, generation_status: 'generating' }] }]
+);
+assert.strictEqual(merged[0].available_profiles[0].generation_status, 'ready');
+assert.strictEqual(merged[0].available_profiles[1].generation_status, 'generating');
 
 console.log(`platforms and features passed (${samples.length} platform URLs)`);

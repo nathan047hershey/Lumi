@@ -84,4 +84,61 @@ function restoreRememberedJobLinks(rows, userId) {
     return { restored, skipped: existingIds.length + existingUrls.length };
 }
 
-module.exports = { pickRowsToRestore, restoreRememberedJobLinks };
+function restoreRememberedApplications(rows) {
+    const { getOne, runQuery } = require('../config/database');
+    const rank = { ready: 4, failed: 3, generating: 2, pending: 1 };
+    let restored = 0;
+    for (const row of rows || []) {
+        const linkId = parseInt(row && row.id, 10);
+        if (!linkId) continue;
+        if (!getOne('SELECT id FROM job_links WHERE id = ?', [linkId])) continue;
+        for (const profile of row.available_profiles || []) {
+            const profileId = parseInt(profile.profile_id, 10);
+            const status = String(profile.generation_status || '');
+            if (!profileId || (status !== 'ready' && status !== 'failed')) continue;
+            const existing = getOne(
+                `SELECT id, generation_status FROM job_applications
+                  WHERE profile_id = ? AND job_link_id = ?
+                  ORDER BY id DESC LIMIT 1`,
+                [profileId, linkId]
+            );
+            if (existing) {
+                if ((rank[status] || 0) > (rank[existing.generation_status] || 0)) {
+                    runQuery(
+                        `UPDATE job_applications
+                            SET generation_status = ?,
+                                resume_filename = COALESCE(?, resume_filename),
+                                draft_html = COALESCE(?, draft_html),
+                                updated_at = CURRENT_TIMESTAMP
+                          WHERE id = ?`,
+                        [status, profile.resume_filename || null, profile.draft_html || null, existing.id]
+                    );
+                    restored += 1;
+                }
+                continue;
+            }
+            runQuery(
+                `INSERT INTO job_applications (
+                    profile_id, company_name, job_role, job_description, job_url,
+                    resume_filename, draft_html, applier_id, status, state, source,
+                    job_link_id, generation_status
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL, 'pending', 'in_progress', 'auto', ?, ?)`,
+                [
+                    profileId,
+                    row.company_name || '',
+                    row.position_title || '',
+                    row.job_description || '',
+                    row.job_apply_url || '',
+                    profile.resume_filename || null,
+                    profile.draft_html || null,
+                    linkId,
+                    status
+                ]
+            );
+            restored += 1;
+        }
+    }
+    return restored;
+}
+
+module.exports = { pickRowsToRestore, restoreRememberedJobLinks, restoreRememberedApplications };

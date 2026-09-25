@@ -38,7 +38,7 @@ const {
     scrapeJobLinkById,
     getCronStatus
 } = require('../services/jobLinkScraper');
-const { restoreRememberedJobLinks } = require('../services/jobLinkRestore');
+const { restoreRememberedJobLinks, restoreRememberedApplications } = require('../services/jobLinkRestore');
 const {
     normalizeUrl,
     canonicalJobLinkUrl,
@@ -460,6 +460,7 @@ async function listHandler(req, res) {
         if (Array.isArray(source.remembered) && source.remembered.length) {
             try {
                 restoreRememberedJobLinks(source.remembered, req.user && req.user.id);
+                restoreRememberedApplications(source.remembered);
             } catch (err) {
                 console.warn('[job-links] restore skipped:', err.message);
             }
