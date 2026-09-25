@@ -97,7 +97,7 @@ export default function ApplicationRowCard({
     return (
         <article
             className={cn(
-                'group relative flex overflow-hidden rounded-xl border border-border bg-[hsl(222_24%_9%/0.75)] transition-colors',
+                'group relative flex overflow-hidden rounded-xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] transition-colors',
                 'hover:border-primary/30 hover:bg-[hsl(222_24%_11%/0.9)]',
                 selected && 'border-primary/40 bg-primary/5 ring-1 ring-primary/20'
             )}
@@ -146,7 +146,7 @@ export default function ApplicationRowCard({
                     <p className="truncate text-[13px] font-semibold leading-tight text-white group-hover:text-primary">
                         {displayName}
                     </p>
-                    <p className="truncate text-[11px] leading-tight text-muted-foreground">
+                    <p className="truncate text-[11px] leading-tight text-white/45">
                         {app.job_url ? (
                             <a
                                 href={app.job_url}
@@ -192,10 +192,10 @@ export default function ApplicationRowCard({
                         </div>
 
                         <div className="hidden min-w-0 max-w-[9rem] shrink-0 xl:block">
-                            <p className="truncate text-[10px] text-muted-foreground">
+                            <p className="truncate text-[10px] text-white/35">
                                 Int · {interviewLabel(app)}
                             </p>
-                            <p className="truncate text-[10px] text-muted-foreground">
+                            <p className="truncate text-[10px] text-white/35">
                                 {app.caller_username ? (
                                     <span className="inline-flex items-center gap-1">
                                         Caller · {app.caller_username}

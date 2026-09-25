@@ -300,29 +300,29 @@ export default function OutlookMailbox() {
     const configured = !!(status?.configured || status?.config?.clientIdSet || status?.config?.configured);
 
     return (
-        <div className="flex h-[calc(100vh-3.5rem)] min-h-[32rem] flex-col overflow-hidden rounded-xl border border-border bg-[hsl(222_24%_8%/0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
+        <div className="flex h-[calc(100vh-3.5rem)] min-h-[32rem] flex-col overflow-hidden rounded-xl border border-white/[0.06] bg-[hsl(222_24%_8%/0.92)] shadow-[inset_0_1px_0_rgba(255,255,255,0.04)]">
             {/* Ribbon */}
-            <div className="flex flex-shrink-0 items-center gap-3 border-b border-border bg-[hsl(222_28%_10%/0.95)] px-4 py-2.5">
+            <div className="flex flex-shrink-0 items-center gap-3 border-b border-white/[0.06] bg-[hsl(222_28%_10%/0.95)] px-4 py-2.5">
                 <div className="flex items-center gap-2">
                     <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-[hsl(199_95%_58%)] to-[hsl(210_90%_48%)] text-slate-950 shadow-sm">
                         <Mail className="h-4 w-4" />
                     </div>
                     <div>
                         <div className="text-sm font-semibold tracking-tight text-white/95">Mailbox</div>
-                        <div className="text-[11px] text-muted-foreground">
+                        <div className="text-[11px] text-white/45">
                             {activeAccount?.email || (accounts.length ? `${accounts.length} account${accounts.length > 1 ? 's' : ''}` : 'Outlook / Graph')}
                         </div>
                     </div>
                 </div>
 
                 <div className="relative ml-2 hidden min-w-[14rem] flex-1 md:block md:max-w-sm">
-                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/35" />
                     <input
                         type="search"
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         placeholder="Search mail"
-                        className="h-8 w-full rounded-md border border-border bg-muted/50 pl-8 pr-3 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-sky-400/40 focus:bg-muted"
+                        className="h-8 w-full rounded-md border border-white/[0.08] bg-white/[0.04] pl-8 pr-3 text-xs text-white/90 outline-none placeholder:text-white/30 focus:border-sky-400/40 focus:bg-white/[0.06]"
                     />
                 </div>
 
@@ -331,7 +331,7 @@ export default function OutlookMailbox() {
                         type="button"
                         onClick={handleSync}
                         disabled={syncing || !accounts.length}
-                        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-muted/50 px-2.5 text-xs text-foreground/80 transition hover:bg-white/[0.08] hover:text-foreground disabled:opacity-40"
+                        className="inline-flex h-8 items-center gap-1.5 rounded-md border border-white/[0.08] bg-white/[0.04] px-2.5 text-xs text-white/75 transition hover:bg-white/[0.08] hover:text-white disabled:opacity-40"
                     >
                         <RefreshCw className={cn('h-3.5 w-3.5', syncing && 'animate-spin')} />
                         {syncing ? 'Syncing…' : 'Sync'}
@@ -343,7 +343,7 @@ export default function OutlookMailbox() {
                             'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs transition',
                             showConnect
                                 ? 'border-sky-400/35 bg-sky-400/15 text-sky-200'
-                                : 'border-border bg-muted/50 text-foreground/80 hover:bg-white/[0.08] hover:text-foreground'
+                                : 'border-white/[0.08] bg-white/[0.04] text-white/75 hover:bg-white/[0.08] hover:text-white'
                         )}
                     >
                         {showConnect ? <X className="h-3.5 w-3.5" /> : accounts.length ? <Settings2 className="h-3.5 w-3.5" /> : <Plus className="h-3.5 w-3.5" />}
@@ -360,9 +360,9 @@ export default function OutlookMailbox() {
 
             <div className="flex min-h-0 flex-1">
                 {/* Folder rail */}
-                <aside className="flex w-[13.5rem] flex-shrink-0 flex-col border-r border-border bg-[hsl(222_28%_7%)]">
-                    <div className="border-b border-border px-3 py-3">
-                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                <aside className="flex w-[13.5rem] flex-shrink-0 flex-col border-r border-white/[0.06] bg-[hsl(222_28%_7%)]">
+                    <div className="border-b border-white/[0.06] px-3 py-3">
+                        <label className="mb-1 block text-[10px] font-semibold uppercase tracking-[0.14em] text-white/35">
                             Account
                         </label>
                         <select
@@ -371,7 +371,7 @@ export default function OutlookMailbox() {
                                 setMailboxId(e.target.value);
                                 setSelectedMsg(null);
                             }}
-                            className="h-8 w-full rounded-md border border-border bg-muted/50 px-2 text-xs text-foreground outline-none focus:border-sky-400/40"
+                            className="h-8 w-full rounded-md border border-white/[0.08] bg-white/[0.04] px-2 text-xs text-white/85 outline-none focus:border-sky-400/40"
                         >
                             <option value="all">All mailboxes</option>
                             {accounts.map((acc) => (
@@ -398,7 +398,7 @@ export default function OutlookMailbox() {
                                         'flex w-full items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition',
                                         active
                                             ? 'bg-sky-400/15 text-sky-100 ring-1 ring-inset ring-sky-400/25'
-                                            : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                                            : 'text-white/55 hover:bg-white/[0.05] hover:text-white/90'
                                     )}
                                 >
                                     <Icon className="h-3.5 w-3.5 flex-shrink-0 opacity-80" />
@@ -406,7 +406,7 @@ export default function OutlookMailbox() {
                                     {unread > 0 && (
                                         <span className={cn(
                                             'rounded-full px-1.5 py-0.5 text-[10px] font-semibold tabular-nums',
-                                            active ? 'bg-sky-300/20 text-sky-100' : 'bg-white/10 text-foreground/80'
+                                            active ? 'bg-sky-300/20 text-sky-100' : 'bg-white/10 text-white/70'
                                         )}>
                                             {unread}
                                         </span>
@@ -417,13 +417,13 @@ export default function OutlookMailbox() {
                     </nav>
 
                     {showConnect && (
-                        <div className="max-h-[70%] space-y-2 overflow-y-auto border-t border-border p-2">
+                        <div className="max-h-[70%] space-y-2 overflow-y-auto border-t border-white/[0.06] p-2">
                             <OutlookMailSettings
-                                className="!border-border !bg-muted/40"
+                                className="!border-white/[0.08] !bg-white/[0.03]"
                                 onAccountsChange={onAccountsChange}
                             />
                             <GmailMailSettings
-                                className="!border-border !bg-muted/40"
+                                className="!border-white/[0.08] !bg-white/[0.03]"
                                 onAccountsChange={onGmailChange}
                             />
                         </div>
@@ -431,38 +431,38 @@ export default function OutlookMailbox() {
                 </aside>
 
                 {/* Message list */}
-                <section className="flex w-[22rem] flex-shrink-0 flex-col border-r border-border bg-[hsl(222_24%_9%/0.85)]">
-                    <div className="flex items-center justify-between border-b border-border px-3 py-2">
-                        <div className="text-xs font-semibold text-foreground">
+                <section className="flex w-[22rem] flex-shrink-0 flex-col border-r border-white/[0.06] bg-[hsl(222_24%_9%/0.85)]">
+                    <div className="flex items-center justify-between border-b border-white/[0.06] px-3 py-2">
+                        <div className="text-xs font-semibold text-white/80">
                             {FOLDERS.find((f) => f.id === folder)?.label || 'Mail'}
                         </div>
-                        <div className="text-[11px] text-muted-foreground">
+                        <div className="text-[11px] text-white/40">
                             {filteredMessages.length} message{filteredMessages.length === 1 ? '' : 's'}
                         </div>
                     </div>
 
-                    <div className="border-b border-border px-3 py-2 md:hidden">
+                    <div className="border-b border-white/[0.06] px-3 py-2 md:hidden">
                         <div className="relative">
-                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+                            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-white/35" />
                             <input
                                 type="search"
                                 value={search}
                                 onChange={(e) => setSearch(e.target.value)}
                                 placeholder="Search mail"
-                                className="h-8 w-full rounded-md border border-border bg-muted/50 pl-8 pr-3 text-xs text-foreground outline-none placeholder:text-muted-foreground"
+                                className="h-8 w-full rounded-md border border-white/[0.08] bg-white/[0.04] pl-8 pr-3 text-xs text-white/90 outline-none placeholder:text-white/30"
                             />
                         </div>
                     </div>
 
                     <div className="min-h-0 flex-1 overflow-y-auto">
                         {loading ? (
-                            <div className="flex h-full items-center justify-center text-xs text-muted-foreground">Loading…</div>
+                            <div className="flex h-full items-center justify-center text-xs text-white/40">Loading…</div>
                         ) : filteredMessages.length === 0 ? (
                             <div className="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-                                <Mail className="h-8 w-8 text-muted-foreground" />
-                                <p className="text-sm text-muted-foreground">No messages here</p>
+                                <Mail className="h-8 w-8 text-white/20" />
+                                <p className="text-sm text-white/55">No messages here</p>
                                 {!accounts.length && (
-                                    <p className="text-xs text-muted-foreground">
+                                    <p className="text-xs text-white/35">
                                         {configured
                                             ? 'Connect an Outlook mailbox, then Sync.'
                                             : 'Set OUTLOOK_CLIENT_ID on the server to enable Graph.'}
@@ -490,7 +490,7 @@ export default function OutlookMailbox() {
                                         onClick={() => openMessage(msg)}
                                         className={cn(
                                             'flex w-full gap-3 border-b border-white/[0.04] px-3 py-2.5 text-left transition',
-                                            active ? 'bg-sky-400/12' : 'hover:bg-muted',
+                                            active ? 'bg-sky-400/12' : 'hover:bg-white/[0.04]',
                                             unread && !active && 'bg-white/[0.02]'
                                         )}
                                     >
@@ -498,7 +498,7 @@ export default function OutlookMailbox() {
                                             'mt-0.5 flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full text-[10px] font-semibold',
                                             unread
                                                 ? 'bg-sky-400/20 text-sky-100'
-                                                : 'bg-muted text-muted-foreground'
+                                                : 'bg-white/[0.06] text-white/50'
                                         )}>
                                             {initials(msg.from_name, msg.from_address)}
                                         </div>
@@ -506,22 +506,22 @@ export default function OutlookMailbox() {
                                             <div className="flex items-start justify-between gap-2">
                                                 <span className={cn(
                                                     'truncate text-xs',
-                                                    unread ? 'font-semibold text-white/95' : 'text-muted-foreground'
+                                                    unread ? 'font-semibold text-white/95' : 'text-white/65'
                                                 )}>
                                                     {msg.from_name || msg.from_address || 'Unknown'}
                                                 </span>
-                                                <span className="flex-shrink-0 text-[10px] tabular-nums text-muted-foreground">
+                                                <span className="flex-shrink-0 text-[10px] tabular-nums text-white/35">
                                                     {formatDate(msg.received_at)}
                                                 </span>
                                             </div>
                                             <div className={cn(
                                                 'mt-0.5 truncate text-xs',
-                                                unread ? 'text-foreground' : 'text-muted-foreground'
+                                                unread ? 'text-white/85' : 'text-white/50'
                                             )}>
                                                 {msg.subject || '(No subject)'}
                                             </div>
                                             <div className="mt-0.5 flex items-center gap-1.5">
-                                                <span className="truncate text-[11px] text-muted-foreground">
+                                                <span className="truncate text-[11px] text-white/35">
                                                     {(msg.body_preview || '').slice(0, 72)}
                                                 </span>
                                                 {msg.otp_code && (
@@ -542,7 +542,7 @@ export default function OutlookMailbox() {
                 <section className="flex min-w-0 flex-1 flex-col bg-[hsl(222_22%_10%/0.7)]">
                     {selectedMsg ? (
                         <>
-                            <div className="border-b border-border px-5 py-4">
+                            <div className="border-b border-white/[0.06] px-5 py-4">
                                 <h2 className="text-lg font-semibold tracking-tight text-white/95">
                                     {selectedMsg.subject || '(No subject)'}
                                 </h2>
@@ -551,13 +551,13 @@ export default function OutlookMailbox() {
                                         {initials(selectedMsg.from_name, selectedMsg.from_address)}
                                     </div>
                                     <div className="min-w-0 flex-1">
-                                        <div className="truncate text-sm text-foreground">
+                                        <div className="truncate text-sm text-white/90">
                                             {selectedMsg.from_name || selectedMsg.from_address || 'Unknown'}
                                         </div>
-                                        <div className="truncate text-xs text-muted-foreground">
+                                        <div className="truncate text-xs text-white/40">
                                             {selectedMsg.from_address}
                                         </div>
-                                        <div className="mt-1 text-[11px] text-muted-foreground">
+                                        <div className="mt-1 text-[11px] text-white/35">
                                             {selectedMsg.received_at
                                                 ? new Date(selectedMsg.received_at).toLocaleString()
                                                 : ''}
@@ -582,19 +582,19 @@ export default function OutlookMailbox() {
                                 </div>
                             </div>
                             <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-                                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground/80">
+                                <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-white/75">
                                     {selectedMsg.body_text || selectedMsg.body_preview || '(Empty message)'}
                                 </pre>
                             </div>
                         </>
                     ) : (
                         <div className="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-                            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-border bg-muted/40">
-                                <Mail className="h-7 w-7 text-muted-foreground" />
+                            <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-white/[0.06] bg-white/[0.03]">
+                                <Mail className="h-7 w-7 text-white/25" />
                             </div>
                             <div>
-                                <p className="text-sm font-medium text-muted-foreground">Select a message</p>
-                                <p className="mt-1 max-w-xs text-xs text-muted-foreground">
+                                <p className="text-sm font-medium text-white/60">Select a message</p>
+                                <p className="mt-1 max-w-xs text-xs text-white/35">
                                     Outlook-style reading pane for synced Graph mail, OTPs, and job alerts.
                                 </p>
                             </div>

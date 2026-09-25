@@ -408,13 +408,13 @@ function AdminResumeTemplates() {
 
                 <section
                     className={cn(
-                        'overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
+                        'overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
                         'shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]'
                     )}
                 >
                     <div className="mb-4">
                         <h2 className="text-base font-semibold tracking-tight">Upload Template</h2>
-                        <p className="mt-0.5 text-sm text-muted-foreground">
+                        <p className="mt-0.5 text-sm text-white/40">
                             Pick a .docx file. Layout, headings, fonts, alignment, and bullet characters are parsed automatically.
                         </p>
                     </div>
@@ -540,15 +540,15 @@ function AdminResumeTemplates() {
                 />
 
                 {loading ? (
-                    <div className="flex items-center gap-2 rounded-2xl border border-border bg-black/20 px-6 py-10 text-sm text-muted-foreground">
+                    <div className="flex items-center gap-2 rounded-2xl border border-white/[0.07] bg-black/20 px-6 py-10 text-sm text-white/40">
                         <Loader2 className="h-4 w-4 animate-spin" />
                         Loading templates…
                     </div>
                 ) : templates.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center">
-                        <FileText className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-                        <h3 className="text-base font-semibold text-foreground">No resume templates yet</h3>
-                        <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+                        <FileText className="mx-auto mb-3 h-10 w-10 text-white/25" />
+                        <h3 className="text-base font-semibold text-white/80">No resume templates yet</h3>
+                        <p className="mx-auto mt-1 max-w-md text-sm text-white/40">
                             Upload a .docx file above to add your first custom template.
                             The parser will read its layout, headings, fonts, alignment,
                             and bullet style automatically.
@@ -560,7 +560,7 @@ function AdminResumeTemplates() {
                             <Fragment key={t.id}>
                                 <article
                                     className={cn(
-                                        'overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4',
+                                        'overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
                                         'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]'
                                     )}
                                 >
@@ -570,7 +570,7 @@ function AdminResumeTemplates() {
                                                 {t.is_default ? (
                                                     <Sparkles className="h-4 w-4 text-primary" />
                                                 ) : (
-                                                    <FileText className="h-4 w-4 text-muted-foreground" />
+                                                    <FileText className="h-4 w-4 text-white/40" />
                                                 )}
                                                 <strong className="truncate text-base tracking-tight">{t.name}</strong>
                                                 {t.is_default && (
@@ -578,12 +578,12 @@ function AdminResumeTemplates() {
                                                         Default
                                                     </span>
                                                 )}
-                                                <span className="text-xs text-muted-foreground">
+                                                <span className="text-xs text-white/35">
                                                     {formatBytes(t.file_size)} • {t.filename}
                                                 </span>
                                             </div>
                                             {t.description && (
-                                                <p className="mt-1 text-sm text-muted-foreground">{t.description}</p>
+                                                <p className="mt-1 text-sm text-white/45">{t.description}</p>
                                             )}
                                             {t.style_spec && (
                                                 <SpecSummary spec={t.style_spec} />
@@ -619,11 +619,11 @@ function AdminResumeTemplates() {
                                     </div>
 
                                     {!t.is_default && (
-                                        <div className="mt-3 border-t border-border pt-3">
+                                        <div className="mt-3 border-t border-white/[0.06] pt-3">
                                             <Button
                                                 size="sm"
                                                 variant="ghost"
-                                                className="h-8 px-0 text-muted-foreground hover:text-foreground"
+                                                className="h-8 px-0 text-white/45 hover:text-white/80"
                                                 onClick={() => setExpandedId(expandedId === t.id ? null : t.id)}
                                             >
                                                 {expandedId === t.id ? (
@@ -633,7 +633,7 @@ function AdminResumeTemplates() {
                                                 )}
                                                 Extracted candidate data
                                                 {t.extracted_data && (
-                                                    <span className="ml-1 text-[10px] text-muted-foreground">
+                                                    <span className="ml-1 text-[10px] text-white/35">
                                                         ({summariseExtracted(t.extracted_data)})
                                                     </span>
                                                 )}
@@ -648,7 +648,7 @@ function AdminResumeTemplates() {
                                                             'ml-2 rounded-md px-1.5 py-0.5 text-[10px] font-semibold',
                                                             t.extracted_data.extraction_source.startsWith('ai:')
                                                                 ? 'border border-sky-500/45 bg-sky-500/15 text-sky-200'
-                                                                : 'border border-white/15 bg-white/5 text-muted-foreground'
+                                                                : 'border border-white/15 bg-white/5 text-white/50'
                                                         )}
                                                     >
                                                         {t.extracted_data.extraction_source.startsWith('ai:')
@@ -658,7 +658,7 @@ function AdminResumeTemplates() {
                                                 )}
                                             </Button>
                                             {expandedId === t.id && (
-                                                <div className="mt-2 rounded-xl border border-border bg-black/20 p-3">
+                                                <div className="mt-2 rounded-xl border border-white/[0.06] bg-black/20 p-3">
                                                     <ExtractedData data={t.extracted_data} />
                                                     <div className="mt-3 flex flex-wrap gap-2">
                                                         <Button

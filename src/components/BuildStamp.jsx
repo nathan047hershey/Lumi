@@ -25,11 +25,11 @@ export default function BuildStamp({ className = '' }) {
     if (!version && !updated) return null;
 
     return (
-        <p className={`font-mono text-[10px] leading-snug text-muted-foreground ${className}`.trim()}>
+        <p className={`font-mono text-[10px] leading-snug text-white/35 ${className}`.trim()}>
             {version ? <span>v{version}</span> : null}
             {version && sha ? <span> · {sha}</span> : null}
             {updated ? (
-                <span className="block text-muted-foreground">Updated {updated}</span>
+                <span className="block text-white/45">Updated {updated}</span>
             ) : null}
         </p>
     );

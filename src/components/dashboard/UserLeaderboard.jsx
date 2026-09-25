@@ -18,7 +18,7 @@ export default function UserLeaderboard({ users = [], periodLabel = 'period' }) 
     if (users.length === 0) return null;
 
     return (
-        <Card className="border-border bg-card/80">
+        <Card className="border-white/[0.08] bg-card/80">
             <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 font-display text-base">
                     <Users className="h-4 w-4 text-primary" />

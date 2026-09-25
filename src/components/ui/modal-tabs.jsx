@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
  * tuned for bidding dialogs).
  */
 export const modalTabsListClass =
-    'flex h-auto w-full shrink-0 flex-wrap justify-start gap-0.5 rounded-xl border border-border bg-black/25 p-1';
+    'flex h-auto w-full shrink-0 flex-wrap justify-start gap-0.5 rounded-xl border border-white/[0.08] bg-black/25 p-1';
 
 export const modalTabsTriggerClass = cn(
     'h-8 rounded-lg px-3.5 text-[13px] font-semibold tracking-wide',

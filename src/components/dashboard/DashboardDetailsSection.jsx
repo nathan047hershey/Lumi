@@ -16,7 +16,7 @@ export default function DashboardDetailsSection({
     const [open, setOpen] = useState(defaultOpen);
 
     return (
-        <div className={cn('overflow-hidden rounded-xl border border-border bg-card/80', className)}>
+        <div className={cn('overflow-hidden rounded-xl border border-white/[0.08] bg-card/80', className)}>
             <button
                 type="button"
                 onClick={() => setOpen((v) => !v)}

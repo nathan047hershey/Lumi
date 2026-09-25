@@ -19,7 +19,7 @@ const TONE_VALUE = {
 
 function StatusItem({ tone = 'neutral', label, value }) {
     return (
-        <div className="inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-white/10 bg-muted/40 px-2.5">
+        <div className="inline-flex h-8 shrink-0 items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-2.5">
             <span className="text-[10px] font-semibold uppercase tracking-wider text-foreground/65">
                 {label}
             </span>

@@ -24,7 +24,7 @@ export default function StatusDistributionChart({ statuses = {}, title = 'Pipeli
     }));
 
     return (
-        <Card className="border-border bg-card/80">
+        <Card className="border-white/[0.08] bg-card/80">
             <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2 font-display text-base">
                     <PieChart className="h-4 w-4 text-primary" />

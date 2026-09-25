@@ -289,7 +289,7 @@ function BidCourses({ embedded = false }) {
                 <PageCommandBar
                     search={(
                         <div className="relative">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
                             <Input
                                 className="h-10 border-white/10 bg-black/25 pl-10"
                                 placeholder="Search company, role, #id…"
@@ -382,7 +382,7 @@ function BidCourses({ embedded = false }) {
                                         'inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide transition',
                                         stateFilter === f.id
                                             ? `${runStatusBadgeClass(f.id === 'all' ? 'unknown' : f.id)} ring-1 ring-white/20`
-                                            : 'border-white/10 bg-black/20 text-muted-foreground hover:bg-white/5 hover:text-foreground'
+                                            : 'border-white/10 bg-black/20 text-white/50 hover:bg-white/5 hover:text-white/80'
                                     )}
                                 >
                                     {f.label}
@@ -403,12 +403,12 @@ function BidCourses({ embedded = false }) {
                     <aside
                         data-testid="bid-course-list"
                         className={cn(
-                        'flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.72)]',
+                        'flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.72)]',
                         id ? 'hidden lg:flex' : 'flex'
                     )}
                     >
-                        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-border px-3 py-2.5">
-                            <p className="text-xs font-medium text-muted-foreground">
+                        <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2.5">
+                            <p className="text-xs font-medium text-white/55">
                                 {filtered.length}
                                 {filtered.length !== decorated.length ? ` of ${decorated.length}` : ''}
                                 {' '}
@@ -417,7 +417,7 @@ function BidCourses({ embedded = false }) {
                             {stateFilter !== 'all' || query || profileFilter !== 'all' || dateFrom || dateTo ? (
                                 <button
                                     type="button"
-                                    className="text-[11px] text-muted-foreground hover:text-foreground/80"
+                                    className="text-[11px] text-white/40 hover:text-white/70"
                                     onClick={() => setSearchParams({}, { replace: true })}
                                 >
                                     Clear filters
@@ -449,7 +449,7 @@ function BidCourses({ embedded = false }) {
                                             runStatusRowClass(run.kind),
                                             active
                                                 ? 'border-primary/40 bg-primary/5 ring-1 ring-primary/20'
-                                                : 'border-border bg-black/20 hover:border-primary/25 hover:bg-card/60'
+                                                : 'border-white/[0.06] bg-black/20 hover:border-primary/25 hover:bg-card/60'
                                         )}
                                     >
                                         <div className="flex items-start justify-between gap-2">
@@ -457,7 +457,7 @@ function BidCourses({ embedded = false }) {
                                                 <div className="truncate font-medium tracking-tight">
                                                     {displayCompanyName(c)}
                                                 </div>
-                                                <div className="truncate text-xs text-muted-foreground">
+                                                <div className="truncate text-xs text-white/45">
                                                     {c.job_role || 'Role'}
                                                     {c.profile_name ? ` · ${c.profile_name}` : ''}
                                                 </div>
@@ -478,7 +478,7 @@ function BidCourses({ embedded = false }) {
                                                     ? 'text-emerald-300/90'
                                                     : run.kind === 'filled'
                                                         ? 'text-sky-300/90'
-                                                        : 'text-muted-foreground'
+                                                        : 'text-white/40'
                                         )}
                                         >
                                             #{c.id}
@@ -496,14 +496,14 @@ function BidCourses({ embedded = false }) {
                     <section
                         data-testid="bid-course-detail"
                         className={cn(
-                        'flex min-h-0 flex-col overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.55)]',
+                        'flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.55)]',
                         !id ? 'hidden min-h-[16rem] lg:flex' : 'flex'
                     )}
                     >
                         {!id && (
                             <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-16 text-center">
-                                <p className="text-sm font-medium text-foreground/80">Select a course</p>
-                                <p className="max-w-sm text-xs text-muted-foreground">
+                                <p className="text-sm font-medium text-white/70">Select a course</p>
+                                <p className="max-w-sm text-xs text-white/40">
                                     {BID_COURSE_LEGEND}
                                 </p>
                             </div>
@@ -532,7 +532,7 @@ function BidCourses({ embedded = false }) {
                                                     </div>
                                                     <p className="mt-1 text-xs leading-relaxed opacity-95">{detailRun.label}</p>
                                                 </div>
-                                                <Card className="border-border bg-black/15 shadow-none">
+                                                <Card className="border-white/[0.07] bg-black/15 shadow-none">
                                                     <CardHeader className="pb-2">
                                                         <CardTitle className="font-display text-base tracking-tight">
                                                             {detail.application?.company_name} — {detail.application?.job_role}
@@ -545,7 +545,7 @@ function BidCourses({ embedded = false }) {
                                                                 {detail.application?.job_url}
                                                             </a>
                                                         </div>
-                                                        <div className="text-muted-foreground">
+                                                        <div className="text-white/60">
                                                             {detail.application?.status
                                                                 ? `App: ${detail.application.status}`
                                                                 : null}
@@ -574,7 +574,7 @@ function BidCourses({ embedded = false }) {
                                                     </CardContent>
                                                 </Card>
 
-                                                <Card className="border-border bg-black/15 shadow-none">
+                                                <Card className="border-white/[0.07] bg-black/15 shadow-none">
                                                     <CardHeader className="pb-2">
                                                         <CardTitle className="font-display flex items-center gap-2 text-base tracking-tight">
                                                             <Camera className="h-4 w-4 text-primary" /> Screenshots
@@ -614,7 +614,7 @@ function BidCourses({ embedded = false }) {
                                         )}
                                         {detail && (
                                             <>
-                                                <Card className="border-border bg-black/15 shadow-none">
+                                                <Card className="border-white/[0.07] bg-black/15 shadow-none">
                                                     <CardHeader className="pb-2">
                                                         <CardTitle className="font-display text-base tracking-tight">Answers</CardTitle>
                                                     </CardHeader>
@@ -633,7 +633,7 @@ function BidCourses({ embedded = false }) {
                                                             <p className="text-muted-foreground">No answers logged.</p>
                                                         )}
                                                         {(detail.course?.answers || []).map((a, i) => (
-                                                            <div key={i} className="rounded-lg border border-border px-3 py-2">
+                                                            <div key={i} className="rounded-lg border border-white/[0.06] px-3 py-2">
                                                                 <div className="flex flex-wrap items-center gap-2 font-medium">
                                                                     <span>{a.label || a.id}</span>
                                                                     {a.lane && (
@@ -716,7 +716,7 @@ function BidCourses({ embedded = false }) {
                                                     </CardContent>
                                                 </Card>
 
-                                                <Card className="border-border bg-black/15 shadow-none">
+                                                <Card className="border-white/[0.07] bg-black/15 shadow-none">
                                                     <CardHeader className="pb-2">
                                                         <CardTitle className="text-base">Timeline</CardTitle>
                                                     </CardHeader>
@@ -780,7 +780,7 @@ function BidCourses({ embedded = false }) {
 
                                                 {showAdvanced && (
                                                     <>
-                                                        <Card className="border-border bg-black/15 shadow-none">
+                                                        <Card className="border-white/[0.07] bg-black/15 shadow-none">
                                                             <CardHeader className="pb-2">
                                                                 <CardTitle className="text-base">Job description</CardTitle>
                                                             </CardHeader>
@@ -790,7 +790,7 @@ function BidCourses({ embedded = false }) {
                                                                 </pre>
                                                             </CardContent>
                                                         </Card>
-                                                        <Card className="border-border bg-black/15 shadow-none">
+                                                        <Card className="border-white/[0.07] bg-black/15 shadow-none">
                                                             <CardHeader className="pb-2">
                                                                 <CardTitle className="text-base">Field attempts</CardTitle>
                                                             </CardHeader>

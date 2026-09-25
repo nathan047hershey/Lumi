@@ -224,8 +224,8 @@ export default function CvQualityReport() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-foreground">Quality audit</p>
-                            <p className="truncate text-xs text-muted-foreground">
+                            <p className="truncate text-sm font-medium text-white/80">Quality audit</p>
+                            <p className="truncate text-xs text-white/40">
                                 Four-pass CV check · regenerate only when needed
                             </p>
                         </div>
@@ -290,7 +290,7 @@ export default function CvQualityReport() {
                                     'w-full rounded-xl border px-3 py-2 text-left text-sm transition-colors',
                                     String(selectedId) === String(app.id)
                                         ? 'border-primary/40 bg-primary/10'
-                                        : 'border-border bg-black/15 hover:border-primary/30 hover:bg-muted/40'
+                                        : 'border-white/[0.06] bg-black/15 hover:border-primary/30 hover:bg-white/[0.03]'
                                 )}
                             >
                                 <p className="truncate font-medium">{app.company_name || 'Unknown company'}</p>

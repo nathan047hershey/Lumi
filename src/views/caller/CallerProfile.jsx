@@ -197,8 +197,8 @@ function CallerProfile() {
             <PageCommandBar
                 search={(
                     <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">Caller profile</p>
-                        <p className="truncate text-xs text-muted-foreground">
+                        <p className="truncate text-sm font-medium text-white/80">Caller profile</p>
+                        <p className="truncate text-xs text-white/40">
                             Blurb, stack, availability, and resume
                         </p>
                     </div>

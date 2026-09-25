@@ -139,7 +139,7 @@ export default function AutofillSettingsPage() {
             <div className="space-y-4">
                 <PageCommandBar
                     filters={(
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm text-white/45">
                             Public answers apply to all {profileCount || '…'} profile{profileCount === 1 ? '' : 's'}.
                             {canEditProfileAutofill ? (
                                 <>
@@ -185,7 +185,7 @@ export default function AutofillSettingsPage() {
                 <section
                     id="lumi-bidder-settings"
                     className={cn(
-                        'scroll-mt-6 overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
+                        'scroll-mt-6 overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
                         'shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]'
                     )}
                 >
@@ -195,7 +195,7 @@ export default function AutofillSettingsPage() {
                         </span>
                         <div>
                             <h2 className="text-base font-semibold tracking-tight">Lumi</h2>
-                            <p className="mt-0.5 text-sm text-muted-foreground">
+                            <p className="mt-0.5 text-sm text-white/40">
                                 AFK, CAPTCHA solver keys, auto-submit — synced to the Chrome extension
                             </p>
                         </div>
@@ -221,13 +221,13 @@ export default function AutofillSettingsPage() {
                 <section
                     id="bidder-autofill-settings"
                     className={cn(
-                        'scroll-mt-6 overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
+                        'scroll-mt-6 overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
                         'shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]'
                     )}
                 >
                     <div className="mb-4">
                         <h2 className="text-base font-semibold tracking-tight">Public autofill answers</h2>
-                        <p className="mt-0.5 text-sm text-muted-foreground">
+                        <p className="mt-0.5 text-sm text-white/40">
                             Gender, visa, work auth, and logistics — one set for every profile.
                             {canEditProfileAutofill
                                 ? ' Save writes to all candidates. Education and preferred name stay on each full profile.'
@@ -236,12 +236,12 @@ export default function AutofillSettingsPage() {
                     </div>
 
                     {loading ? (
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                        <div className="flex items-center gap-2 text-sm text-white/40">
                             <Loader2 className="h-4 w-4 animate-spin" />
                             Loading public answers…
                         </div>
                     ) : !profileCount ? (
-                        <p className="text-sm text-muted-foreground">
+                        <p className="text-sm text-white/40">
                             No profiles yet.
                             {canEditProfileAutofill ? (
                                 <>
@@ -263,7 +263,7 @@ export default function AutofillSettingsPage() {
                             />
                         </div>
                     )}
-                    <div className="mt-5 border-t border-border pt-4">
+                    <div className="mt-5 border-t border-white/[0.07] pt-4">
                         <h3 className="mb-2 text-sm font-semibold tracking-tight">Learn from a bidding course</h3>
                         <TeachAndCheckPanel compact />
                     </div>

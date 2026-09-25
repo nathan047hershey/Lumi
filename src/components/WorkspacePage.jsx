@@ -13,7 +13,7 @@ export default function WorkspacePage({
     return (
         <div className={cn('flex h-full min-h-0 flex-col', className)}>
             {toolbar && (
-                <div className="shrink-0 border-b border-border px-4 py-3 sm:px-6">
+                <div className="shrink-0 border-b border-white/[0.06] px-4 py-3 sm:px-6">
                     {toolbar}
                 </div>
             )}
@@ -21,7 +21,7 @@ export default function WorkspacePage({
                 {sidebar && (
                     <aside
                         className={cn(
-                            'shrink-0 border-b border-border bg-black/20 lg:border-b-0 lg:border-r lg:border-border',
+                            'shrink-0 border-b border-white/[0.06] bg-black/20 lg:border-b-0 lg:border-r lg:border-white/[0.06]',
                             sidebarWidth
                         )}
                     >
@@ -48,7 +48,7 @@ export function WorkspaceToolbar({ title, eyebrow, meta, actions, className }) {
                     </p>
                 )}
                 <h1 className="font-display text-lg font-semibold tracking-tight text-white sm:text-xl">{title}</h1>
-                {meta && <p className="mt-1 text-xs text-muted-foreground">{meta}</p>}
+                {meta && <p className="mt-1 text-xs text-white/40">{meta}</p>}
             </div>
             {actions && (
                 <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>

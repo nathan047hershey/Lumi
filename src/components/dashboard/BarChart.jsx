@@ -57,7 +57,7 @@ export default function BarChart({
         return (
             <div
                 className={cn(
-                    'flex items-center justify-center rounded-xl border border-dashed border-border bg-card/40 px-4 text-sm text-muted-foreground',
+                    'flex items-center justify-center rounded-xl border border-dashed border-white/[0.08] bg-card/40 px-4 text-sm text-muted-foreground',
                     className
                 )}
                 style={{ height }}

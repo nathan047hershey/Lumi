@@ -52,8 +52,8 @@ function NavItem({ to, label, icon: Icon, end, match, matchPrefix, onNavigate, n
                 'group flex items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition',
                 nested && 'pl-9 py-1.5 text-[12px]',
                 active
-                    ? 'bg-primary/10 text-primary'
-                    : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                    ? 'bg-primary/15 text-primary shadow-[inset_0_0_0_1px_hsl(var(--primary)/0.25)]'
+                    : 'text-white/55 hover:bg-white/[0.05] hover:text-white/90'
             )}
         >
             {Icon ? (
@@ -73,8 +73,8 @@ function NavGroup({ label, icon: Icon, open, onToggle, children, active }) {
                 className={cn(
                     'flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium transition',
                     active
-                        ? 'bg-muted text-foreground'
-                        : 'text-muted-foreground hover:bg-muted hover:text-foreground'
+                        ? 'bg-white/[0.06] text-white'
+                        : 'text-white/55 hover:bg-white/[0.05] hover:text-white/90'
                 )}
             >
                 {Icon ? <Icon className="h-4 w-4 shrink-0 opacity-80" /> : null}
@@ -256,7 +256,7 @@ function SidebarNav({ tree, onNavigate }) {
 
             {tree.more.length > 0 ? (
                 <>
-                    <p className="mt-4 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-muted-foreground">
+                    <p className="mt-4 px-3 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">
                         More
                     </p>
                     {tree.more.map((item) => (
@@ -315,16 +315,22 @@ function Layout({ children }) {
     };
 
     const sidebar = (
-        <aside className="flex h-full w-[15.5rem] flex-col border-r border-border bg-card">
-            <div className="flex items-center gap-2.5 border-b border-border px-4 py-4">
-                <span className="flex h-9 w-9 items-center justify-center rounded-xl bg-primary font-display text-[13px] font-bold text-primary-foreground">
+        <aside className="flex h-full w-[16.5rem] flex-col border-r border-white/[0.06] bg-[hsl(222_28%_8%)]">
+            <div className="flex items-center gap-2.5 border-b border-white/[0.06] px-4 py-4">
+                <span
+                    className="flex h-9 w-9 items-center justify-center rounded-xl font-display text-[13px] font-bold text-[hsl(222_30%_8%)]"
+                    style={{
+                        background: 'linear-gradient(145deg, hsl(199 95% 58%), hsl(210 90% 48%))',
+                        boxShadow: '0 0 24px hsl(199 95% 58% / 0.35)'
+                    }}
+                >
                     L
                 </span>
                 <div className="min-w-0">
-                    <p className="font-display text-[15px] font-semibold tracking-tight text-foreground">
-                        Lumi
+                    <p className="font-display text-[15px] font-semibold tracking-tight">
+                        Lu<span className="text-primary">mi</span>
                     </p>
-                    <p className="truncate text-[10px] text-muted-foreground">{primaryRole} workspace</p>
+                    <p className="truncate text-[10px] text-white/35">{primaryRole} workspace</p>
                 </div>
                 <Button variant="ghost" size="icon" className="ml-auto h-8 w-8 lg:hidden" onClick={closeMobile}>
                     <X className="h-4 w-4" />
@@ -333,11 +339,11 @@ function Layout({ children }) {
 
             <SidebarNav tree={tree} onNavigate={closeMobile} />
 
-            <div className="mt-auto space-y-1 border-t border-border p-3">
+            <div className="mt-auto space-y-1 border-t border-white/[0.06] p-3">
                 <button
                     type="button"
                     onClick={() => { navigate(settingsPath); closeMobile(); }}
-                    className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium text-muted-foreground hover:bg-muted hover:text-foreground"
+                    className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium text-white/55 hover:bg-white/[0.05] hover:text-white/90"
                 >
                     <Settings className="h-4 w-4" />
                     Settings
@@ -345,18 +351,21 @@ function Layout({ children }) {
                 <button
                     type="button"
                     onClick={handleLogout}
-                    className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium text-muted-foreground hover:bg-rose-50 hover:text-rose-600"
+                    className="flex w-full items-center gap-2.5 rounded-xl px-3 py-2 text-[13px] font-medium text-white/45 hover:bg-rose-500/10 hover:text-rose-300"
                 >
                     <LogOut className="h-4 w-4" />
                     Sign out
                 </button>
-                <div className="flex items-center gap-2.5 rounded-xl bg-muted/70 px-3 py-2">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/15 text-xs font-bold text-primary">
+                <div className="flex items-center gap-2.5 rounded-xl bg-white/[0.03] px-3 py-2">
+                    <div
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-xs font-bold text-[hsl(222_30%_8%)]"
+                        style={{ background: 'linear-gradient(145deg, hsl(199 95% 58%), hsl(210 90% 48%))' }}
+                    >
                         {(user?.username || '?')[0].toUpperCase()}
                     </div>
                     <div className="min-w-0">
-                        <p className="truncate text-xs font-semibold text-foreground">{user?.username}</p>
-                        <p className="text-[10px] uppercase tracking-wider text-muted-foreground">{primaryRole}</p>
+                        <p className="truncate text-xs font-semibold text-white/85">{user?.username}</p>
+                        <p className="font-mono text-[10px] uppercase tracking-wider text-white/35">{primaryRole}</p>
                     </div>
                 </div>
                 <BuildStamp className="px-1 pt-1" />
@@ -365,7 +374,7 @@ function Layout({ children }) {
     );
 
     return (
-        <div className="lumi-app flex h-screen overflow-hidden bg-background text-foreground">
+        <div className="lumi-app flex h-screen overflow-hidden bg-[hsl(222_28%_6%)] text-white">
             <div className="hidden md:flex">{sidebar}</div>
 
             {mobileOpen ? (
@@ -381,11 +390,13 @@ function Layout({ children }) {
             ) : null}
 
             <div className="flex min-w-0 flex-1 flex-col">
-                <header className="flex h-12 shrink-0 items-center gap-3 border-b border-border bg-card px-3 sm:px-5 md:hidden">
+                <header className="flex h-12 shrink-0 items-center gap-3 border-b border-white/[0.06] bg-[hsl(222_24%_7%/0.9)] px-3 backdrop-blur-xl sm:px-5 md:hidden">
                     <Button variant="ghost" size="icon" className="h-9 w-9" onClick={() => setMobileOpen(true)}>
                         <Menu className="h-5 w-5" />
                     </Button>
-                    <span className="font-display text-sm font-semibold text-foreground">Lumi</span>
+                    <span className="font-display text-sm font-semibold">
+                        Lu<span className="text-primary">mi</span>
+                    </span>
                     <BuildStamp className="ml-auto text-right" />
                 </header>
 

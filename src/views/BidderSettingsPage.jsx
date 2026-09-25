@@ -77,7 +77,7 @@ export default function BidderSettingsPage() {
                 <section
                     id="lumi-bidder-settings"
                     className={cn(
-                        'scroll-mt-6 overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
+                        'scroll-mt-6 overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
                         'shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]'
                     )}
                 >
@@ -87,7 +87,7 @@ export default function BidderSettingsPage() {
                         </span>
                         <div>
                             <h2 className="text-base font-semibold tracking-tight">Runtime</h2>
-                            <p className="mt-0.5 text-sm text-muted-foreground">
+                            <p className="mt-0.5 text-sm text-white/40">
                                 AFK, auto-submit, CAPTCHA helpers — Save & sync to Lumi
                             </p>
                         </div>
@@ -102,7 +102,7 @@ export default function BidderSettingsPage() {
                 <section
                     id="bidder-timing"
                     className={cn(
-                        'scroll-mt-6 overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
+                        'scroll-mt-6 overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
                         'shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]'
                     )}
                 >
@@ -112,7 +112,7 @@ export default function BidderSettingsPage() {
                         </span>
                         <div>
                             <h2 className="text-base font-semibold tracking-tight">Fill timing</h2>
-                            <p className="mt-0.5 text-sm text-muted-foreground">
+                            <p className="mt-0.5 text-sm text-white/40">
                                 How long to wait for forms and between jobs. Lower = faster; too low can miss fields.
                             </p>
                         </div>

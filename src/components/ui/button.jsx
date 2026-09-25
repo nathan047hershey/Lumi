@@ -31,12 +31,15 @@ const buttonVariants = cva(
             variant: {
                 // System accent — Mica-style layered gradient (Win11 primary)
                 default:
-                    'text-primary-foreground border border-primary bg-primary shadow-sm ' +
-                    'hover:bg-primary/90',
+                    'text-primary-foreground border border-primary/45 shadow-[0_1px_0_rgba(255,255,255,0.1)_inset,0_4px_16px_-2px_hsl(var(--primary)/0.4)] ' +
+                    'bg-[linear-gradient(180deg,hsl(var(--primary))_0%,hsl(187_85%_40%)_100%)] ' +
+                    'hover:bg-[linear-gradient(180deg,hsl(187_85%_60%)_0%,hsl(var(--primary))_100%)] hover:border-primary/65',
 
                 gradient:
-                    'text-primary-foreground border border-primary bg-primary shadow-sm ' +
-                    'hover:bg-primary/90',
+                    'text-primary-foreground border border-cyan-400/35 ' +
+                    'bg-[linear-gradient(135deg,hsl(187_85%_53%)_0%,hsl(199_89%_48%)_100%)] ' +
+                    'shadow-[0_4px_20px_-4px_hsl(var(--primary)/0.4)] ' +
+                    'hover:brightness-110',
 
                 // Secondary — Mica / Card surface
                 secondary:

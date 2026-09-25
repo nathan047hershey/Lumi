@@ -32,35 +32,35 @@ function ProfileCard({ profile, onDelete }) {
                         {initials}
                     </div>
                     <div className="min-w-0">
-                        <h3 className="truncate font-semibold text-foreground">
+                        <h3 className="truncate font-semibold text-white/90">
                             {profile.first_name} {profile.middle_name || ''} {profile.last_name}
                         </h3>
-                        <p className="truncate text-xs text-muted-foreground">{profile.email || 'No email'}</p>
+                        <p className="truncate text-xs text-white/40">{profile.email || 'No email'}</p>
                     </div>
                 </div>
 
-                <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
+                <div className="flex flex-wrap gap-1.5 text-xs text-white/45">
                     {profile.phone && (
-                        <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 px-2 py-1">
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1">
                             <Phone className="h-3 w-3" />
                             {profile.phone}
                         </span>
                     )}
                     {profile.city && (
-                        <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 px-2 py-1">
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1">
                             <MapPin className="h-3 w-3" />
                             {profile.city}, {profile.country}
                         </span>
                     )}
                     {profile.salary_range && (
-                        <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 px-2 py-1">
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1">
                             <Wallet className="h-3 w-3" />
                             {profile.salary_range}
                         </span>
                     )}
                 </div>
 
-                <p className="text-xs text-muted-foreground">Created {formatDate(profile.created_at)}</p>
+                <p className="text-xs text-white/35">Created {formatDate(profile.created_at)}</p>
 
                 <div className="mt-auto flex gap-2">
                     <Button asChild variant="secondary" className="flex-1" size="sm">
@@ -127,8 +127,8 @@ function ManagerDashboard() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-foreground">Your profiles</p>
-                            <p className="truncate text-xs text-muted-foreground">
+                            <p className="truncate text-sm font-medium text-white/80">Your profiles</p>
+                            <p className="truncate text-xs text-white/40">
                                 {loading ? 'Loading…' : `${profiles.length} profile${profiles.length === 1 ? '' : 's'}`}
                             </p>
                         </div>
@@ -162,8 +162,8 @@ function ManagerDashboard() {
                                 <ClipboardList className="h-6 w-6" />
                             </div>
                             <div>
-                                <h3 className="font-semibold text-foreground">No profiles yet</h3>
-                                <p className="text-sm text-muted-foreground">
+                                <h3 className="font-semibold text-white/90">No profiles yet</h3>
+                                <p className="text-sm text-white/45">
                                     Create your first candidate profile to get started
                                 </p>
                             </div>

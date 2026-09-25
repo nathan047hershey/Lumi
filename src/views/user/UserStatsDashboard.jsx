@@ -45,8 +45,8 @@ function UserStatsDashboard() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-foreground">Activity overview</p>
-                            <p className="truncate text-xs text-muted-foreground">
+                            <p className="truncate text-sm font-medium text-white/80">Activity overview</p>
+                            <p className="truncate text-xs text-white/40">
                                 {lastUpdated || 'Your application funnel and volume'}
                             </p>
                         </div>

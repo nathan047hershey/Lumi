@@ -111,7 +111,7 @@ function Assignments() {
                 <PageCommandBar
                     search={(
                         <div className="relative">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
                             <Input
                                 className="h-10 border-white/10 bg-black/25 pl-10"
                                 placeholder="Search user or profile…"
@@ -134,14 +134,14 @@ function Assignments() {
 
                 {assignments.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center">
-                        <Link2 className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-                        <h3 className="text-base font-semibold text-foreground">No assignments yet</h3>
-                        <p className="mt-1 text-sm text-muted-foreground">
+                        <Link2 className="mx-auto mb-3 h-10 w-10 text-white/25" />
+                        <h3 className="text-base font-semibold text-white/80">No assignments yet</h3>
+                        <p className="mt-1 text-sm text-white/40">
                             Assign profiles to users so they can generate resumes
                         </p>
                     </div>
                 ) : filtered.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-muted-foreground">
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-white/40">
                         No assignments match “{search.trim()}”
                     </div>
                 ) : (
@@ -150,7 +150,7 @@ function Assignments() {
                             <article
                                 key={assignment.id}
                                 className={cn(
-                                    'overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4',
+                                    'overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
                                     'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]'
                                 )}
                             >
@@ -170,13 +170,13 @@ function Assignments() {
                                                 </Badge>
                                             ) : null}
                                         </div>
-                                        <p className="mt-2 text-sm text-muted-foreground">
+                                        <p className="mt-2 text-sm text-white/55">
                                             Profile:{' '}
-                                            <span className="font-medium text-foreground">
+                                            <span className="font-medium text-white/80">
                                                 {assignment.profile_name}
                                             </span>
                                         </p>
-                                        <p className="mt-1 text-xs text-muted-foreground">
+                                        <p className="mt-1 text-xs text-white/35">
                                             Assigned {new Date(assignment.assigned_at).toLocaleDateString()}
                                         </p>
                                     </div>

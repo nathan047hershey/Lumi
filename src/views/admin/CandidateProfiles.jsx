@@ -111,7 +111,7 @@ function CandidateProfiles() {
                 <PageCommandBar
                     search={(
                         <div className="relative">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
                             <Input
                                 className="h-10 border-white/10 bg-black/25 pl-10"
                                 placeholder="Search name, email, city, techstack…"
@@ -136,9 +136,9 @@ function CandidateProfiles() {
 
                 {profiles.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center">
-                        <ClipboardList className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
-                        <h3 className="text-base font-semibold text-foreground">No profiles yet</h3>
-                        <p className="mt-1 text-sm text-muted-foreground">Create your first candidate profile to get started</p>
+                        <ClipboardList className="mx-auto mb-3 h-10 w-10 text-white/25" />
+                        <h3 className="text-base font-semibold text-white/80">No profiles yet</h3>
+                        <p className="mt-1 text-sm text-white/40">Create your first candidate profile to get started</p>
                         <Button asChild className="mt-4">
                             <Link to="/admin/profiles/new">
                                 <Plus className="h-4 w-4" />
@@ -147,7 +147,7 @@ function CandidateProfiles() {
                         </Button>
                     </div>
                 ) : filtered.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-muted-foreground">
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-white/40">
                         No profiles match “{search.trim()}”
                     </div>
                 ) : (
@@ -161,7 +161,7 @@ function CandidateProfiles() {
                                 <article
                                     key={profile.id}
                                     className={cn(
-                                        'group flex flex-col overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4',
+                                        'group flex flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
                                         'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] hover:shadow-lg hover:shadow-primary/10'
                                     )}
                                 >
@@ -173,7 +173,7 @@ function CandidateProfiles() {
                                             <p className="truncate text-base font-semibold tracking-tight group-hover:text-primary">
                                                 {fullName}
                                             </p>
-                                            <p className="mt-0.5 truncate text-xs text-muted-foreground">
+                                            <p className="mt-0.5 truncate text-xs text-white/40">
                                                 {profile.email || 'No email'}
                                             </p>
                                         </div>
@@ -186,7 +186,7 @@ function CandidateProfiles() {
                                         </Badge>
                                     </div>
 
-                                    <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                                    <div className="mt-3 flex flex-wrap gap-x-3 gap-y-1 text-xs text-white/45">
                                         {profile.phone && (
                                             <span className="inline-flex items-center gap-1">
                                                 <Phone className="h-3 w-3" />

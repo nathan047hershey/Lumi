@@ -440,7 +440,7 @@ function DeveloperDashboard() {
             <PageCommandBar
                 search={(
                     <div className="relative">
-                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
                         <Input
                             className="h-10 border-white/10 bg-black/25 pl-10"
                             placeholder="Search company, role, profile…"
@@ -620,7 +620,7 @@ function DeveloperDashboard() {
                                 </div>
 
                                 {lastAdded && (
-                                    <div className="rounded-xl border border-border bg-black/20 p-2 text-xs">
+                                    <div className="rounded-xl border border-white/[0.07] bg-black/20 p-2 text-xs">
                                         <span className="font-medium text-muted-foreground">Latest milestone:</span>{' '}
                                         <span className="font-medium">{milestoneLabel(lastAdded.kind)}</span>
                                         {lastAdded.label ? <span className="text-muted-foreground"> — {lastAdded.label}</span> : null}
@@ -881,7 +881,7 @@ function KpiTile({ label, value, Icon, accent, subtitle }) {
         rose:    'border-rose-500/40 text-rose-300',
         emerald: 'border-emerald-500/40 text-emerald-300'
     };
-    const cls = accent ? accentMap[accent] : 'border-border';
+    const cls = accent ? accentMap[accent] : 'border-white/[0.07]';
     return (
         <div className={cn('rounded-2xl border bg-[hsl(222_24%_9%/0.75)] p-3 shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]', cls)}>
             <div className="flex items-center justify-between">

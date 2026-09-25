@@ -339,10 +339,10 @@ function ProfileForm() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-foreground">
+                            <p className="truncate text-sm font-medium text-white/80">
                                 {isEdit ? 'Edit candidate profile' : 'New candidate profile'}
                             </p>
-                            <p className="truncate text-xs text-muted-foreground">
+                            <p className="truncate text-xs text-white/40">
                                 Identity, experience, and resume settings
                             </p>
                         </div>

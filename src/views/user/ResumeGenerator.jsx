@@ -2251,7 +2251,7 @@ const [assignedTemplate, setAssignedTemplate] = useState(null);
                 </div>
             )}
             {formQuestionQueue.length > 0 && (
-                <div className="mb-4 rounded-xl border border-border bg-muted/40 px-3 py-3 shadow-sm">
+                <div className="mb-4 rounded-xl border border-white/[0.08] bg-white/[0.03] px-3 py-3 shadow-sm">
                     <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
                         <div className="font-medium text-sm">Apply-form questions</div>
                         <div className="flex flex-wrap gap-2">
@@ -3015,7 +3015,7 @@ const [assignedTemplate, setAssignedTemplate] = useState(null);
                                     <button
                                         key={q}
                                         type="button"
-                                        className="rounded-lg border border-white/10 bg-muted/50 px-2 py-1 text-left text-[10px] leading-snug text-muted-foreground hover:border-primary/40 hover:bg-primary/10 hover:text-foreground"
+                                        className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-left text-[10px] leading-snug text-white/55 hover:border-primary/40 hover:bg-primary/10 hover:text-white"
                                         onClick={() => handleSendMessage(null, q)}
                                         disabled={chatLoading}
                                     >
@@ -3027,9 +3027,9 @@ const [assignedTemplate, setAssignedTemplate] = useState(null);
 
                         <div className="jobright-assistant-messages">
                             {chatMessages.length === 0 && (
-                                <div className="flex h-full min-h-[10rem] flex-col items-center justify-center px-3 text-center text-[11px] text-muted-foreground">
+                                <div className="flex h-full min-h-[10rem] flex-col items-center justify-center px-3 text-center text-[11px] text-white/35">
                                     <MessageCircle className="mb-2 h-7 w-7 opacity-40" />
-                                    <p className="font-medium text-muted-foreground">Ask about this job</p>
+                                    <p className="font-medium text-white/50">Ask about this job</p>
                                     <p className="mt-1">Requirements, fit gaps, interview questions…</p>
                                 </div>
                             )}

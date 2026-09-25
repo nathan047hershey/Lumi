@@ -14,7 +14,7 @@ export default function PageCommandBar({
     return (
         <div
             className={cn(
-                'rounded-2xl border border-border bg-[hsl(222_24%_9%/0.85)] p-3 shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)] backdrop-blur-sm sm:p-4',
+                'rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.85)] p-3 shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)] backdrop-blur-sm sm:p-4',
                 className
             )}
         >
@@ -28,13 +28,13 @@ export default function PageCommandBar({
             </div>
 
             {filters ? (
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-3">
                     {filters}
                 </div>
             ) : null}
 
             {chips ? (
-                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+                <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-white/[0.06] pt-3">
                     {chips}
                 </div>
             ) : null}
