@@ -1906,7 +1906,7 @@ function JobLinks({ embedded = false }) {
                     nextTotal = cached.total || cached.rows.length;
                 }
             }
-            if (silent && nextRows.length === 0 && rowsRef.current.length > 0) {
+            if (nextRows.length === 0 && rowsRef.current.length > 0 && !narrowing) {
                 if (cronRes?.data) setCronStatus(cronRes.data);
                 return;
             }
@@ -1920,8 +1920,13 @@ function JobLinks({ embedded = false }) {
             if (!silent) {
                 console.error('Load job-links error:', err);
                 setError(err.response?.data?.error || 'Failed to load job links — refresh if the API was restarting');
-                setRows([]);
-                setTotal(0);
+                if (!rowsRef.current.length) {
+                    const cached = readVisibleCache();
+                    if (cached) {
+                        setRows(cached.rows);
+                        setTotal(cached.total || cached.rows.length);
+                    }
+                }
             }
         } finally {
             if (requestId === loadRequestRef.current) {

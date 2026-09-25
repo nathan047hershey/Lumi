@@ -541,13 +541,36 @@ function scheduleAutoCvKick(jobLinkId) {
             );
             return null;
         });
-    if (process.env.VERCEL) return run();
+    if (process.env.VERCEL) {
+        cvChain = cvChain.then(run, run);
+        return Promise.resolve();
+    }
     setImmediate(run);
     return Promise.resolve();
 }
 
 function flushPendingCvKicks() {
     return cvChain;
+}
+
+function queueMissingCvGeneration(ids) {
+    const unique = [...new Set((ids || []).map((n) => parseInt(n, 10)).filter((n) => n > 0))].slice(0, 3);
+    if (!unique.length) return Promise.resolve();
+    const run = () => Promise.resolve()
+        .then(() => {
+            const jobMatchService = require('./jobMatchService');
+            return jobMatchService.reconcileJobLinks(unique);
+        })
+        .catch((err) => {
+            console.warn('[jobLinkScraper] page CV generation failed:', err.message || err);
+            return null;
+        });
+    if (process.env.VERCEL) {
+        cvChain = cvChain.then(run, run);
+        return Promise.resolve();
+    }
+    setImmediate(run);
+    return Promise.resolve();
 }
 
 async function scrapeRow(row) {
@@ -1017,9 +1040,9 @@ async function scrapeRow(row) {
         console.log(`[jobLinkScraper] row ${row.id} disabled — requires ${clearance}`);
     }
 
-    // The description is already saved. On the live site, generate the
-    // matching CVs before this request ends — there is no background worker.
-    await scheduleAutoCvKick(row.id);
+    // The description is already saved. CV generation continues after
+    // the list is sent so a slow resume cannot drop the job links.
+    scheduleAutoCvKick(row.id);
 
     return { ok: true, ...parsed, clearance_required: clearance || null, is_available: availableAfterScrape };
 }
@@ -1368,5 +1391,6 @@ module.exports = {
     // Re-exported for the recovery pass at boot and for tests.
     cleanupStaleFetching,
     listDueJobLinkIds,
-    flushPendingCvKicks
+    flushPendingCvKicks,
+    queueMissingCvGeneration
 };

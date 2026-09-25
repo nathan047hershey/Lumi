@@ -490,10 +490,8 @@ async function listHandler(req, res) {
             [...params, limit, offset]
         );
 
-        // A scraped job with no resume never entered the queue on the live
-        // site. Generate the missing CVs in this page request.
-        let listed = jobMatchService.attachAvailableProfilesToJobLinks(rows);
-        const needCv = listed
+        const withProfiles = jobMatchService.attachAvailableProfilesToJobLinks(rows);
+        const needCv = withProfiles
             .filter((row) => String(row.job_description || '').trim()
                 && (row.available_profiles || []).some((p) => {
                     const status = String(p.generation_status || '');
@@ -503,14 +501,11 @@ async function listHandler(req, res) {
             .slice(0, 3);
         if (needCv.length) {
             try {
-                await jobMatchService.reconcileJobLinks(needCv);
-                listed = jobMatchService.attachAvailableProfilesToJobLinks(rows);
+                require('../services/jobLinkScraper').queueMissingCvGeneration(needCv);
             } catch (err) {
                 console.warn('[job-links] CV generation skipped:', err.message);
             }
         }
-
-        const withProfiles = listed;
         const data = decorateJobLinksWithCreators(withProfiles);
 
         res.json({
