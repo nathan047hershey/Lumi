@@ -230,9 +230,11 @@ export default function JobLinkRowCard({
     addedLabel
 }) {
     const applyUrl = row.job_apply_url || row.source_url || row.linkedin_url || '';
-    const company = row.company_name || row.position_title || `Job link ${row.id}`;
+    const companyName = String(row.company_name || '').trim();
+    const role = String(row.position_title || '').trim() || companyName || `Job link ${row.id}`;
+    const initial = (companyName || role).replace(/[^A-Za-z0-9]/g, '').charAt(0).toUpperCase() || 'J';
     const subtitle = [
-        row.position_title && row.company_name ? row.position_title : null,
+        companyName && companyName !== role ? companyName : null,
         row.location,
         techLabel,
         row.location_flag || 'US'
@@ -247,40 +249,42 @@ export default function JobLinkRowCard({
     return (
         <article
             className={cn(
-                'rounded-xl border border-white/[0.08] bg-[hsl(222_22%_10%/0.9)] transition-colors',
-                'hover:border-white/15 hover:bg-[hsl(222_22%_12%/0.95)]',
-                selected && 'border-primary/45 bg-primary/[0.07]',
-                busy && 'border-sky-500/25'
+                'rounded-2xl border border-white/[0.08] bg-[hsl(222_22%_11%)] shadow-[0_10px_30px_-24px_rgba(0,0,0,0.8)] transition',
+                'hover:border-primary/35 hover:bg-[hsl(222_22%_13%)]',
+                selected && 'border-primary/50 bg-primary/[0.08]',
+                busy && 'border-sky-500/30'
             )}
         >
-            <div className="flex gap-3 p-3 sm:p-3.5">
+            <div className="flex gap-3 p-4">
                 <Checkbox
                     checked={selected}
                     onCheckedChange={onSelect}
                     onClick={(e) => e.stopPropagation()}
                     aria-label={`Select job ${rowNumber}`}
-                    className="mt-1 shrink-0"
+                    className="mt-2 shrink-0"
                 />
+                <span className="mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-primary/15 text-sm font-semibold text-primary">
+                    {initial}
+                </span>
 
-                <div className="min-w-0 flex-1 space-y-2">
-                    {/* Line 1: identity + status */}
+                <div className="min-w-0 flex-1 space-y-2.5">
                     <div className="flex flex-wrap items-start justify-between gap-2">
                         <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
                             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
                                 <span className="font-mono text-[10px] tabular-nums text-white/35">#{rowNumber}</span>
-                                <span className="truncate text-[15px] font-semibold leading-snug text-white hover:text-primary">
-                                    {company}
+                                <span className="truncate text-base font-semibold leading-snug text-white hover:text-primary">
+                                    {role}
                                 </span>
                             </div>
-                            <p className="mt-0.5 truncate text-[12px] text-white/45">
+                            <p className="mt-0.5 truncate text-[13px] text-white/55">
                                 {subtitle || '—'}
                                 {row.comment ? (
-                                    <span className="ml-2 text-amber-200/70">· {row.comment}</span>
+                                    <span className="ml-2 text-amber-200/80">· {row.comment}</span>
                                 ) : null}
                             </p>
                             {addedVisible ? (
-                                <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] tabular-nums text-white/60">
-                                    <Clock className="h-3 w-3 shrink-0 text-white/40" />
+                                <p className="mt-1.5 inline-flex items-center gap-1.5 text-[11px] tabular-nums text-white/45">
+                                    <Clock className="h-3 w-3 shrink-0 text-white/35" />
                                     <span>
                                         Added {addedAt}
                                         {row.created_by_username ? ` · ${row.created_by_username}` : ''}
