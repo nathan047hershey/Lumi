@@ -37,7 +37,7 @@ export default function PeriodCompareChart({ periods = {} }) {
     }, [periods]);
 
     return (
-        <Card className="border-white/[0.08] bg-card/80">
+        <Card className="border-border bg-card/80">
             <CardHeader className="pb-2">
                 <CardTitle className="font-display text-base">Period comparison</CardTitle>
                 <CardDescription>Workday vs week vs month side by side</CardDescription>

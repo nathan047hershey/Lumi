@@ -30,18 +30,18 @@ export default function PageHeader({
                         </span>
                     ) : null}
                     {title ? (
-                        <h1 className="font-display text-xl font-semibold tracking-tight text-white sm:text-2xl">
+                        <h1 className="font-display text-xl font-semibold tracking-tight text-foreground sm:text-2xl">
                             {title}
                         </h1>
                     ) : null}
                 </div>
                 {description ? (
-                    <p className="mt-1.5 text-sm leading-snug text-white/45">
+                    <p className="mt-1.5 text-sm leading-snug text-muted-foreground">
                         {description}
                     </p>
                 ) : null}
                 {meta ? (
-                    <p className="mt-1 font-mono text-[11px] text-white/35">{meta}</p>
+                    <p className="mt-1 text-[11px] text-muted-foreground">{meta}</p>
                 ) : null}
             </div>
             {actions ? (

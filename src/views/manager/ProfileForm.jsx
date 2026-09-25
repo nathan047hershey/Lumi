@@ -97,10 +97,10 @@ function ManagerProfileForm() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">
+                            <p className="truncate text-sm font-medium text-foreground">
                                 {isEdit ? 'Edit candidate profile' : 'New candidate profile'}
                             </p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-xs text-muted-foreground">
                                 Personal details, experience, and resume prompt
                             </p>
                         </div>

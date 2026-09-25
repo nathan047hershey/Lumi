@@ -151,7 +151,7 @@ export default function LumiExtensionHub({
         <div className={`rounded-xl border border-primary/25 bg-primary/5 ${compact ? 'px-3 py-3' : 'px-4 py-4'}`}>
             <div className="mb-2 flex flex-wrap items-center gap-2">
                 <Puzzle className="h-4 w-4 text-primary" />
-                <span className="text-xs font-semibold uppercase tracking-wider text-white/80">
+                <span className="text-xs font-semibold uppercase tracking-wider text-foreground">
                     Lumi extension
                 </span>
                 {extVersion ? (
@@ -164,7 +164,7 @@ export default function LumiExtensionHub({
                 ) : null}
             </div>
 
-            <p className="mb-3 text-[11px] leading-relaxed text-white/55">
+            <p className="mb-3 text-[11px] leading-relaxed text-muted-foreground">
                 {lumiConnected === false
                     ? 'No extension detected. Install Lumi below, or use Web Fill (no install) on the apply page.'
                     : 'Share these steps with teammates who need autofill on their PC.'}
@@ -173,12 +173,12 @@ export default function LumiExtensionHub({
             {err ? <p className="mb-2 text-[11px] text-rose-300">{err}</p> : null}
 
             <div className="space-y-3">
-                <div className="rounded-lg border border-white/[0.08] bg-black/25 p-3">
-                    <p className="mb-2 text-[11px] font-semibold text-white/70">Option A — Install extension (recommended)</p>
-                    <ol className="mb-3 list-decimal space-y-1 pl-4 text-[11px] text-white/50">
+                <div className="rounded-lg border border-border bg-black/25 p-3">
+                    <p className="mb-2 text-[11px] font-semibold text-foreground/80">Option A — Install extension (recommended)</p>
+                    <ol className="mb-3 list-decimal space-y-1 pl-4 text-[11px] text-muted-foreground">
                         <li>Download and unzip the extension package.</li>
-                        <li>Open <code className="text-white/70">chrome://extensions</code> → Developer mode → Load unpacked → select the <code className="text-white/70">extension</code> folder.</li>
-                        <li>In the Lumi popup set API URL to <strong className="text-white/75">{apiBase}</strong> and Frontend to <strong className="text-white/75">{frontendBase}</strong>.</li>
+                        <li>Open <code className="text-foreground/80">chrome://extensions</code> → Developer mode → Load unpacked → select the <code className="text-foreground/80">extension</code> folder.</li>
+                        <li>In the Lumi popup set API URL to <strong className="text-foreground/80">{apiBase}</strong> and Frontend to <strong className="text-foreground/80">{frontendBase}</strong>.</li>
                         <li>Reload the extension, then click Check Lumi in Auto Bidder.</li>
                     </ol>
                     <Button type="button" size="sm" variant="secondary" className="h-8 gap-1.5" disabled={busy} onClick={downloadExtension}>
@@ -187,9 +187,9 @@ export default function LumiExtensionHub({
                     </Button>
                 </div>
 
-                <div className="rounded-lg border border-white/[0.08] bg-black/25 p-3">
-                    <p className="mb-2 text-[11px] font-semibold text-white/70">Option B — Web Fill (no extension)</p>
-                    <p className="mb-2 text-[11px] text-white/50">
+                <div className="rounded-lg border border-border bg-black/25 p-3">
+                    <p className="mb-2 text-[11px] font-semibold text-foreground/80">Option B — Web Fill (no extension)</p>
+                    <p className="mb-2 text-[11px] text-muted-foreground">
                         For users who cannot install extensions: copy the bookmarklet, add it as a browser bookmark,
                         open the job apply page, then click the bookmark to fill the form.
                     </p>

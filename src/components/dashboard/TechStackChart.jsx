@@ -12,7 +12,7 @@ export default function TechStackChart({ techStacks = [], topStack, className })
     }));
 
     return (
-        <Card className="border-white/[0.08] bg-card/80">
+        <Card className="border-border bg-card/80">
             <CardHeader className="pb-2">
                 <div className="flex items-start justify-between gap-2">
                     <div>

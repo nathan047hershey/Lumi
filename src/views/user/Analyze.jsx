@@ -32,7 +32,7 @@ function Panel({ title, hint, className, children, actions }) {
     return (
         <section
             className={cn(
-                'rounded-xl border border-white/[0.07] bg-black/20',
+                'rounded-xl border border-border bg-black/20',
                 className
             )}
         >
@@ -40,12 +40,12 @@ function Panel({ title, hint, className, children, actions }) {
                 <header className="flex items-start justify-between gap-2 border-b border-white/[0.05] px-3 py-2">
                     <div className="min-w-0">
                         {title ? (
-                            <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-white/55">
+                            <h3 className="text-[11px] font-semibold uppercase tracking-[0.06em] text-muted-foreground">
                                 {title}
                             </h3>
                         ) : null}
                         {hint ? (
-                            <p className="mt-0.5 text-[11px] text-white/35">{hint}</p>
+                            <p className="mt-0.5 text-[11px] text-muted-foreground">{hint}</p>
                         ) : null}
                     </div>
                     {actions}
@@ -58,8 +58,8 @@ function Panel({ title, hint, className, children, actions }) {
 
 function Kpi({ label, value, hint, accent }) {
     return (
-        <div className="min-w-0 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2.5 py-2">
-            <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-white/40">
+        <div className="min-w-0 rounded-lg border border-border bg-muted/40 px-2.5 py-2">
+            <div className="truncate text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {label}
             </div>
             <div
@@ -73,7 +73,7 @@ function Kpi({ label, value, hint, accent }) {
                 {value}
             </div>
             {hint ? (
-                <div className="mt-1 truncate text-[10px] text-white/35">{hint}</div>
+                <div className="mt-1 truncate text-[10px] text-muted-foreground">{hint}</div>
             ) : null}
         </div>
     );
@@ -81,24 +81,24 @@ function Kpi({ label, value, hint, accent }) {
 
 function SignalChip({ label, value }) {
     return (
-        <div className="rounded-md border border-white/[0.06] bg-white/[0.03] px-2.5 py-1.5">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-white/40">
+        <div className="rounded-md border border-border bg-muted/40 px-2.5 py-1.5">
+            <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                 {label}
             </div>
-            <div className="mt-0.5 text-xs font-medium text-white/85">{value || '—'}</div>
+            <div className="mt-0.5 text-xs font-medium text-foreground">{value || '—'}</div>
         </div>
     );
 }
 
 function RateTable({ rows, nameKey, nameHeader, empty }) {
     if (!rows?.length) {
-        return <p className="text-xs text-white/40">{empty || 'No data yet.'}</p>;
+        return <p className="text-xs text-muted-foreground">{empty || 'No data yet.'}</p>;
     }
     return (
         <div className="overflow-x-auto">
             <table className="w-full min-w-[320px] text-left text-xs">
                 <thead>
-                    <tr className="border-b border-white/[0.06] text-white/40">
+                    <tr className="border-b border-border text-muted-foreground">
                         <th className="py-1.5 pr-2 font-medium">{nameHeader}</th>
                         <th className="py-1.5 pr-2 font-medium">Bids</th>
                         <th className="py-1.5 pr-2 font-medium">Int.</th>
@@ -108,12 +108,12 @@ function RateTable({ rows, nameKey, nameHeader, empty }) {
                 <tbody>
                     {rows.map((row, i) => (
                         <tr key={`${row[nameKey]}-${i}`} className="border-b border-white/[0.04]">
-                            <td className="py-1.5 pr-2 font-medium text-white/85">
+                            <td className="py-1.5 pr-2 font-medium text-foreground">
                                 {shortLabel(row[nameKey], 42)}
                             </td>
-                            <td className="py-1.5 pr-2 tabular-nums text-white/70">{row.total ?? 0}</td>
+                            <td className="py-1.5 pr-2 tabular-nums text-foreground/80">{row.total ?? 0}</td>
                             <td className="py-1.5 pr-2 tabular-nums text-emerald-400">{row.interview ?? 0}</td>
-                            <td className="py-1.5 tabular-nums text-white/70">{pct(row.interview_rate)}</td>
+                            <td className="py-1.5 tabular-nums text-foreground/80">{pct(row.interview_rate)}</td>
                         </tr>
                     ))}
                 </tbody>
@@ -306,8 +306,8 @@ function Analyze({ embedded = false }) {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Analyze</p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-sm font-medium text-foreground">Analyze</p>
+                            <p className="truncate text-xs text-muted-foreground">
                                 Last 30 days · denser read of bid outcomes
                             </p>
                         </div>
@@ -353,7 +353,7 @@ function Analyze({ embedded = false }) {
                 )}
 
                 {loading && !data ? (
-                    <p className="text-sm text-white/40">Loading analytics…</p>
+                    <p className="text-sm text-muted-foreground">Loading analytics…</p>
                 ) : (
                     <Tabs value={tab} onValueChange={setTab} className="space-y-3">
                         <TabsList className="flex h-auto w-full flex-wrap justify-start gap-1">
@@ -423,8 +423,8 @@ function Analyze({ embedded = false }) {
                                     />
                                 </div>
                                 {playbook?.answer_style_description ? (
-                                    <p className="mt-2 rounded-md border border-white/[0.05] bg-white/[0.02] px-2.5 py-2 text-xs text-white/70">
-                                        <span className="font-semibold text-white/45">Answer style · </span>
+                                    <p className="mt-2 rounded-md border border-white/[0.05] bg-white/[0.02] px-2.5 py-2 text-xs text-foreground/80">
+                                        <span className="font-semibold text-muted-foreground">Answer style · </span>
                                         {playbook.answer_style_description}
                                     </p>
                                 ) : null}
@@ -536,7 +536,7 @@ function Analyze({ embedded = false }) {
                                         <div className="overflow-x-auto">
                                             <table className="w-full min-w-[360px] text-left text-xs">
                                                 <thead>
-                                                    <tr className="border-b border-white/[0.06] text-white/40">
+                                                    <tr className="border-b border-border text-muted-foreground">
                                                         <th className="py-1.5 pr-2 font-medium">Template</th>
                                                         <th className="py-1.5 pr-2 font-medium">Font</th>
                                                         <th className="py-1.5 pr-2 font-medium">Bids</th>
@@ -560,7 +560,7 @@ function Analyze({ embedded = false }) {
                                                     ))}
                                                     {!(insights?.by_template || []).length ? (
                                                         <tr>
-                                                            <td colSpan={5} className="py-2 text-white/40">
+                                                            <td colSpan={5} className="py-2 text-muted-foreground">
                                                                 No CV template data yet
                                                             </td>
                                                         </tr>
@@ -624,13 +624,13 @@ function Analyze({ embedded = false }) {
                                             <span className="font-semibold tabular-nums text-emerald-400">
                                                 {money(salary?.avg_interview)}
                                             </span>
-                                            <span className="text-white/40">
+                                            <span className="text-muted-foreground">
                                                 {' '}· {salary?.interview_samples || 0} samples
                                             </span>
                                         </p>
-                                        <p className="text-white/50">
+                                        <p className="text-muted-foreground">
                                             Other courses: {money(salary?.avg_other)}
-                                            <span className="text-white/35">
+                                            <span className="text-muted-foreground">
                                                 {' '}· {salary?.other_samples || 0} samples
                                             </span>
                                         </p>
@@ -642,20 +642,20 @@ function Analyze({ embedded = false }) {
                                             {playbook.styles_by_cluster.map((s) => (
                                                 <li
                                                     key={s.cluster}
-                                                    className="rounded-md border border-white/[0.06] bg-white/[0.02] px-2.5 py-1.5"
+                                                    className="rounded-md border border-border bg-white/[0.02] px-2.5 py-1.5"
                                                 >
-                                                    <div className="text-[10px] font-semibold uppercase tracking-wide text-white/40">
+                                                    <div className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
                                                         {s.cluster}
                                                         {s.length_band ? ` · ${s.length_band}` : ''}
                                                         {s.human_like ? ' · human' : ''}
                                                         {s.sample_count ? ` · n=${s.sample_count}` : ''}
                                                     </div>
-                                                    <div className="mt-0.5 text-white/75">{s.description}</div>
+                                                    <div className="mt-0.5 text-foreground/80">{s.description}</div>
                                                 </li>
                                             ))}
                                         </ul>
                                     ) : (
-                                        <p className="text-xs text-white/40">
+                                        <p className="text-xs text-muted-foreground">
                                             Need interview wins with saved answers to learn style clusters.
                                         </p>
                                     )}
@@ -665,8 +665,8 @@ function Analyze({ embedded = false }) {
 
                         {/* Usage */}
                         <TabsContent value="usage" className="mt-0 space-y-3">
-                            <p className="text-xs text-white/45">
-                                MiniMax: each successful API call = <span className="font-medium text-white/80">1 chat</span>
+                            <p className="text-xs text-muted-foreground">
+                                MiniMax: each successful API call = <span className="font-medium text-foreground">1 chat</span>
                                 {' '}· Groq autofill: per-key RPD/TPD, hourly/daily, and a written report.
                             </p>
                             <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
@@ -695,11 +695,11 @@ function Analyze({ embedded = false }) {
                                 }
                             >
                                 {groq?.report ? (
-                                    <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-white/80">
+                                    <pre className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">
                                         {groq.report}
                                     </pre>
                                 ) : (
-                                    <p className="text-xs text-white/40">Report will appear after Groq autofill calls.</p>
+                                    <p className="text-xs text-muted-foreground">Report will appear after Groq autofill calls.</p>
                                 )}
                             </Panel>
 
@@ -764,7 +764,7 @@ function Analyze({ embedded = false }) {
                                             <div className="overflow-x-auto">
                                                 <table className="w-full min-w-[560px] text-left text-xs">
                                                     <thead>
-                                                        <tr className="border-b border-white/[0.06] text-white/40">
+                                                        <tr className="border-b border-border text-muted-foreground">
                                                             <th className="py-1.5 pr-2 font-medium">Key</th>
                                                             <th className="py-1.5 pr-2 font-medium">Today</th>
                                                             <th className="py-1.5 pr-2 font-medium">Tokens</th>
@@ -781,31 +781,31 @@ function Analyze({ embedded = false }) {
                                                                 key={`gk-${row.slot ?? 'x'}-${i}`}
                                                                 className="border-b border-white/[0.04]"
                                                             >
-                                                                <td className="py-1.5 pr-2 font-medium text-white/85">
+                                                                <td className="py-1.5 pr-2 font-medium text-foreground">
                                                                     {row.unlabeled ? 'Unlabeled' : `Key ${row.slot}`}
                                                                     {row.active ? (
                                                                         <span className="ml-1 text-[10px] text-emerald-400">active</span>
                                                                     ) : null}
                                                                 </td>
-                                                                <td className="py-1.5 pr-2 tabular-nums text-white/70">
+                                                                <td className="py-1.5 pr-2 tabular-nums text-foreground/80">
                                                                     {row.calls_today ?? 0}
                                                                 </td>
-                                                                <td className="py-1.5 pr-2 tabular-nums text-white/70">
+                                                                <td className="py-1.5 pr-2 tabular-nums text-foreground/80">
                                                                     {(row.tokens_today ?? 0).toLocaleString()}
                                                                 </td>
-                                                                <td className="py-1.5 pr-2 tabular-nums text-white/70">
+                                                                <td className="py-1.5 pr-2 tabular-nums text-foreground/80">
                                                                     {row.avg_tokens_today ?? '—'}
                                                                 </td>
-                                                                <td className="py-1.5 pr-2 tabular-nums text-white/70">
+                                                                <td className="py-1.5 pr-2 tabular-nums text-foreground/80">
                                                                     {row.calls_period ?? 0}
-                                                                    <span className="text-white/35">
+                                                                    <span className="text-muted-foreground">
                                                                         {' · '}{(row.tokens_period ?? 0).toLocaleString()}
                                                                     </span>
                                                                 </td>
-                                                                <td className="py-1.5 pr-2 tabular-nums text-white/70">
+                                                                <td className="py-1.5 pr-2 tabular-nums text-foreground/80">
                                                                     {row.rpd_used_pct != null ? `${row.rpd_used_pct}%` : '—'}
                                                                 </td>
-                                                                <td className="py-1.5 pr-2 tabular-nums text-white/70">
+                                                                <td className="py-1.5 pr-2 tabular-nums text-foreground/80">
                                                                     {row.tpd_used_pct != null ? `${row.tpd_used_pct}%` : '—'}
                                                                 </td>
                                                                 <td className={cn(
@@ -817,7 +817,7 @@ function Analyze({ embedded = false }) {
                                                                 >
                                                                     {row.health || '—'}
                                                                     {row.binding_limit ? (
-                                                                        <span className="ml-1 text-[10px] text-white/35">
+                                                                        <span className="ml-1 text-[10px] text-muted-foreground">
                                                                             ({row.binding_limit})
                                                                         </span>
                                                                     ) : null}
@@ -828,13 +828,13 @@ function Analyze({ embedded = false }) {
                                                 </table>
                                             </div>
                                         ) : (
-                                            <p className="text-xs text-white/40">
+                                            <p className="text-xs text-muted-foreground">
                                                 No Groq calls today yet. Autofill answers will show here per key.
                                             </p>
                                         )}
                                     </div>
                                 ) : (
-                                    <p className="text-xs text-white/40">Groq analytics unavailable.</p>
+                                    <p className="text-xs text-muted-foreground">Groq analytics unavailable.</p>
                                 )}
                             </Panel>
 
@@ -868,7 +868,7 @@ function Analyze({ embedded = false }) {
                                         <div className="overflow-x-auto">
                                             <table className="w-full text-left text-xs">
                                                 <thead>
-                                                    <tr className="border-b border-white/[0.06] text-white/40">
+                                                    <tr className="border-b border-border text-muted-foreground">
                                                         <th className="py-1.5 pr-2 font-medium">Model</th>
                                                         <th className="py-1.5 pr-2 font-medium">Calls</th>
                                                         <th className="py-1.5 font-medium">Tokens</th>
@@ -877,11 +877,11 @@ function Analyze({ embedded = false }) {
                                                 <tbody>
                                                     {groq.by_model.map((m) => (
                                                         <tr key={m.model} className="border-b border-white/[0.04]">
-                                                            <td className="py-1.5 pr-2 font-mono text-[11px] text-white/80">
+                                                            <td className="py-1.5 pr-2 font-mono text-[11px] text-foreground">
                                                                 {m.model}
                                                             </td>
-                                                            <td className="py-1.5 pr-2 tabular-nums text-white/70">{m.calls}</td>
-                                                            <td className="py-1.5 tabular-nums text-white/70">
+                                                            <td className="py-1.5 pr-2 tabular-nums text-foreground/80">{m.calls}</td>
+                                                            <td className="py-1.5 tabular-nums text-foreground/80">
                                                                 {(m.total_tokens || 0).toLocaleString()}
                                                             </td>
                                                         </tr>
@@ -890,7 +890,7 @@ function Analyze({ embedded = false }) {
                                             </table>
                                         </div>
                                     ) : (
-                                        <p className="text-xs text-white/40">No model mix yet.</p>
+                                        <p className="text-xs text-muted-foreground">No model mix yet.</p>
                                     )}
                                 </Panel>
                             </div>
@@ -900,7 +900,7 @@ function Analyze({ embedded = false }) {
                                     <div className="overflow-x-auto">
                                         <table className="w-full min-w-[520px] text-left text-xs">
                                             <thead>
-                                                <tr className="border-b border-white/[0.06] text-white/40">
+                                                <tr className="border-b border-border text-muted-foreground">
                                                     <th className="py-1.5 pr-2 font-medium">When</th>
                                                     <th className="py-1.5 pr-2 font-medium">Key</th>
                                                     <th className="py-1.5 pr-2 font-medium">Type</th>
@@ -912,21 +912,21 @@ function Analyze({ embedded = false }) {
                                             <tbody>
                                                 {groq.recent.slice(0, 20).map((row) => (
                                                     <tr key={row.id} className="border-b border-white/[0.04]">
-                                                        <td className="whitespace-nowrap py-1.5 pr-2 text-white/45">
+                                                        <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">
                                                             {row.created_at
                                                                 ? new Date(row.created_at).toLocaleString()
                                                                 : '—'}
                                                         </td>
-                                                        <td className="py-1.5 pr-2 tabular-nums text-white/70">
+                                                        <td className="py-1.5 pr-2 tabular-nums text-foreground/80">
                                                             {row.key_slot != null ? row.key_slot : '—'}
                                                         </td>
-                                                        <td className="py-1.5 pr-2 capitalize text-white/80">
+                                                        <td className="py-1.5 pr-2 capitalize text-foreground">
                                                             {row.kind || '—'}
                                                         </td>
-                                                        <td className="py-1.5 pr-2 tabular-nums text-white/55">
+                                                        <td className="py-1.5 pr-2 tabular-nums text-muted-foreground">
                                                             {(row.prompt_tokens ?? '—')}/{(row.completion_tokens ?? '—')}
                                                         </td>
-                                                        <td className="py-1.5 pr-2 tabular-nums text-white/70">
+                                                        <td className="py-1.5 pr-2 tabular-nums text-foreground/80">
                                                             {row.total_tokens != null
                                                                 ? Number(row.total_tokens).toLocaleString()
                                                                 : '—'}
@@ -944,7 +944,7 @@ function Analyze({ embedded = false }) {
                                         </table>
                                     </div>
                                 ) : (
-                                    <p className="text-xs text-white/40">No Groq calls logged yet.</p>
+                                    <p className="text-xs text-muted-foreground">No Groq calls logged yet.</p>
                                 )}
                             </Panel>
 
@@ -962,7 +962,7 @@ function Analyze({ embedded = false }) {
                                         <div className="overflow-x-auto">
                                             <table className="w-full text-left text-xs">
                                                 <thead>
-                                                    <tr className="border-b border-white/[0.06] text-white/40">
+                                                    <tr className="border-b border-border text-muted-foreground">
                                                         <th className="py-1.5 pr-2 font-medium">When</th>
                                                         <th className="py-1.5 pr-2 font-medium">Type</th>
                                                         <th className="py-1.5 font-medium">Model</th>
@@ -971,15 +971,15 @@ function Analyze({ embedded = false }) {
                                                 <tbody>
                                                     {usage.recent.slice(0, 12).map((row) => (
                                                         <tr key={row.id} className="border-b border-white/[0.04]">
-                                                            <td className="whitespace-nowrap py-1.5 pr-2 text-white/45">
+                                                            <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">
                                                                 {row.created_at
                                                                     ? new Date(row.created_at).toLocaleString()
                                                                     : '—'}
                                                             </td>
-                                                            <td className="py-1.5 pr-2 capitalize text-white/80">
+                                                            <td className="py-1.5 pr-2 capitalize text-foreground">
                                                                 {row.kind === 'chat' ? 'Generate chat' : row.kind}
                                                             </td>
-                                                            <td className="py-1.5 font-mono text-[11px] text-white/60">
+                                                            <td className="py-1.5 font-mono text-[11px] text-muted-foreground">
                                                                 {row.model || '—'}
                                                             </td>
                                                         </tr>
@@ -988,7 +988,7 @@ function Analyze({ embedded = false }) {
                                             </table>
                                         </div>
                                     ) : (
-                                        <p className="text-xs text-white/40">No calls logged yet.</p>
+                                        <p className="text-xs text-muted-foreground">No calls logged yet.</p>
                                     )}
                                 </Panel>
                             </div>
@@ -1006,11 +1006,11 @@ function Analyze({ embedded = false }) {
                                 }
                             >
                                 {analysis ? (
-                                    <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-white/85">
+                                    <pre className="whitespace-pre-wrap font-sans text-sm leading-relaxed text-foreground">
                                         {analysis}
                                     </pre>
                                 ) : (
-                                    <p className="text-sm text-white/40">
+                                    <p className="text-sm text-muted-foreground">
                                         Click MiniMax briefing for a short text summary of your bid analytics.
                                     </p>
                                 )}

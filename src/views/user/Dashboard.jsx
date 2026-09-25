@@ -23,7 +23,7 @@ function ProfileCard({ profile, onDefaultChanged }) {
                         {initials}
                     </div>
                     <div className="min-w-0">
-                        <h3 className="truncate font-semibold text-white/90">
+                        <h3 className="truncate font-semibold text-foreground">
                             {profile.first_name} {profile.middle_name || ''} {profile.last_name}
                             {profile.is_default ? (
                                 <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-wide text-primary">
@@ -31,27 +31,27 @@ function ProfileCard({ profile, onDefaultChanged }) {
                                 </span>
                             ) : null}
                         </h3>
-                        <p className="truncate text-xs text-white/40">
+                        <p className="truncate text-xs text-muted-foreground">
                             {profile.email || 'No email'}
                         </p>
                     </div>
                 </Link>
 
-                <div className="flex flex-wrap gap-1.5 text-xs text-white/45">
+                <div className="flex flex-wrap gap-1.5 text-xs text-muted-foreground">
                     {profile.phone && (
-                        <span className="inline-flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1">
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 px-2 py-1">
                             <Phone className="h-3 w-3" />
                             {profile.phone}
                         </span>
                     )}
                     {profile.city && (
-                        <span className="inline-flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1">
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 px-2 py-1">
                             <MapPin className="h-3 w-3" />
                             {profile.city}, {profile.country}
                         </span>
                     )}
                     {profile.salary_range && (
-                        <span className="inline-flex items-center gap-1 rounded-lg border border-white/[0.06] bg-white/[0.03] px-2 py-1">
+                        <span className="inline-flex items-center gap-1 rounded-lg border border-border bg-muted/40 px-2 py-1">
                             <Wallet className="h-3 w-3" />
                             {profile.salary_range}
                         </span>
@@ -119,8 +119,8 @@ function UserDashboard() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Assigned profiles</p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-sm font-medium text-foreground">Assigned profiles</p>
+                            <p className="truncate text-xs text-muted-foreground">
                                 {loading ? 'Loading…' : `${profiles.length} profile${profiles.length === 1 ? '' : 's'}`}
                             </p>
                         </div>
@@ -157,8 +157,8 @@ function UserDashboard() {
                                 <ClipboardList className="h-5 w-5" />
                             </div>
                             <div>
-                                <h3 className="font-semibold text-white/90">No profiles assigned</h3>
-                                <p className="text-sm text-white/45">
+                                <h3 className="font-semibold text-foreground">No profiles assigned</h3>
+                                <p className="text-sm text-muted-foreground">
                                     Contact your administrator to get candidate profiles assigned to you
                                 </p>
                             </div>

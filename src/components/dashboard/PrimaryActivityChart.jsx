@@ -6,7 +6,7 @@ import LineChart from '@/components/LineChart';
 import { formatDateTime } from '@/lib/utils';
 import { CHART, CHART_SERIES } from '@/lib/chartTheme';
 
-const CARD = 'border-white/[0.08] bg-card/80';
+const CARD = 'border-border bg-card/80';
 
 /**
  * Single primary chart for the dashboard — no duplicate trend cards.

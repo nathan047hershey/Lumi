@@ -142,7 +142,7 @@ function UserManagement() {
                 <PageCommandBar
                     search={(
                         <div className="relative">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                             <Input
                                 className="h-10 border-white/10 bg-black/25 pl-10"
                                 placeholder="Search username, id, or role…"
@@ -178,12 +178,12 @@ function UserManagement() {
 
                 {users.length === 0 ? (
                     <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center">
-                        <Users className="mx-auto mb-3 h-10 w-10 text-white/25" />
-                        <h3 className="text-base font-semibold text-white/80">No users yet</h3>
-                        <p className="mt-1 text-sm text-white/40">Create your first user to get started</p>
+                        <Users className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+                        <h3 className="text-base font-semibold text-foreground">No users yet</h3>
+                        <p className="mt-1 text-sm text-muted-foreground">Create your first user to get started</p>
                     </div>
                 ) : filtered.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-white/40">
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-muted-foreground">
                         No users match the current filters
                     </div>
                 ) : (
@@ -195,7 +195,7 @@ function UserManagement() {
                                 <article
                                     key={user.id}
                                     className={cn(
-                                        'overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
+                                        'overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4',
                                         'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]'
                                     )}
                                 >
@@ -205,9 +205,9 @@ function UserManagement() {
                                                 <p className="text-base font-semibold tracking-tight">
                                                     {user.username}
                                                 </p>
-                                                <span className="font-mono text-[11px] text-white/35">#{user.id}</span>
+                                                <span className="font-mono text-[11px] text-muted-foreground">#{user.id}</span>
                                             </div>
-                                            <p className="mt-1 text-xs text-white/40">
+                                            <p className="mt-1 text-xs text-muted-foreground">
                                                 Created {new Date(user.created_at).toLocaleDateString()}
                                             </p>
                                             <div className="mt-2.5 flex flex-wrap gap-1.5">

@@ -11,7 +11,7 @@ export default function BrandMark({ compact = false, className }) {
                     <span className="text-primary">mi</span>
                 </span>
                 {!compact && (
-                    <p className="mt-1 text-[10px] font-medium tracking-wide text-white/40">
+                    <p className="mt-1 text-[10px] font-medium tracking-wide text-muted-foreground">
                         Auto apply workspace
                     </p>
                 )}

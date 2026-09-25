@@ -114,8 +114,8 @@ function CallerDashboard() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Assigned applications</p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-sm font-medium text-foreground">Assigned applications</p>
+                            <p className="truncate text-xs text-muted-foreground">
                                 {loading
                                     ? 'Loading…'
                                     : `${applications.length} application${applications.length === 1 ? '' : 's'}`}
@@ -150,8 +150,8 @@ function CallerDashboard() {
                                 <Inbox className="h-7 w-7" />
                             </div>
                             <div>
-                                <h3 className="font-semibold text-white/90">No Applications Assigned</h3>
-                                <p className="text-sm text-white/45">
+                                <h3 className="font-semibold text-foreground">No Applications Assigned</h3>
+                                <p className="text-sm text-muted-foreground">
                                     You don't have any applications assigned yet.
                                 </p>
                             </div>
@@ -162,12 +162,12 @@ function CallerDashboard() {
                         {applications.map((app) => (
                             <div
                                 key={app.id}
-                                className="group relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]"
+                                className="group relative overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]"
                             >
                                 <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="min-w-0 flex-1 space-y-2">
                                         <div className="flex flex-wrap items-center gap-2">
-                                            <h3 className="font-semibold text-white/90">
+                                            <h3 className="font-semibold text-foreground">
                                                 {app.first_name} {app.last_name}
                                             </h3>
                                             <Badge variant={STATUS_VARIANT[app.status] || 'muted'} className="capitalize">
@@ -175,7 +175,7 @@ function CallerDashboard() {
                                             </Badge>
                                             {app.interview_type && <InterviewBadge type={app.interview_type} />}
                                         </div>
-                                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/40">
+                                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                             <span className="inline-flex items-center gap-1">
                                                 <Mail className="h-3 w-3" />
                                                 {app.email || '—'}
@@ -187,7 +187,7 @@ function CallerDashboard() {
                                                         href={app.job_url}
                                                         target="_blank"
                                                         rel="noopener noreferrer"
-                                                        className="truncate text-white/70 hover:text-primary hover:underline"
+                                                        className="truncate text-foreground/80 hover:text-primary hover:underline"
                                                         title={app.job_url}
                                                     >
                                                         {app.company_name || '—'}
@@ -201,14 +201,14 @@ function CallerDashboard() {
                                                 {app.job_role || '—'}
                                             </span>
                                         </div>
-                                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-white/35">
+                                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                             {app.scheduled_date ? (
                                                 <span className="inline-flex items-center gap-1">
                                                     <CalendarIcon className="h-3 w-3" />
                                                     {formatScheduledDate(app.scheduled_date)}
                                                 </span>
                                             ) : (
-                                                <span className="text-white/30">Not scheduled</span>
+                                                <span className="text-muted-foreground">Not scheduled</span>
                                             )}
                                             {app.scheduled_time && (
                                                 <span className="inline-flex items-center gap-1">
@@ -280,7 +280,7 @@ function CallerDashboard() {
                         </div>
 
                         {(viewingApp?.scheduled_date || viewingApp?.interview_type) && (
-                            <div className="space-y-2 rounded-xl border border-white/[0.07] bg-black/20 p-4">
+                            <div className="space-y-2 rounded-xl border border-border bg-black/20 p-4">
                                 <h4 className="flex items-center gap-2 font-semibold">
                                     <CalendarIcon className="h-4 w-4 text-primary" />
                                     Interview
@@ -339,7 +339,7 @@ function CallerDashboard() {
 
                         <div className="space-y-1">
                             <Label className="text-xs text-muted-foreground">Job Description</Label>
-                            <div className="max-h-48 overflow-y-auto rounded-xl border border-white/[0.07] bg-black/25 p-3 text-sm">
+                            <div className="max-h-48 overflow-y-auto rounded-xl border border-border bg-black/25 p-3 text-sm">
                                 <pre className="whitespace-pre-wrap font-sans">{viewingApp?.job_description || '—'}</pre>
                             </div>
                         </div>

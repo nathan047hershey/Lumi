@@ -21,7 +21,7 @@ export default function ConversionFunnel({
     const interviewRate = applied > 0 ? Math.round((scheduled / applied) * 100) : 0;
 
     return (
-        <Card className={cn('border-white/[0.08] bg-card/80 h-full', className)}>
+        <Card className={cn('border-border bg-card/80 h-full', className)}>
             <CardHeader className="pb-2">
                 <CardTitle className="font-display text-base">Funnel</CardTitle>
                 <CardDescription>Applied → replied → interviews</CardDescription>
@@ -43,7 +43,7 @@ export default function ConversionFunnel({
                             style={{ background: step.theme.bg, borderColor: step.theme.border, maxWidth: width, margin: '0 auto' }}
                         >
                             <p className="text-xl font-bold leading-none">{value}</p>
-                            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-white/90">
+                            <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-wider text-foreground">
                                 {step.label}
                             </p>
                         </div>

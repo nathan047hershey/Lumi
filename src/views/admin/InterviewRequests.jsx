@@ -1511,7 +1511,7 @@ function InterviewRequestsPage({ embedded = false }) {
             <PageCommandBar
                 search={(
                     <div className="relative">
-                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                         <Input
                             id="admin-ir-search"
                             className="h-10 border-white/10 bg-black/25 pl-10"
@@ -1608,7 +1608,7 @@ function InterviewRequestsPage({ embedded = false }) {
                                 'group flex items-center gap-3 rounded-2xl border p-3 text-left backdrop-blur-sm transition-all',
                                 isActive
                                     ? 'border-primary/40 bg-primary/10 ring-1 ring-primary/30'
-                                    : 'border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] hover:border-primary/30'
+                                    : 'border-border bg-[hsl(222_24%_9%/0.75)] hover:border-primary/30'
                             )}
                         >
                             <div
@@ -1619,7 +1619,7 @@ function InterviewRequestsPage({ embedded = false }) {
                             </div>
                             <div className="min-w-0">
                                 <div className="text-sm font-semibold text-white">{s.label}</div>
-                                <div className="text-xs text-white/40">
+                                <div className="text-xs text-muted-foreground">
                                     {isActive ? 'Filtered' : 'Click to filter'}
                                 </div>
                             </div>
@@ -1655,8 +1655,8 @@ function InterviewRequestsPage({ embedded = false }) {
                         >
                             <ChevronLeft className="h-3.5 w-3.5" /> Prev
                         </Button>
-                        <span className="text-xs text-white/50">
-                            Page <strong className="text-white/80">{page}</strong> of <strong className="text-white/80">{totalPages}</strong>
+                        <span className="text-xs text-muted-foreground">
+                            Page <strong className="text-foreground">{page}</strong> of <strong className="text-foreground">{totalPages}</strong>
                         </span>
                         <Button
                             variant="outline"
@@ -1673,14 +1673,14 @@ function InterviewRequestsPage({ embedded = false }) {
 
             <div className="relative space-y-3">
                 {tableLoading && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center gap-3 rounded-2xl bg-background/50 backdrop-blur-sm text-sm text-white/50">
+                    <div className="absolute inset-0 z-10 flex items-center justify-center gap-3 rounded-2xl bg-background/50 backdrop-blur-sm text-sm text-muted-foreground">
                         <Loader size="md" />
                         Refreshing…
                     </div>
                 )}
 
                 {filteredRows.length === 0 && !tableLoading ? (
-                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-white/40">
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-muted-foreground">
                         No interview-requests match the current filters.
                     </div>
                 ) : (
@@ -1700,7 +1700,7 @@ function InterviewRequestsPage({ embedded = false }) {
                                     }
                                 }}
                                 className={cn(
-                                    'group relative flex cursor-pointer overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] transition-all duration-200',
+                                    'group relative flex cursor-pointer overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] transition-all duration-200',
                                     'hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] hover:shadow-lg hover:shadow-primary/10'
                                 )}
                             >
@@ -1725,12 +1725,12 @@ function InterviewRequestsPage({ embedded = false }) {
                                                 <StatusBadge status={badge} />
                                                 <ApplicationStatusBadge row={r} />
                                             </div>
-                                            <p className="truncate text-xs text-white/45">
+                                            <p className="truncate text-xs text-muted-foreground">
                                                 {r.job_role || 'Role unspecified'}
                                                 {r.profile_name ? ` · ${r.profile_name}` : ''}
                                                 {` · ${r.assigned_users || 'Unassigned'}`}
                                             </p>
-                                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-white/40">
+                                            <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                                                 <span>
                                                     Scheduled:{' '}
                                                     {r.scheduled_date
@@ -1743,13 +1743,13 @@ function InterviewRequestsPage({ embedded = false }) {
                                             </div>
                                             {reply ? (
                                                 <p
-                                                    className="line-clamp-2 text-xs italic text-white/35"
+                                                    className="line-clamp-2 text-xs italic text-muted-foreground"
                                                     title={reply}
                                                 >
                                                     {(reply.length > 120 ? reply.slice(0, 120) + '…' : reply)}
                                                 </p>
                                             ) : (
-                                                <p className="text-xs text-white/25">No reply on file</p>
+                                                <p className="text-xs text-muted-foreground">No reply on file</p>
                                             )}
                                         </div>
                                         <div className="flex shrink-0 items-center gap-2 self-end xl:self-start">

@@ -418,7 +418,7 @@ function Applications({ embedded = false }) {
                     <PageCommandBar
                         search={(
                             <div className="relative">
-                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                 <Input
                                     className="h-10 border-white/10 bg-black/25 pl-10"
                                     placeholder="Search company, role, JD, link…"
@@ -572,7 +572,7 @@ function Applications({ embedded = false }) {
                             </div>
                         )}
                         {applications.length === 0 && !tableLoading ? (
-                            <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-white/40">
+                            <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-muted-foreground">
                                 No applications found
                             </div>
                         ) : (

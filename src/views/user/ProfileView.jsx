@@ -92,10 +92,10 @@ function ProfileView() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">
+                            <p className="truncate text-sm font-medium text-foreground">
                                 {`${profile.first_name} ${profile.middle_name || ''} ${profile.last_name}`.trim()}
                             </p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-xs text-muted-foreground">
                                 {profile.email || 'Candidate profile'}
                             </p>
                         </div>

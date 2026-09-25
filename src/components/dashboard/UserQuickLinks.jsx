@@ -19,7 +19,7 @@ export default function UserQuickLinks({ className }) {
                 <Link
                     key={to}
                     to={to}
-                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-xs font-medium text-foreground transition-colors hover:border-primary/30 hover:bg-accent/40"
+                    className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-muted/40 px-3 py-2 text-xs font-medium text-foreground transition-colors hover:border-primary/30 hover:bg-accent/40"
                 >
                     <Icon className="h-3.5 w-3.5 text-primary" />
                     {label}

@@ -19,7 +19,7 @@ export default function ListToolbar({
             <div className="flex min-w-0 items-center gap-2.5">
                 {leading}
                 {label ? (
-                    <p className="truncate text-xs font-medium text-white/45">{label}</p>
+                    <p className="truncate text-xs font-medium text-muted-foreground">{label}</p>
                 ) : null}
             </div>
             {trailing ? <div className="flex flex-wrap items-center gap-2">{trailing}</div> : null}

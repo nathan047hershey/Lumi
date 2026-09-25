@@ -7,27 +7,27 @@ import BuildStamp from '@/components/BuildStamp';
  */
 export default function AuthLayout({ title, subtitle, children }) {
     return (
-        <div className="relative flex min-h-screen bg-[hsl(222_28%_6%)]">
+        <div className="relative flex min-h-screen bg-background">
             <div
                 className="pointer-events-none absolute inset-0"
                 aria-hidden
                 style={{
                     background:
-                        'radial-gradient(ellipse 70% 50% at 10% 0%, hsl(199 95% 55% / 0.2), transparent 55%), radial-gradient(ellipse 50% 40% at 100% 100%, hsl(210 90% 48% / 0.12), transparent 50%)'
+                        'radial-gradient(ellipse 70% 50% at 10% 0%, hsl(152 72% 42% / 0.12), transparent 55%), radial-gradient(ellipse 50% 40% at 100% 100%, hsl(250 60% 60% / 0.08), transparent 50%)'
                 }}
             />
 
-            <div className="relative hidden w-[42%] flex-col justify-between overflow-hidden border-r border-white/[0.06] p-10 xl:p-14 lg:flex">
+            <div className="relative hidden w-[42%] flex-col justify-between overflow-hidden border-r border-border bg-card p-10 xl:p-14 lg:flex">
                 <div className="pointer-events-none absolute inset-0 auth-panel-texture" aria-hidden />
                 <BrandMark />
                 <div className="relative max-w-md space-y-4">
                     <p className="font-display text-[11px] font-semibold uppercase tracking-[0.2em] text-primary">
                         New workspace
                     </p>
-                    <h1 className="font-display text-4xl font-semibold leading-tight tracking-tight text-white">
+                    <h1 className="font-display text-4xl font-semibold leading-tight tracking-tight text-foreground">
                         Apply with Lumi
                     </h1>
-                    <p className="text-sm leading-relaxed text-white/50">
+                    <p className="text-sm leading-relaxed text-muted-foreground">
                         Pipeline, performance, and resume tooling in one redesigned workspace.
                     </p>
                 </div>
@@ -47,10 +47,10 @@ export default function AuthLayout({ title, subtitle, children }) {
                                     {title}
                                 </h2>
                             )}
-                            {subtitle && <p className="mt-2 text-sm text-white/45">{subtitle}</p>}
+                            {subtitle && <p className="mt-2 text-sm text-muted-foreground">{subtitle}</p>}
                         </div>
                     )}
-                    <div className="rounded-3xl border border-white/[0.08] bg-[hsl(222_24%_9%/0.9)] p-6 shadow-[0_30px_80px_-24px_rgba(0,0,0,0.8),0_0_0_1px_hsla(199,95%,55%,0.12)] backdrop-blur-xl sm:p-8">
+                    <div className="rounded-3xl border border-border bg-[hsl(222_24%_9%/0.9)] p-6 shadow-[0_30px_80px_-24px_rgba(0,0,0,0.8),0_0_0_1px_hsla(199,95%,55%,0.12)] backdrop-blur-xl sm:p-8">
                         {children}
                     </div>
                     <BuildStamp className="mt-4 text-center lg:hidden" />

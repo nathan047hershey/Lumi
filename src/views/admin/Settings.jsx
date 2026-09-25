@@ -218,7 +218,7 @@ function AdminSettings() {
                 className={`flex w-full items-start gap-3 rounded-xl border p-3 text-left transition-colors ${
                     isActiveSlot
                         ? 'border-primary/40 bg-primary/10'
-                        : 'border-white/[0.07] bg-black/20 hover:border-primary/30 hover:bg-white/[0.03]'
+                        : 'border-border bg-black/20 hover:border-primary/30 hover:bg-muted/40'
                 } ${!info?.is_set ? 'opacity-60' : ''}`}
             >
                 <div className="min-w-0 flex-1">
@@ -247,8 +247,8 @@ function AdminSettings() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Platform settings</p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-sm font-medium text-foreground">Platform settings</p>
+                            <p className="truncate text-xs text-muted-foreground">
                                 API keys, providers, local LLM, and Lumi
                             </p>
                         </div>

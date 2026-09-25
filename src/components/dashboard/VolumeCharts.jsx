@@ -6,7 +6,7 @@ import BarChart from '@/components/dashboard/BarChart';
 import { formatDateTime } from '@/lib/utils';
 import { CHART, CHART_SERIES } from '@/lib/chartTheme';
 
-const CARD = 'border-white/[0.08] bg-card/80';
+const CARD = 'border-border bg-card/80';
 
 /**
  * Daily volume bar chart — uses server dailyBuckets when available.

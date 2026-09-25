@@ -20,8 +20,8 @@ function RecentProfiles({ recentProfiles }) {
                         <UserPlus className="h-5 w-5" />
                     </div>
                     <div>
-                        <h3 className="font-semibold text-white/90">No profiles yet</h3>
-                        <p className="text-sm text-white/45">Create your first candidate profile</p>
+                        <h3 className="font-semibold text-foreground">No profiles yet</h3>
+                        <p className="text-sm text-muted-foreground">Create your first candidate profile</p>
                     </div>
                     <Button asChild variant="gradient" size="sm">
                         <Link to="/admin/profiles/new">Create profile</Link>
@@ -50,11 +50,11 @@ function RecentProfiles({ recentProfiles }) {
                         <Link
                             key={profile.id}
                             to={`/admin/profiles/${profile.id}/edit`}
-                            className="group flex flex-col gap-2 rounded-xl border border-white/[0.07] bg-black/20 px-4 py-3 transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] sm:flex-row sm:items-center sm:justify-between"
+                            className="group flex flex-col gap-2 rounded-xl border border-border bg-black/20 px-4 py-3 transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] sm:flex-row sm:items-center sm:justify-between"
                         >
                             <div className="min-w-0">
-                                <p className="truncate font-medium text-white/90 group-hover:text-white">{name}</p>
-                                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-white/40">
+                                <p className="truncate font-medium text-foreground group-hover:text-foreground">{name}</p>
+                                <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
                                     <span className="inline-flex items-center gap-1 truncate">
                                         <Mail className="h-3 w-3 shrink-0" />
                                         {profile.email || '—'}
@@ -65,7 +65,7 @@ function RecentProfiles({ recentProfiles }) {
                                     </span>
                                 </div>
                             </div>
-                            <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-white/35">
+                            <span className="inline-flex shrink-0 items-center gap-1 font-mono text-[11px] text-muted-foreground">
                                 <Calendar className="h-3 w-3" />
                                 {formatDate(profile.created_at)}
                             </span>
@@ -209,8 +209,8 @@ function AdminDashboard() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Platform filters</p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-sm font-medium text-foreground">Platform filters</p>
+                            <p className="truncate text-xs text-muted-foreground">
                                 Scope stats by period and user
                             </p>
                         </div>

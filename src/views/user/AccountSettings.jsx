@@ -110,8 +110,8 @@ function AccountSettings() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">@{user.username}</p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-sm font-medium text-foreground">@{user.username}</p>
+                            <p className="truncate text-xs text-muted-foreground">
                                 Profile, password, and Lumi preferences
                             </p>
                         </div>

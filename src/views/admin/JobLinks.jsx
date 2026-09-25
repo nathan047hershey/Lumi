@@ -2151,18 +2151,18 @@ function JobLinks({ embedded = false }) {
                 title="Job Links"
                 description="Add a link → scrape JD → generate CVs → bid. Status on each row shows where it is."
                 footer={(
-                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-white/50">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
                         <span>
                             {total === 0
                                 ? 'No rows'
-                                : <>Showing <strong className="text-white">{(page - 1) * limit + 1}–{Math.min(page * limit, total)}</strong> of <strong className="text-white">{total}</strong></>}
+                                : <>Showing <strong className="text-foreground">{(page - 1) * limit + 1}–{Math.min(page * limit, total)}</strong> of <strong className="text-foreground">{total}</strong></>}
                         </span>
                         {totalPages > 1 && (
                             <div className="flex items-center gap-2">
                                 <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1}>
                                     <ChevronLeft className="h-3.5 w-3.5" /> Prev
                                 </Button>
-                                <span className="font-medium text-white/70">Page {page} of {totalPages}</span>
+                                <span className="font-medium text-foreground/80">Page {page} of {totalPages}</span>
                                 <Button variant="outline" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page >= totalPages}>
                                     Next <ChevronRight className="h-3.5 w-3.5" />
                                 </Button>
@@ -2175,10 +2175,10 @@ function JobLinks({ embedded = false }) {
                     <PageCommandBar
                         search={(
                             <div className="relative">
-                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                                <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                                 <Input
                                     id="jl-search"
-                                    className="h-10 border-white/10 bg-black/25 pl-10"
+                                    className="h-10 border-border bg-card pl-10"
                                     placeholder="Search company, profile, URL…"
                                     value={search}
                                     onChange={(e) => setSearch(e.target.value)}
@@ -2228,7 +2228,7 @@ function JobLinks({ embedded = false }) {
                         filters={(
                             <>
                                 <Select value={techstackFilter} onValueChange={changeTechstackFilter}>
-                                    <SelectTrigger className="h-9 w-[8.5rem] border-white/10 bg-black/20">
+                                    <SelectTrigger className="h-9 w-[8.5rem] border-border bg-card">
                                         <SelectValue placeholder="Stack" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -2239,7 +2239,7 @@ function JobLinks({ embedded = false }) {
                                     </SelectContent>
                                 </Select>
                                 <Select value={platformFilter} onValueChange={changePlatformFilter}>
-                                    <SelectTrigger className="h-9 w-[10.5rem] border-white/10 bg-black/20">
+                                    <SelectTrigger className="h-9 w-[10.5rem] border-border bg-card">
                                         <SelectValue placeholder="Platform" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -2250,7 +2250,7 @@ function JobLinks({ embedded = false }) {
                                     </SelectContent>
                                 </Select>
                                 <Select value={availableFilter} onValueChange={changeAvailableFilter}>
-                                    <SelectTrigger className="h-9 w-[8.5rem] border-white/10 bg-black/20">
+                                    <SelectTrigger className="h-9 w-[8.5rem] border-border bg-card">
                                         <SelectValue placeholder="Availability" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -2260,7 +2260,7 @@ function JobLinks({ embedded = false }) {
                                     </SelectContent>
                                 </Select>
                                 <Select value={bidStateFilter} onValueChange={changeBidStateFilter}>
-                                    <SelectTrigger className="h-9 w-[9.5rem] border-white/10 bg-black/20">
+                                    <SelectTrigger className="h-9 w-[9.5rem] border-border bg-card">
                                         <SelectValue placeholder="Bid state" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -2271,7 +2271,7 @@ function JobLinks({ embedded = false }) {
                                     </SelectContent>
                                 </Select>
                                 <Select value={sortFilter} onValueChange={changeSortFilter}>
-                                    <SelectTrigger className="h-9 w-[9rem] border-white/10 bg-black/20">
+                                    <SelectTrigger className="h-9 w-[9rem] border-border bg-card">
                                         <SelectValue placeholder="Sort" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -2305,7 +2305,7 @@ function JobLinks({ embedded = false }) {
                                     />
                                 </div>
                                 <Select value={datePreset || 'all'} onValueChange={handleDatePreset}>
-                                    <SelectTrigger className="h-9 w-[10.5rem] border-white/10 bg-black/20">
+                                    <SelectTrigger className="h-9 w-[10.5rem] border-border bg-card">
                                         <SelectValue placeholder="Date" />
                                     </SelectTrigger>
                                     <SelectContent>
@@ -2322,7 +2322,7 @@ function JobLinks({ embedded = false }) {
                                         'inline-flex h-9 cursor-pointer items-center gap-2 rounded-lg border px-3 text-xs font-medium transition',
                                         hasGeneratedResumeFilter
                                             ? 'border-primary/40 bg-primary/15 text-primary'
-                                            : 'border-white/10 bg-black/20 text-white/55 hover:text-white/80'
+                                            : 'border-border bg-card text-muted-foreground hover:text-foreground'
                                     )}
                                 >
                                     <Checkbox
@@ -2383,7 +2383,7 @@ function JobLinks({ embedded = false }) {
                             </div>
                         )}
                         {rows.length === 0 ? (
-                            <div className="rounded-xl border border-dashed border-white/10 bg-black/15 px-4 py-8 text-center text-sm text-white/45">
+                            <div className="rounded-xl border border-dashed border-border bg-card px-4 py-8 text-center text-sm text-muted-foreground">
                                 {total === 0 && activeChips.length === 0
                                     ? 'No job links yet. Click Add to create the first one.'
                                     : 'No rows match your filters. Reset to see existing links.'}

@@ -54,8 +54,8 @@ function BidInsights({ embedded = false }) {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Bid insights</p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-sm font-medium text-foreground">Bid insights</p>
+                            <p className="truncate text-xs text-muted-foreground">
                                 Interview patterns that guide autofill answers
                             </p>
                         </div>
@@ -75,7 +75,7 @@ function BidInsights({ embedded = false }) {
                 )}
 
                 {loading && !data ? (
-                    <p className="text-sm text-white/40">Loading insights…</p>
+                    <p className="text-sm text-muted-foreground">Loading insights…</p>
                 ) : (
                     <div className="space-y-6">
                         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
@@ -123,12 +123,12 @@ function BidInsights({ embedded = false }) {
                                             ['Applied', data.bidder_ops.funnel?.applied]
                                         ].map(([label, n]) => (
                                             <div key={label} className="rounded-lg border border-white/10 px-3 py-2">
-                                                <p className="text-xs text-white/40">{label}</p>
-                                                <p className="text-lg font-semibold text-white/90">{n ?? 0}</p>
+                                                <p className="text-xs text-muted-foreground">{label}</p>
+                                                <p className="text-lg font-semibold text-foreground">{n ?? 0}</p>
                                             </div>
                                         ))}
                                     </div>
-                                    <div className="flex flex-wrap gap-3 text-xs text-white/60">
+                                    <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
                                         <span>Stuck: {data.bidder_ops.stuck ?? 0}</span>
                                         <span>Memory hits: {data.bidder_ops.memory_hits ?? 0}</span>
                                         <span>
@@ -144,13 +144,13 @@ function BidInsights({ embedded = false }) {
                                     </div>
                                     {data.bidder_ops.lane_mix && (
                                         <div>
-                                            <p className="mb-1 text-xs font-medium text-white/50">Lane mix</p>
+                                            <p className="mb-1 text-xs font-medium text-muted-foreground">Lane mix</p>
                                             <div className="flex flex-wrap gap-2">
                                                 {Object.entries(data.bidder_ops.lane_mix).map(([lane, n]) => (
                                                     n > 0 ? (
                                                         <span
                                                             key={lane}
-                                                            className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-white/70"
+                                                            className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-foreground/80"
                                                         >
                                                             {lane}: {n}
                                                         </span>
@@ -162,8 +162,8 @@ function BidInsights({ embedded = false }) {
                                     {Array.isArray(data.bidder_ops.incomplete_top)
                                         && data.bidder_ops.incomplete_top.length > 0 && (
                                         <div>
-                                            <p className="mb-1 text-xs font-medium text-white/50">Top incomplete labels</p>
-                                            <ul className="list-inside list-disc text-white/70">
+                                            <p className="mb-1 text-xs font-medium text-muted-foreground">Top incomplete labels</p>
+                                            <ul className="list-inside list-disc text-foreground/80">
                                                 {data.bidder_ops.incomplete_top.slice(0, 8).map((row) => (
                                                     <li key={row.label}>
                                                         {row.label}
@@ -177,12 +177,12 @@ function BidInsights({ embedded = false }) {
                                     {Array.isArray(data.answer_clusters)
                                         && data.answer_clusters.length > 0 && (
                                         <div>
-                                            <p className="mb-1 text-xs font-medium text-white/50">Answer clusters</p>
+                                            <p className="mb-1 text-xs font-medium text-muted-foreground">Answer clusters</p>
                                             <div className="flex flex-wrap gap-2">
                                                 {data.answer_clusters.slice(0, 10).map((c) => (
                                                     <span
                                                         key={c.cluster}
-                                                        className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-white/70"
+                                                        className="rounded-full border border-white/10 px-2 py-0.5 text-xs text-foreground/80"
                                                     >
                                                         {c.cluster}
                                                         {' '}

@@ -92,8 +92,8 @@ function ManagerUsers() {
                 <PageCommandBar
                     search={(
                         <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-white/80">Your users</p>
-                            <p className="truncate text-xs text-white/40">
+                            <p className="truncate text-sm font-medium text-foreground">Your users</p>
+                            <p className="truncate text-xs text-muted-foreground">
                                 {users.length} user{users.length === 1 ? '' : 's'} · create and delegate
                             </p>
                         </div>
@@ -196,8 +196,8 @@ function ManagerUsers() {
                                 <Users className="h-6 w-6" />
                             </div>
                             <div>
-                                <h3 className="font-semibold text-white/90">No users created yet</h3>
-                                <p className="text-sm text-white/45">Create users to delegate profile management</p>
+                                <h3 className="font-semibold text-foreground">No users created yet</h3>
+                                <p className="text-sm text-muted-foreground">Create users to delegate profile management</p>
                             </div>
                             <Button variant="gradient" onClick={() => setShowForm(true)}>
                                 <Plus className="h-4 w-4" />
@@ -210,16 +210,16 @@ function ManagerUsers() {
                         {users.map((user) => (
                             <div
                                 key={user.id}
-                                className="flex flex-col gap-3 rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] px-4 py-3 transition-all hover:border-primary/30 sm:flex-row sm:items-center sm:justify-between"
+                                className="flex flex-col gap-3 rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] px-4 py-3 transition-all hover:border-primary/30 sm:flex-row sm:items-center sm:justify-between"
                             >
                                 <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">
-                                        <p className="font-medium text-white/90">{user.username}</p>
+                                        <p className="font-medium text-foreground">{user.username}</p>
                                         <Badge variant={ROLE_VARIANT[user.role] || 'muted'} className="capitalize">
                                             {user.role}
                                         </Badge>
                                     </div>
-                                    <p className="mt-1 font-mono text-[11px] text-white/35">
+                                    <p className="mt-1 font-mono text-[11px] text-muted-foreground">
                                         Created {new Date(user.created_at).toLocaleDateString()}
                                     </p>
                                 </div>

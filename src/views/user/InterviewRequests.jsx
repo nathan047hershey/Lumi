@@ -449,7 +449,7 @@ function InterviewRequestsPage({ embedded = false }) {
             <PageCommandBar
                 search={(
                     <div className="relative">
-                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                        <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                         <Input
                             id="ir-search"
                             className="h-10 border-white/10 bg-black/25 pl-10"
@@ -484,13 +484,13 @@ function InterviewRequestsPage({ embedded = false }) {
                                         'inline-flex h-9 items-center gap-1.5 rounded-lg border px-3 text-xs font-medium transition',
                                         isActive
                                             ? 'border-primary/40 bg-primary/15 text-primary'
-                                            : 'border-white/10 bg-black/20 text-white/55 hover:text-white/80'
+                                            : 'border-white/10 bg-black/20 text-muted-foreground hover:text-foreground'
                                     )}
                                 >
                                     {t.label}
                                     <span className={cn(
                                         'rounded-md px-1.5 py-0.5 text-[10px] tabular-nums',
-                                        isActive ? 'bg-primary/20 text-primary' : 'bg-white/5 text-white/40'
+                                        isActive ? 'bg-primary/20 text-primary' : 'bg-white/5 text-muted-foreground'
                                     )}>
                                         {t.value === 'all' ? counts.total : (counts[t.value] ?? 0)}
                                     </span>
@@ -549,8 +549,8 @@ function InterviewRequestsPage({ embedded = false }) {
                         >
                             <ChevronLeft className="h-3.5 w-3.5" /> Prev
                         </Button>
-                        <span className="text-xs text-white/50">
-                            Page <strong className="text-white/80">{page}</strong> of <strong className="text-white/80">{totalPages}</strong>
+                        <span className="text-xs text-muted-foreground">
+                            Page <strong className="text-foreground">{page}</strong> of <strong className="text-foreground">{totalPages}</strong>
                         </span>
                         <Button
                             variant="outline"
@@ -567,14 +567,14 @@ function InterviewRequestsPage({ embedded = false }) {
 
             <div className="relative space-y-3">
                 {refreshing && (
-                    <div className="absolute inset-0 z-10 flex items-center justify-center gap-3 rounded-2xl bg-background/50 backdrop-blur-sm text-sm text-white/50">
+                    <div className="absolute inset-0 z-10 flex items-center justify-center gap-3 rounded-2xl bg-background/50 backdrop-blur-sm text-sm text-muted-foreground">
                         <Loader size="md" />
                         Refreshing…
                     </div>
                 )}
 
                 {visibleRows.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-white/40">
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-muted-foreground">
                         No interview-requests match the current filters.
                     </div>
                 ) : (
@@ -593,7 +593,7 @@ function InterviewRequestsPage({ embedded = false }) {
                                     }
                                 }}
                                 className={cn(
-                                    'group relative flex cursor-pointer overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] transition-all duration-200',
+                                    'group relative flex cursor-pointer overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] transition-all duration-200',
                                     'hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] hover:shadow-lg hover:shadow-primary/10'
                                 )}
                             >
@@ -616,11 +616,11 @@ function InterviewRequestsPage({ embedded = false }) {
                                             </h3>
                                             <StatusBadge status={r.status} />
                                         </div>
-                                        <p className="truncate text-xs text-white/45">
+                                        <p className="truncate text-xs text-muted-foreground">
                                             {r.job_role || 'Role unspecified'}
                                             {r.profile_name ? ` · ${r.profile_name}` : ''}
                                         </p>
-                                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-white/40">
+                                        <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                                             <span>
                                                 Scheduled:{' '}
                                                 {r.scheduled_date
@@ -667,11 +667,11 @@ function InterviewRequestsPage({ embedded = false }) {
 
 function KpiTile({ label, value, icon, tone = 'slate' }) {
     const toneClasses = {
-        slate:   'border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] text-slate-300',
+        slate:   'border-border bg-[hsl(222_24%_9%/0.75)] text-slate-300',
         sky:     'border-sky-500/25 bg-sky-500/10 text-sky-300',
         emerald: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-300',
         rose:    'border-rose-500/25 bg-rose-500/10 text-rose-300'
-    }[tone] || 'border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] text-white';
+    }[tone] || 'border-border bg-[hsl(222_24%_9%/0.75)] text-white';
     return (
         <div className={cn('flex items-center gap-3 rounded-2xl border p-3 backdrop-blur-sm', toneClasses)}>
             <div className="rounded-xl border border-current/25 bg-black/20 p-1.5">
@@ -679,7 +679,7 @@ function KpiTile({ label, value, icon, tone = 'slate' }) {
             </div>
             <div>
                 <div className="text-2xl font-bold leading-none tabular-nums text-white">{value}</div>
-                <div className="mt-0.5 text-[11px] text-white/45">{label}</div>
+                <div className="mt-0.5 text-[11px] text-muted-foreground">{label}</div>
             </div>
         </div>
     );

@@ -164,7 +164,7 @@ function Developers() {
                 <PageCommandBar
                     search={(
                         <div className="relative">
-                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-white/35" />
+                            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
                             <Input
                                 className="h-10 border-white/10 bg-black/25 pl-10"
                                 placeholder="Search by username, skill, availability, or contact…"
@@ -232,12 +232,12 @@ function Developers() {
                 {loading ? (
                     <PageLoader message="Loading developers..." />
                 ) : rows.length === 0 ? (
-                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-white/40">
-                        <UserIcon className="mx-auto mb-3 h-10 w-10 text-white/25" />
-                        <p className="font-medium text-white/70">
+                    <div className="rounded-2xl border border-dashed border-white/10 bg-black/20 px-6 py-16 text-center text-sm text-muted-foreground">
+                        <UserIcon className="mx-auto mb-3 h-10 w-10 text-muted-foreground" />
+                        <p className="font-medium text-foreground/80">
                             {q ? 'No developers match this search.' : 'No developer accounts yet.'}
                         </p>
-                        <p className="mt-1 text-xs text-white/40">
+                        <p className="mt-1 text-xs text-muted-foreground">
                             Developers appear here once an admin assigns them the developer role from User Management.
                         </p>
                     </div>
@@ -319,7 +319,7 @@ function DeveloperCard({ row, onEdit }) {
     return (
         <article
             className={cn(
-                'flex flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
+                'flex flex-col overflow-hidden rounded-2xl border border-border bg-[hsl(222_24%_9%/0.75)] p-4',
                 'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] hover:shadow-lg hover:shadow-primary/10'
             )}
         >
@@ -330,7 +330,7 @@ function DeveloperCard({ row, onEdit }) {
                     </span>
                     <div className="min-w-0">
                         <p className="truncate text-base font-semibold tracking-tight">{row.username}</p>
-                        <p className="text-xs text-white/40">
+                        <p className="text-xs text-muted-foreground">
                             Joined {row.created_at ? new Date(row.created_at).toLocaleDateString() : '—'}
                         </p>
                     </div>
@@ -354,12 +354,12 @@ function DeveloperCard({ row, onEdit }) {
 
             <div className="mt-4 space-y-3 text-xs">
                 <div>
-                    <div className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-white/45">
+                    <div className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
                         <Briefcase className="h-3 w-3" />
                         Technical skills
                     </div>
                     {skills.length === 0 ? (
-                        <p className="italic text-white/35">No skills listed yet.</p>
+                        <p className="italic text-muted-foreground">No skills listed yet.</p>
                     ) : (
                         <div className="flex flex-wrap gap-1">
                             {skills.map((s, i) => (
@@ -372,20 +372,20 @@ function DeveloperCard({ row, onEdit }) {
                 </div>
 
                 <div>
-                    <div className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-white/45">
+                    <div className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
                         <MessageCircle className="h-3 w-3" />
                         Availability
                     </div>
                     <p className={cn(
-                        'whitespace-pre-wrap text-white/80',
-                        !row.availability && 'italic text-white/35'
+                        'whitespace-pre-wrap text-foreground',
+                        !row.availability && 'italic text-muted-foreground'
                     )}>
                         {row.availability || 'Not specified.'}
                     </p>
                 </div>
 
                 <div>
-                    <div className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-white/45">
+                    <div className="mb-1.5 flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
                         <Mail className="h-3 w-3" />
                         Contact
                     </div>
@@ -407,8 +407,8 @@ function DeveloperCard({ row, onEdit }) {
                     </div>
                 </div>
 
-                <div className="flex items-center justify-between border-t border-white/[0.06] pt-3">
-                    <div className="flex items-center gap-1 text-[11px] font-medium text-white/45">
+                <div className="flex items-center justify-between border-t border-border pt-3">
+                    <div className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
                         <FileText className="h-3 w-3" />
                         Resume
                     </div>
@@ -422,7 +422,7 @@ function DeveloperCard({ row, onEdit }) {
                             Open
                         </Button>
                     ) : (
-                        <span className="italic text-white/35">Not uploaded</span>
+                        <span className="italic text-muted-foreground">Not uploaded</span>
                     )}
                 </div>
             </div>
@@ -736,11 +736,11 @@ function KpiTile({ label, value, Icon, accent }) {
         emerald: 'border-emerald-500/30 text-emerald-300',
         amber:   'border-amber-500/30 text-amber-300'
     };
-    const cls = accent ? accentMap[accent] : 'border-white/[0.07] text-white';
+    const cls = accent ? accentMap[accent] : 'border-border text-white';
     return (
         <div className={cn('rounded-2xl border bg-[hsl(222_24%_9%/0.75)] p-3 backdrop-blur-sm', cls)}>
             <div className="flex items-center justify-between">
-                <span className="text-[11px] font-medium text-white/45">{label}</span>
+                <span className="text-[11px] font-medium text-muted-foreground">{label}</span>
                 {Icon && <Icon className="h-4 w-4 opacity-70" />}
             </div>
             <div className="mt-1 text-lg font-semibold">{value}</div>

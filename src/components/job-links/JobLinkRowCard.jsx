@@ -46,25 +46,25 @@ const STAGE_META = {
     scraping: {
         label: 'Scraping JD',
         hint: 'Fetching job description…',
-        className: 'border-sky-400/40 bg-sky-500/15 text-sky-100',
+        className: 'border-sky-200 bg-sky-50 text-sky-800',
         spin: true
     },
     generating: {
         label: 'Generating CVs',
         hint: 'JD ready — generating resumes…',
-        className: 'border-violet-400/40 bg-violet-500/15 text-violet-100',
+        className: 'border-violet-200 bg-violet-50 text-violet-800',
         spin: true
     },
     ready: {
         label: 'Ready',
         hint: 'Scrape and CV pipeline complete',
-        className: 'border-emerald-500/40 bg-emerald-500/15 text-emerald-200',
+        className: 'border-emerald-200 bg-emerald-50 text-emerald-800',
         spin: false
     },
     failed: {
         label: 'Scrape failed',
         hint: 'Could not fetch job description',
-        className: 'border-red-500/45 bg-red-500/15 text-red-200',
+        className: 'border-red-200 bg-red-50 text-red-700',
         spin: false
     }
 };
@@ -110,13 +110,13 @@ function PipelineRail({ row }) {
                 const active = idx === activeIdx;
                 return (
                     <span key={step.id} className="inline-flex items-center gap-1">
-                        {idx > 0 ? <span className="text-white/20">→</span> : null}
+                        {idx > 0 ? <span className="text-muted-foreground/40">→</span> : null}
                         <span
                             className={cn(
                                 'rounded px-1.5 py-0.5 font-medium',
-                                active && 'bg-sky-500/20 text-sky-100',
-                                done && 'text-emerald-300/90',
-                                !done && !active && 'text-white/30'
+                                active && 'bg-sky-50 text-sky-800',
+                                done && 'text-emerald-700',
+                                !done && !active && 'text-muted-foreground'
                             )}
                         >
                             {step.label}
@@ -130,30 +130,30 @@ function PipelineRail({ row }) {
 
 function profileChipMeta(p) {
     if (p.status === 'rejected' || p.state === 'rejected' || p.state === 'cancelled' || p.bid_outcome === 'rejected') {
-        return { label: 'Rejected', className: 'text-red-300' };
+        return { label: 'Rejected', className: 'text-red-700' };
     }
     if (p.status === 'applied' || p.bid_applied || p.bid_outcome === 'applied') {
-        return { label: 'Applied', className: 'text-emerald-300' };
+        return { label: 'Applied', className: 'text-emerald-700' };
     }
     if (p.status === 'interview' || p.bid_outcome === 'interview') {
-        return { label: 'Interview', className: 'text-sky-300' };
+        return { label: 'Interview', className: 'text-sky-700' };
     }
     if (p.bid_filled && !p.bid_applied) {
-        return { label: 'Filled', className: 'text-sky-300' };
+        return { label: 'Filled', className: 'text-sky-700' };
     }
     if (p.generation_status === 'ready') {
-        return { label: 'CV ready', className: 'text-teal-300' };
+        return { label: 'CV ready', className: 'text-emerald-700' };
     }
     if (p.generation_status === 'failed') {
-        return { label: 'CV failed', className: 'text-orange-300' };
+        return { label: 'CV failed', className: 'text-orange-700' };
     }
     if (p.generation_status === 'generating') {
-        return { label: 'CV…', className: 'text-blue-300' };
+        return { label: 'CV…', className: 'text-violet-700' };
     }
     if (p.generation_status === 'pending') {
-        return { label: 'Queued', className: 'text-blue-300/80' };
+        return { label: 'Queued', className: 'text-violet-700' };
     }
-    return { label: 'No CV', className: 'text-white/40' };
+    return { label: 'No CV', className: 'text-muted-foreground' };
 }
 
 function profileChipRank(p) {
@@ -184,7 +184,7 @@ function ProfilesLine({ profiles }) {
     const now = useNowTick(live);
 
     if (!list.length) {
-        return <p className="text-[11px] text-white/35">No matching profiles yet</p>;
+        return <p className="text-[11px] text-muted-foreground">No matching profiles yet</p>;
     }
 
     return (
@@ -199,10 +199,10 @@ function ProfilesLine({ profiles }) {
                         className="inline-flex min-w-0 items-baseline gap-1.5"
                         title={gen ? `${name}: ${meta.label} (${gen})` : `${name}: ${meta.label}`}
                     >
-                        <span className="truncate font-medium text-white/80">{shortName(p)}</span>
+                        <span className="truncate font-medium text-foreground/80">{shortName(p)}</span>
                         <span className={cn('shrink-0 font-semibold', meta.className)}>{meta.label}</span>
                         {meta.label === 'CV…' ? (
-                            <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-blue-300" />
+                            <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-violet-600" />
                         ) : null}
                     </li>
                 );
@@ -247,10 +247,10 @@ export default function JobLinkRowCard({
     return (
         <article
             className={cn(
-                'rounded-xl border border-white/[0.08] bg-[hsl(222_22%_10%/0.9)] transition-colors',
-                'hover:border-white/15 hover:bg-[hsl(222_22%_12%/0.95)]',
-                selected && 'border-primary/45 bg-primary/[0.07]',
-                busy && 'border-sky-500/25'
+                'rounded-2xl border border-border bg-card shadow-sm transition-colors',
+                'hover:border-primary/30 hover:shadow-md',
+                selected && 'border-primary/50 bg-primary/[0.04]',
+                busy && 'border-sky-300'
             )}
         >
             <div className="flex gap-3 p-3 sm:p-3.5">
@@ -267,20 +267,20 @@ export default function JobLinkRowCard({
                     <div className="flex flex-wrap items-start justify-between gap-2">
                         <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
                             <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
-                                <span className="font-mono text-[10px] tabular-nums text-white/35">#{rowNumber}</span>
-                                <span className="truncate text-[15px] font-semibold leading-snug text-white hover:text-primary">
+                                <span className="text-[10px] tabular-nums text-muted-foreground">#{rowNumber}</span>
+                                <span className="truncate text-[15px] font-semibold leading-snug text-foreground hover:text-primary">
                                     {company}
                                 </span>
                             </div>
-                            <p className="mt-0.5 truncate text-[12px] text-white/45">
+                            <p className="mt-0.5 truncate text-[12px] text-muted-foreground">
                                 {subtitle || '—'}
                                 {row.comment ? (
-                                    <span className="ml-2 text-amber-200/70">· {row.comment}</span>
+                                    <span className="ml-2 text-amber-700">· {row.comment}</span>
                                 ) : null}
                             </p>
                             {addedVisible ? (
-                                <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] tabular-nums text-white/60">
-                                    <Clock className="h-3 w-3 shrink-0 text-white/40" />
+                                <p className="mt-1 inline-flex items-center gap-1.5 text-[11px] tabular-nums text-muted-foreground">
+                                    <Clock className="h-3 w-3 shrink-0" />
                                     <span>
                                         Added {addedAt}
                                         {row.created_by_username ? ` · ${row.created_by_username}` : ''}
@@ -332,11 +332,11 @@ export default function JobLinkRowCard({
                             <RefreshCw className={cn('h-3.5 w-3.5', refetching && 'animate-spin')} />
                             Refresh
                         </Button>
-                        <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs text-white/70" onClick={onOpen}>
+                        <Button variant="ghost" size="sm" className="h-8 px-2.5 text-xs" onClick={onOpen}>
                             Open
                         </Button>
                         {applyUrl ? (
-                            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2.5 text-xs text-white/70" asChild>
+                            <Button variant="ghost" size="sm" className="h-8 gap-1 px-2.5 text-xs" asChild>
                                 <a href={applyUrl} target="_blank" rel="noopener noreferrer">
                                     <ExternalLink className="h-3.5 w-3.5" />
                                     Apply URL
@@ -346,7 +346,7 @@ export default function JobLinkRowCard({
 
                         <DropdownMenu>
                             <DropdownMenuTrigger asChild>
-                                <Button variant="ghost" size="icon" className="ml-auto h-8 w-8 text-white/55" title="More">
+                                <Button variant="ghost" size="icon" className="ml-auto h-8 w-8" title="More">
                                     <MoreHorizontal className="h-4 w-4" />
                                 </Button>
                             </DropdownMenuTrigger>
