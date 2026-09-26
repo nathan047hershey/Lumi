@@ -3734,6 +3734,23 @@ async function processReadyQueue(opts = {}) {
                         opened.expired = true;
                         break;
                     }
+                    const fieldsOnPage = Number(revealedEarly?.fieldCount || 0);
+                    if (revealedEarly?.formAlreadyOpen || revealedEarly?.hasFirstName || fieldsOnPage >= 3) {
+                        formOk = true;
+                        await logCourseEvent(item.id, 'form_detected', {
+                            reason: 'inputs_visible',
+                            fieldCount: fieldsOnPage,
+                            hasFirstName: !!revealedEarly?.hasFirstName
+                        }).catch(() => {});
+                        await setWorkProgress({
+                            kind: 'queue',
+                            phase: 'filling',
+                            label: 'Form is open — filling name and email…',
+                            company: item.company_name || '',
+                            applicationId: item.id
+                        }).catch(() => {});
+                        break;
+                    }
                     const detect = await chrome.tabs.sendMessage(opened.tabId, { type: 'DETECT_APPLY_FORM' });
                     if (detect?.ok && detect.data?.ok) {
                         formOk = true;
@@ -3758,7 +3775,11 @@ async function processReadyQueue(opts = {}) {
                         break;
                     }
                     // JD / careers pages: Apply is the only action. Do not treat as CAPTCHA/login.
-                    if (revealedEarly?.applyFound || revealedEarly?.clicked) {
+                    if (
+                        (revealedEarly?.applyFound || revealedEarly?.clicked)
+                        && !revealedEarly?.formAlreadyOpen
+                        && fieldsOnPage < 2
+                    ) {
                         await new Promise((r) => setTimeout(r, 1000));
                         continue;
                     }
@@ -6033,10 +6054,18 @@ async function ensureApplyFormVisible(tabId, opts = {}) {
                     }
                 }
 
+                const textInputs = [...document.querySelectorAll(
+                    'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="checkbox"]):not([type="radio"]):not([type="file"]), textarea, select, [role="combobox"]'
+                )].filter(visible);
+                const pageBits = (document.body?.innerText || '').slice(0, 3500);
+                const labeledIdentity = textInputs.length >= 2
+                    && /\b(first name|last name|e-?mail)\b/i.test(pageBits);
                 const formAlreadyOpen = !!(
                     document.querySelector('#first_name, [name="first_name"], input[autocomplete="given-name"]')
                     || document.querySelector('input#resume, input[name="resume"]')
                     || document.querySelector('#application-form, form#application-form, #greenhouse-job-application')
+                    || document.querySelector('input[type="email"], input[autocomplete="email"], input[name*="email" i]')
+                    || labeledIdentity
                 );
                 const applyFound = !!(apply && visible(apply));
                 let clicked = false;
