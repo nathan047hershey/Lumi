@@ -8904,15 +8904,20 @@ function handleExtensionMessage(msg, _sender, sendResponse) {
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
     }
-    if (msg?.type === 'BIDDER_ANSWER_SHOT') {
+    if (msg?.type === 'BIDDER_PAGE_SHOT') {
         const tabId = _sender?.tab?.id;
         const applicationId = Number(msg.applicationId) || 0;
         const stage = String(msg.stage || '').replace(/[^a-z0-9_]/gi, '').slice(0, 24);
-        if (!tabId || !applicationId || !/^ans_\d+$/.test(stage)) {
+        const scrollHeight = Number(msg.scrollHeight) || 0;
+        if (!tabId || !applicationId || !/^page_\d+$/.test(stage)) {
             sendResponse({ ok: false });
             return false;
         }
-        uploadScreenshot(applicationId, stage, tabId, { stayInApp: true, settleMs: 0 })
+        uploadScreenshot(applicationId, stage, tabId, {
+            stayInApp: true,
+            settleMs: 0,
+            scrollHeight
+        })
             .then((ok) => sendResponse({ ok: !!ok }))
             .catch(() => sendResponse({ ok: false }));
         return true;

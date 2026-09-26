@@ -396,7 +396,7 @@ function AuthShot({ courseId, filename, stage, isAdmin, imgClassName, onExpand, 
             alt={label}
             className={
                 imgClassName
-                || 'max-h-[min(56vh,32rem)] min-h-[18rem] w-full rounded border object-contain object-top bg-black/20'
+                || 'block h-auto min-h-[18rem] w-full bg-black/20'
             }
         />
     );
@@ -2710,6 +2710,14 @@ export default function AutoBidderDialog({
         if (monitorFrameFollowLive) {
             // Prefer the updating `live` frame while this course is the active bid.
             if (thisCourseActive || awaitingCaptcha) {
+                let pageIdx = -1;
+                monitorFrames.forEach((s, i) => {
+                    if (/^page_\d+$/i.test(String(s?.stage || ''))) pageIdx = i;
+                });
+                if (pageIdx >= 0) {
+                    setMonitorFrameIndex(pageIdx);
+                    return;
+                }
                 const liveIdx = monitorFrames.findIndex((s) => /^live$/i.test(String(s?.stage || '')));
                 if (liveIdx >= 0) {
                     setMonitorFrameIndex(liveIdx);

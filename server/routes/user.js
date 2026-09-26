@@ -3897,7 +3897,8 @@ router.get('/bid-courses/:id/screenshots/:filename', (req, res) => {
             try { bytes = require('fs').readFileSync(row.file_path); } catch (_) { bytes = null; }
         }
         if (!bytes || bytes.length < 32) return res.status(404).json({ error: 'Screenshot not found' });
-        res.setHeader('Content-Type', 'image/png');
+        const isJpeg = bytes[0] === 0xFF && bytes[1] === 0xD8;
+        res.setHeader('Content-Type', isJpeg ? 'image/jpeg' : 'image/png');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         res.setHeader('Pragma', 'no-cache');
         res.send(bytes);
@@ -3987,7 +3988,7 @@ router.post('/bid-courses/screenshot', (req, res) => {
         let imageBlob = String(body.image_base64 || '');
         const dataUrl = imageBlob.match(/^data:image\/\w+;base64,(.+)$/);
         if (dataUrl) imageBlob = dataUrl[1];
-        if (imageBlob.length > 1500000) imageBlob = '';
+        if (imageBlob.length > 4000000) imageBlob = '';
         // Upsert one DB row per stage (overwrite live.png path) instead of endless inserts.
         const existingShot = getOne(
             `SELECT id FROM bid_course_screenshots WHERE course_id = ? AND stage = ? ORDER BY id DESC LIMIT 1`,

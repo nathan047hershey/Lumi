@@ -1065,7 +1065,8 @@ router.get('/bid-courses/:id/screenshots/:filename', (req, res) => {
             try { bytes = require('fs').readFileSync(row.file_path); } catch (_) { bytes = null; }
         }
         if (!bytes || bytes.length < 32) return res.status(404).json({ error: 'Screenshot not found' });
-        res.setHeader('Content-Type', 'image/png');
+        const isJpeg = bytes[0] === 0xFF && bytes[1] === 0xD8;
+        res.setHeader('Content-Type', isJpeg ? 'image/jpeg' : 'image/png');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         res.setHeader('Pragma', 'no-cache');
         res.send(bytes);

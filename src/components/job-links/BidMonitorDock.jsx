@@ -1078,14 +1078,16 @@ export default function BidMonitorDock({
                             {/* Preview */}
                             <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-black/50">
                                 {imgSrc && !imgBroken ? (
-                                    <button type="button" className="block w-full cursor-zoom-in" onClick={onFullscreen} title="Full screen">
-                                        <img
-                                            key={imgSrc}
-                                            src={imgSrc}
-                                            alt={shotStage || 'Apply page'}
-                                            className={`max-h-[min(38vh,20rem)] min-h-[10rem] w-full object-contain object-top ${loading ? 'opacity-80' : ''}`}
-                                            onError={() => setImgBroken(true)}
-                                        />
+                                    <button type="button" className="block w-full cursor-zoom-in" onClick={onFullscreen} title="Scroll the page, or click for full screen">
+                                        <div className="max-h-[min(70vh,42rem)] overflow-y-auto overflow-x-hidden bg-black">
+                                            <img
+                                                key={imgSrc}
+                                                src={imgSrc}
+                                                alt={shotStage || 'Apply page'}
+                                                className={`block h-auto w-full ${loading ? 'opacity-80' : ''}`}
+                                                onError={() => setImgBroken(true)}
+                                            />
+                                        </div>
                                     </button>
                                 ) : (
                                     <div className="flex h-36 flex-col items-center justify-center gap-1 px-3 text-center text-xs text-white/40">

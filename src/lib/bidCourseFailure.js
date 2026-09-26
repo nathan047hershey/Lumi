@@ -298,6 +298,7 @@ export function sortScreenshotsForReview(shots) {
     const rank = (stage) => {
         const s = String(stage || '').toLowerCase();
         if (/^(after_submit|success|submitted|thank_you)$/.test(s)) return 0;
+        if (/^page_\d+$/.test(s)) return 1;
         if (/after_fill_done/.test(s)) return 1;
         if (/after_fill|pre_submit/.test(s)) return 2;
         if (/opened|form_/.test(s)) return 4;
@@ -323,6 +324,8 @@ export function screenshotStageLabel(stage) {
     if (s === 'captcha' || s === 'login_wall') return 'CAPTCHA / login';
     if (s === 'captcha_cleared') return 'CAPTCHA cleared';
     if (/^autofill_page_/i.test(s)) return s.replace(/_/g, ' ');
+    const page = s.match(/^page_(\d+)$/);
+    if (page) return `Page ${Number(page[1])}`;
     return stage || 'Screenshot';
 }
 

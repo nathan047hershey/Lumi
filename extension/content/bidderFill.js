@@ -3502,21 +3502,28 @@
         );
         const autoSubmit = !!payload.autoSubmit;
         const applicationId = payload.applicationId || null;
-        let answerShotN = 0;
-        const shotFilledAnswer = async (el) => {
+        let pageShotN = 0;
+        const captureFormPage = async () => {
             if (!applicationId) return;
-            try { el?.scrollIntoView?.({ block: 'center', inline: 'nearest' }); } catch (_) { /* ignore */ }
-            await sleep(60);
-            answerShotN += 1;
-            const stage = `ans_${String(answerShotN).padStart(2, '0')}`;
+            pageShotN += 1;
+            const stage = `page_${pageShotN}`;
+            const scrollHeight = Math.max(
+                document.documentElement?.scrollHeight || 0,
+                document.body?.scrollHeight || 0,
+                900
+            );
+            try {
+                window.scrollTo(0, 0);
+            } catch (_) { /* ignore */ }
             try {
                 await Promise.race([
                     chrome.runtime.sendMessage({
-                        type: 'BIDDER_ANSWER_SHOT',
+                        type: 'BIDDER_PAGE_SHOT',
                         applicationId,
-                        stage
+                        stage,
+                        scrollHeight
                     }),
-                    sleep(2200)
+                    sleep(8000)
                 ]);
             } catch (_) { /* shot is best-effort */ }
         };
@@ -3654,14 +3661,12 @@
                 if (wanted && valuesMatch(wanted, already, field.kind)) {
                     filled += 1;
                     if (field.required) requiredOk += 1;
-                    await shotFilledAnswer(fieldEl);
                     continue;
                 }
                 // One-time fill: do not keep rewriting a real answer.
                 if (shouldKeepExistingAnswer(field, already, wanted)) {
                     filled += 1;
                     if (field.required) requiredOk += 1;
-                    await shotFilledAnswer(fieldEl);
                     continue;
                 }
 
@@ -3695,7 +3700,6 @@
                         });
                         filled += 1;
                         if (field.required) requiredOk += 1;
-                        await shotFilledAnswer(fieldEl);
                         break;
                     }
                     if (attempt === maxTries) {
@@ -3784,10 +3788,7 @@
                             2 + round,
                             profile
                         );
-                        if (r?.ok && !isPlaceholderValue(readCurrentValue(f))) {
-                            n += 1;
-                            await shotFilledAnswer(el);
-                        }
+                        if (r?.ok && !isPlaceholderValue(readCurrentValue(f))) n += 1;
                         closeOpenSelectMenus();
                         await sleep(120);
                     }
@@ -3815,6 +3816,8 @@
                 filled += n;
                 stillBad = listRequiredGaps();
             }
+
+            await captureFormPage();
 
             if (stillBad.length === 0) {
                 const hasNext = !!document.querySelectorAll('button, a[role="button"], input[type="button"]').length

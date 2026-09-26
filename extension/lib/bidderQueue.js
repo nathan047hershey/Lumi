@@ -808,28 +808,96 @@ export async function setFileInputViaDebugger(tabId, file) {
     }
 }
 
-async function captureViaDebugger(tabId) {
+async function evalInTab(tabId, expression) {
+    const res = await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
+        expression,
+        returnByValue: true
+    });
+    return res?.result?.value;
+}
+
+/** Stretch a Greenhouse/ATS iframe to its form height, capture, then put the height back. */
+async function withFullFormHeight(tabId, scrollHeight, run) {
+    const px = Math.max(900, Math.min(14000, Number(scrollHeight) || 0));
+    let stretched = false;
+    try {
+        const info = await evalInTab(tabId, `(() => {
+            const px = ${px};
+            const frames = [...document.querySelectorAll('iframe')];
+            const target = frames.find((f) => /greenhouse|job_app|lever|ashby|myworkday|icims/i.test(f.src || ''))
+                || null;
+            if (target) {
+                target.dataset.lumiPrevH = target.style.height || '';
+                target.style.height = px + 'px';
+                return { stretched: true };
+            }
+            return { stretched: false, pageH: Math.max(document.documentElement.scrollHeight || 0, px) };
+        })()`);
+        stretched = !!info?.stretched;
+        await new Promise((r) => setTimeout(r, 180));
+        return await run(info?.pageH || px);
+    } finally {
+        if (stretched) {
+            await evalInTab(tabId, `(() => {
+                const frames = [...document.querySelectorAll('iframe')];
+                for (const f of frames) {
+                    if (!Object.prototype.hasOwnProperty.call(f.dataset, 'lumiPrevH')) continue;
+                    f.style.height = f.dataset.lumiPrevH || '';
+                    delete f.dataset.lumiPrevH;
+                }
+                return true;
+            })()`).catch(() => {});
+        }
+    }
+}
+
+async function captureViaDebugger(tabId, scrollHeight = 0) {
     const attached = await attachPageDebugger(tabId);
     if (!attached) return '';
     try {
         await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
     } catch (_) { /* Page domain may already be enabled */ }
-    const attempts = [
-        { format: 'png', fromSurface: true },
-        { format: 'png', fromSurface: false }
-    ];
-    for (const params of attempts) {
-        try {
-            const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', params);
-            if (result?.data) return `data:image/png;base64,${result.data}`;
-        } catch (err) {
-            const msg = String(err?.message || err || '');
-            if (/showing error page|chrome-error/i.test(msg)) {
-                throw new Error('cannot capture Chrome error page (site failed to load)');
+    try {
+        return await withFullFormHeight(tabId, scrollHeight, async (pageH) => {
+            let metrics = null;
+            try {
+                metrics = await chrome.debugger.sendCommand({ tabId }, 'Page.getLayoutMetrics');
+            } catch (_) { /* metrics optional */ }
+            const css = metrics?.cssContentSize || metrics?.contentSize || {};
+            const width = Math.max(800, Math.min(1400, Math.ceil(Number(css.width) || 1200)));
+            const height = Math.max(
+                900,
+                Math.min(14000, Math.ceil(Number(css.height) || Number(pageH) || Number(scrollHeight) || 1600))
+            );
+            const shots = [
+                {
+                    format: 'jpeg',
+                    quality: 64,
+                    captureBeyondViewport: true,
+                    fromSurface: true,
+                    clip: { x: 0, y: 0, width, height, scale: 1 }
+                },
+                { format: 'jpeg', quality: 60, fromSurface: true }
+            ];
+            for (const params of shots) {
+                try {
+                    const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', params);
+                    if (result?.data && result.data.length > 800) {
+                        return `data:image/jpeg;base64,${result.data}`;
+                    }
+                } catch (err) {
+                    const msg = String(err?.message || err || '');
+                    if (/showing error page|chrome-error/i.test(msg)) {
+                        throw new Error('cannot capture Chrome error page (site failed to load)');
+                    }
+                }
             }
-        }
+            return '';
+        });
+    } catch (err) {
+        if (/chrome error page/i.test(String(err?.message || err))) throw err;
+        return '';
     }
-    return '';
 }
 
 async function captureTabScreenshot(tabId, opts = {}) {
@@ -891,9 +959,9 @@ async function captureTabScreenshot(tabId, opts = {}) {
     };
 
     if (stayInApp) {
-        const quiet = await captureViaDebugger(tabId);
+        const quiet = await captureViaDebugger(tabId, opts.scrollHeight);
         if (quiet) return quiet;
-        throw new Error('screenshot skipped so the job tab stays in the background');
+        throw new Error('full-page screenshot failed without focusing the job tab');
     }
 
     const prevTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
@@ -1116,7 +1184,8 @@ export async function uploadScreenshot(applicationId, stage, tabId, opts = {}) {
             body: { application_id: applicationId, stage, image_base64: dataUrl }
         });
         if (/^(live|opened|mid_fill|after_fill|after_fill_done|no_form|pre_submit|captcha|login_wall|reopened|after_submit)$/.test(String(stage))
-            || /^autofill_page_/i.test(String(stage))) {
+            || /^autofill_page_/i.test(String(stage))
+            || /^page_\d+$/i.test(String(stage))) {
             await setQueueState({ liveShotAt: Date.now() }).catch(() => {});
         }
         return true;
