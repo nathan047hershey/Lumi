@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useNavigate } from '@/next/router';
 import {
     Camera,
     ExternalLink,
@@ -586,8 +587,34 @@ function profileStatusSuffix(p, bidOutcome) {
  * Job Links Auto Bidder — bid selected links only, manage Bid Courses in-popup.
  * @param {object[]} selectedLinks — [{ id, company_name, position_title, job_url, available_profiles? }]
  */
-export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selectedLinks = [], panelToken = 0 }) {
+function BidderShell({ pageMode, open, onOpenChange, children }) {
+    if (pageMode) {
+        return (
+            <div className="flex w-full flex-col rounded-xl border border-white/[0.08] bg-[hsl(240_6%_9%)]">
+                {children}
+            </div>
+        );
+    }
+    return (
+        <Dialog open={open} onOpenChange={onOpenChange}>
+            <DialogContent className="flex h-[min(96vh,60rem)] max-h-[96vh] w-[min(98vw,80rem)] max-w-7xl flex-col gap-0 overflow-hidden border-white/[0.08] bg-[hsl(240_6%_9%)] p-0 shadow-[0_24px_80px_-12px_rgba(0,0,0,0.7),0_0_0_1px_hsla(187,85%,53%,0.1)] sm:rounded-2xl">
+                {children}
+            </DialogContent>
+        </Dialog>
+    );
+}
+
+export default function AutoBidderDialog({
+    open,
+    onOpenChange,
+    isAdmin,
+    selectedLinks = [],
+    panelToken = 0,
+    pageMode = false
+}) {
     const coursesApi = isAdmin ? adminAPI : userAPI;
+    const navigate = useNavigate();
+    const jobLinksHref = isAdmin ? '/admin/pipeline' : '/user/pipeline';
     const [courses, setCourses] = useState([]);
     const [outcomeFilter, setOutcomeFilter] = useState('all'); // all|success|failed|filled|attention|running
     const [selectedId, setSelectedId] = useState(null);
@@ -701,12 +728,12 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     }, [monitorActive, dockMinimized]);
 
     useEffect(() => {
-        if (!panelToken || panelToken === seenPanelTokenRef.current) return;
+        if (pageMode || !panelToken || panelToken === seenPanelTokenRef.current) return;
         seenPanelTokenRef.current = panelToken;
         setDockOpen(true);
         setDockMinimized(false);
         onOpenChange?.(false);
-    }, [panelToken, onOpenChange]);
+    }, [panelToken, onOpenChange, pageMode]);
 
     useEffect(() => {
         if (selectedId) writeMonitorStorage({ courseId: Number(selectedId) });
@@ -2824,14 +2851,17 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     const dockCvEditHref = dockCvProfileId
         ? `/user/generate/${dockCvProfileId}${dockCvApplicationId ? `?applicationId=${dockCvApplicationId}` : ''}`
         : '';
+    const Heading = pageMode ? 'h2' : DialogTitle;
+    const Subcopy = pageMode ? 'p' : DialogDescription;
 
     return (
         <>
-        <Dialog open={open} onOpenChange={onOpenChange}>
-            <DialogContent className="flex h-[min(96vh,60rem)] max-h-[96vh] w-[min(98vw,80rem)] max-w-7xl flex-col gap-0 overflow-hidden border-white/[0.08] bg-[hsl(240_6%_9%)] p-0 shadow-[0_24px_80px_-12px_rgba(0,0,0,0.7),0_0_0_1px_hsla(187,85%,53%,0.1)] sm:rounded-2xl">
-                <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-5 sm:p-6">
+        <BidderShell pageMode={pageMode} open={open} onOpenChange={onOpenChange}>
+                <div className={pageMode
+                    ? 'flex flex-col gap-3 p-5 sm:p-6'
+                    : 'flex min-h-0 flex-1 flex-col gap-3 overflow-hidden p-5 sm:p-6'}>
                 <DialogHeader className="shrink-0 space-y-0">
-                    <DialogTitle className="font-display flex items-center gap-3 text-xl font-semibold tracking-tight text-white">
+                    <Heading className="font-display flex w-full items-center gap-3 text-xl font-semibold tracking-tight text-white">
                         <span
                             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-[13px] font-bold text-[hsl(240_6%_10%)]"
                             style={{
@@ -2846,18 +2876,31 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                             <span className="leading-none">Lumi</span>
                             <span className="text-[11px] font-medium tracking-normal text-white/40">Auto Bidder</span>
                         </span>
-                    </DialogTitle>
+                        {pageMode ? (
+                            <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                className="ml-auto h-8"
+                                onClick={() => navigate(jobLinksHref)}
+                            >
+                                Job links
+                            </Button>
+                        ) : null}
+                    </Heading>
                     <div
                         className="mt-3 h-px w-16"
                         style={{ background: 'linear-gradient(90deg, hsl(199 95% 55%), transparent)' }}
                         aria-hidden
                     />
-                    <DialogDescription className="sr-only">
+                    <Subcopy className="sr-only">
                         Auto Bidder — select profile and process job links
-                    </DialogDescription>
+                    </Subcopy>
                 </DialogHeader>
 
-                <DialogBody className="flex min-h-0 flex-1 flex-col gap-3 overflow-hidden">
+                <DialogBody className={pageMode
+                    ? 'flex flex-col gap-3'
+                    : 'flex min-h-0 flex-1 flex-col gap-3 overflow-hidden'}>
                 {awaitingCaptcha && (
                     <div className="shrink-0 rounded-lg border border-amber-400/60 bg-amber-500/15 px-3 py-2.5 text-sm text-amber-50">
                         <div className="flex flex-wrap items-center gap-2">
@@ -2940,6 +2983,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                     <ModalTabs
                         value={workspaceTab}
                         onValueChange={setWorkspaceTab}
+                        className={pageMode ? 'h-auto flex-none overflow-visible' : undefined}
                     >
                         <ModalTabsList>
                             <ModalTabsTrigger value="setup">Setup</ModalTabsTrigger>
@@ -2959,8 +3003,9 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                             </ModalTabsTrigger>
                         </ModalTabsList>
 
-                        <ModalTabsContent value="setup" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+                        <ModalTabsContent value="setup" className={pageMode ? 'h-auto flex-none overflow-visible' : undefined}>
                             <AutoBidderSetupPanel
+                                pageMode={pageMode}
                                 profileId={profileId}
                                 onProfileChange={onProfileChange}
                                 selectableProfiles={selectableProfiles}
@@ -3119,8 +3164,10 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                             />
                         </ModalTabsContent>
 
-                        <ModalTabsContent value="courses">
-                            <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/40 p-2">
+                        <ModalTabsContent value="courses" className={pageMode ? 'h-auto flex-none overflow-visible' : undefined}>
+                            <div className={pageMode
+                                ? 'flex flex-col rounded-xl border border-border/70 bg-card/40 p-2'
+                                : 'flex min-h-0 flex-1 flex-col overflow-hidden rounded-xl border border-border/70 bg-card/40 p-2'}>
                                 <div className="mb-2 flex flex-wrap items-center gap-1.5 border-b border-border/40 pb-2">
                                     {[
                                         { id: 'all', label: 'All', n: courses.length },
@@ -3159,7 +3206,9 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                                 <div
                                     ref={courseListScrollRef}
                                     onScroll={onUserScroll('list')}
-                                    className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5"
+                                    className={pageMode
+                                        ? 'space-y-1.5 pr-0.5'
+                                        : 'min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain pr-0.5'}
                                     style={{ WebkitOverflowScrolling: 'touch' }}
                                 >
                                     {!filteredCourses.length && (
@@ -3257,11 +3306,13 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                             </div>
                         </ModalTabsContent>
 
-                        <ModalTabsContent value="form">
+                        <ModalTabsContent value="form" className={pageMode ? 'h-auto flex-none overflow-visible' : undefined}>
                             <div
                                 ref={detailScrollRef}
                                 onScroll={onUserScroll('detail')}
-                                className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1"
+                                className={pageMode
+                                    ? 'space-y-3 pr-1'
+                                    : 'min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1'}
                                 style={{ WebkitOverflowScrolling: 'touch' }}
                             >
                                 {!detail && (
@@ -3401,8 +3452,10 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                             </div>
                         </ModalTabsContent>
 
-                        <ModalTabsContent value="log">
-                            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
+                        <ModalTabsContent value="log" className={pageMode ? 'h-auto flex-none overflow-visible' : undefined}>
+                            <div className={pageMode
+                                ? 'space-y-3 pr-1'
+                                : 'min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1'}>
                                 {!detail && (
                                     <p className="text-sm text-muted-foreground">
                                         Select a Bid course to see answers and timeline.
@@ -3542,8 +3595,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                     </ModalTabs>
                 </DialogBody>
                 </div>
-            </DialogContent>
-        </Dialog>
+        </BidderShell>
         <ScreenshotLightbox
             open={!!lightboxShot}
             onClose={() => setLightboxShot(null)}

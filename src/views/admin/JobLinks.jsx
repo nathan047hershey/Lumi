@@ -29,7 +29,7 @@
 // consistent.
 // =============================================================================
 
-import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useLocation, useSearchParams } from '@/next/router';
 import {
     Building2,
@@ -97,20 +97,7 @@ import AppPage from '@/components/AppPage';
 import PageCommandBar from '@/components/PageCommandBar';
 import ListToolbar from '@/components/ListToolbar';
 import JobLinkRowCard from '@/components/job-links/JobLinkRowCard';
-const AutoBidderDialog = lazy(() => import('@/components/job-links/AutoBidderDialog'));
-
-const BID_MONITOR_STORAGE_KEY = 'lumi_bid_monitor_v1';
-
-function readBidMonitorActive() {
-    try {
-        const raw = localStorage.getItem(BID_MONITOR_STORAGE_KEY);
-        if (!raw) return false;
-        const parsed = JSON.parse(raw);
-        return !!parsed?.active;
-    } catch {
-        return false;
-    }
-}
+import { rememberLumiBidLinks } from '@/lib/lumiBidPageLinks';
 
 // -----------------------------------------------------------------------------
 // Constants
@@ -1592,21 +1579,28 @@ function JobLinks({ embedded = false }) {
     const [selectedIds, setSelectedIds] = useState(() => readSelectedIds());
     const [bulkCopyOpen, setBulkCopyOpen] = useState(false);
     const [bulkCopied, setBulkCopied] = useState(false);
-    const [autoBidderOpen, setAutoBidderOpen] = useState(false);
-    const [autoBidderMounted, setAutoBidderMounted] = useState(() => readBidMonitorActive());
-    const [lumiPanelToken, setLumiPanelToken] = useState(0);
     const [biddingBanner, setBiddingBanner] = useState('');
     const isAdminPath = location.pathname.startsWith('/admin');
 
-    const openAutoBidder = useCallback(() => {
-        setAutoBidderMounted(true);
-        setAutoBidderOpen(false);
-        setLumiPanelToken((n) => n + 1);
-    }, []);
-
-    useEffect(() => {
-        if (autoBidderOpen) setAutoBidderMounted(true);
-    }, [autoBidderOpen]);
+    const openLumiPage = useCallback((explicitRows) => {
+        const source = Array.isArray(explicitRows) && explicitRows.length
+            ? explicitRows
+            : rows.filter((r) => selectedIds.has(r.id));
+        const links = rememberLumiBidLinks(source.map((r) => ({
+            id: r.id,
+            company_name: r.company_name,
+            position_title: r.position_title,
+            job_url: primaryJobUrl(r),
+            job_apply_url: r.job_apply_url,
+            source_url: r.source_url,
+            techstack: r.techstack,
+            job_description: r.job_description,
+            available_profiles: r.available_profiles || []
+        })));
+        const ids = links.map((l) => l.id).filter(Boolean).join(',');
+        const base = isAdminPath ? '/admin/pipeline/lumi' : '/user/pipeline/lumi';
+        navigate(ids ? `${base}?ids=${ids}` : base);
+    }, [rows, selectedIds, isAdminPath, navigate]);
 
     useEffect(() => {
         writeSelectedIds(selectedIds);
@@ -2210,7 +2204,7 @@ function JobLinks({ embedded = false }) {
                                 <Button
                                     size="sm"
                                     className="h-10"
-                                    onClick={openAutoBidder}
+                                    onClick={() => openLumiPage()}
                                     title={selectedIds.size ? `Bid ${selectedIds.size} selected` : 'Select links or use row Bid'}
                                 >
                                     <Zap className="h-4 w-4" />
@@ -2355,7 +2349,7 @@ function JobLinks({ embedded = false }) {
                         <div className="flex flex-wrap items-center gap-2 rounded-xl border border-primary/35 bg-primary/10 px-4 py-2.5 text-sm">
                             <Zap className="h-4 w-4 shrink-0 text-primary" />
                             <span className="min-w-0 flex-1">{biddingBanner}</span>
-                            <Button size="sm" variant="outline" className="h-7" onClick={openAutoBidder}>
+                            <Button size="sm" variant="outline" className="h-7" onClick={() => openLumiPage()}>
                                 Open Lumi
                             </Button>
                         </div>
@@ -2421,7 +2415,7 @@ function JobLinks({ embedded = false }) {
                                         onToggleAvailable={() => handleToggleAvailable(row)}
                                         onBid={() => {
                                             setSelectedIds(new Set([row.id]));
-                                            openAutoBidder();
+                                            openLumiPage([row]);
                                         }}
                                         onRefetch={() => handleRefetch(row)}
                                         refetching={refreshingRowIds.has(row.id)}
@@ -2456,29 +2450,6 @@ function JobLinks({ embedded = false }) {
                 }}
             />
 
-            {autoBidderMounted ? (
-                <Suspense fallback={null}>
-                    <AutoBidderDialog
-                        open={autoBidderOpen}
-                        onOpenChange={setAutoBidderOpen}
-                        panelToken={lumiPanelToken}
-                        isAdmin={isAdminPath}
-                        selectedLinks={rows
-                            .filter((r) => selectedIds.has(r.id))
-                            .map((r) => ({
-                                id: r.id,
-                                company_name: r.company_name,
-                                position_title: r.position_title,
-                                job_url: primaryJobUrl(r),
-                                job_apply_url: r.job_apply_url,
-                                source_url: r.source_url,
-                                techstack: r.techstack,
-                                job_description: r.job_description,
-                                available_profiles: r.available_profiles || []
-                            }))}
-                    />
-                </Suspense>
-            ) : null}
 
             {/*
                 View-detail modal. Reads the row out of `viewRow` and

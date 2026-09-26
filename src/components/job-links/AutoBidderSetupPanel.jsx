@@ -72,6 +72,7 @@ export default function AutoBidderSetupPanel({
     onCheckLumi,
     profiles,
     lumiPrefs = null,
+    pageMode = false,
     unattended,
     captchaHelper,
     uploadCoverLetter,
@@ -112,8 +113,8 @@ export default function AutoBidderSetupPanel({
     ].filter(Boolean).join(' · ');
 
     return (
-        <div className="flex min-h-0 flex-1 flex-col gap-0 overflow-hidden">
-            <div className="min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1">
+        <div className={pageMode ? 'flex flex-col gap-0' : 'flex min-h-0 flex-1 flex-col gap-0 overflow-hidden'}>
+            <div className={pageMode ? 'space-y-3 pr-1' : 'min-h-0 flex-1 space-y-3 overflow-y-auto overscroll-contain pr-1'}>
                 <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-white/45">
                     <span><span className="font-semibold text-emerald-300">APPLIED</span></span>
                     <span><span className="font-semibold text-sky-300">FILLED</span></span>

@@ -16,6 +16,7 @@ import Developers from './views/admin/Developers';
 import AdminJobLinks from './views/admin/JobLinks';
 import Inbox from './views/user/Inbox';
 import JobLinkDetail from './views/JobLinkDetail';
+import LumiBidPage from './views/LumiBidPage';
 import UserDashboard from './views/user/Dashboard';
 import UserStatsDashboard from './views/user/UserStatsDashboard';
 import ProfileView from './views/user/ProfileView';
@@ -123,6 +124,7 @@ function App() {
 
                 <Route path="pipeline" element={<PipelineHub />}>
                     <Route index element={<AdminJobLinks embedded />} />
+                    <Route path="lumi" element={<LumiBidPage />} />
                     <Route path="applications" element={<AdminApplications embedded />} />
                     <Route path="interviews" element={<AdminInterviewRequests embedded />} />
                     <Route path="links/:id" element={<JobLinkDetail />} />
@@ -155,6 +157,7 @@ function App() {
 
                 <Route path="pipeline" element={<PipelineHub />}>
                     <Route index element={<AdminJobLinks embedded />} />
+                    <Route path="lumi" element={<LumiBidPage />} />
                     <Route path="applications" element={<Applications embedded />} />
                     <Route path="interviews" element={<InterviewRequests embedded />} />
                     <Route path="links/:id" element={<JobLinkDetail />} />
