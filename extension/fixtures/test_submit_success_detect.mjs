@@ -95,7 +95,7 @@ const truePos = evaluateSubmitSuccessPage({
     hasSubmitControl: false,
     emptyVisibleFields: 0
 });
-checks.push(['real thank-you is success', truePos.ok === true]);
+checks.push(['thank-you sentence with no confirmation view is not applied', truePos.ok === false]);
 
 const headingOnlyOnForm = evaluateSubmitSuccessPage({
     text: ashbyFormText,
@@ -138,7 +138,7 @@ const thankYouFormGone = evaluateSubmitSuccessPage({
     hasSubmitControl: false,
     formPresent: false
 });
-checks.push(['thank-you after the form is gone is applied', thankYouFormGone.ok === true]);
+checks.push(['thank-you sentence after the form is gone is not applied', thankYouFormGone.ok === false]);
 
 const crexiConfirmation = evaluateSubmitSuccessPage({
     text: 'Thanks for reaching out!\nWe\'re excited to learn more about you.\nView more jobs at Crexi\nBack to job post\nTrack your application\nInitial screen\nTeam interview\nOnsite interview\nOffer',
@@ -188,22 +188,20 @@ const customConfirmation = evaluateSubmitSuccessPage({
     text: 'Thanks for reaching out!\nWe are excited to learn more about you.',
     headings: ['Thanks for reaching out!'],
     formPresent: false,
-    atsHost: true,
-    formReplacedAfterAttempt: true,
-    confirmationShell: false
+    confirmationShell: false,
+    confirmationMounted: true
 });
-checks.push(['form replaced on the job site is applied', customConfirmation.ok === true]);
-checks.push(['form replaced reason', customConfirmation.reason === 'form_replaced']);
+checks.push(['confirmation view with the form gone is applied', customConfirmation.ok === true]);
+checks.push(['confirmation view reason', customConfirmation.reason === 'confirmation_view']);
 
-const longConfirmation = evaluateSubmitSuccessPage({
-    text: `${'Thanks for reaching out. '.repeat(80)}View more jobs.`,
-    headings: [],
+const sentenceOnly = evaluateSubmitSuccessPage({
+    text: `${'Thanks for reaching out. '.repeat(20)}`,
+    headings: ['Thanks for reaching out!'],
     formPresent: false,
     atsHost: true,
     formReplacedAfterAttempt: true
 });
-checks.push(['long confirmation with no heading is applied', longConfirmation.ok === true]);
-checks.push(['long confirmation reason', longConfirmation.reason === 'form_replaced']);
+checks.push(['a missing form without a confirmation view is not applied', sentenceOnly.ok === false]);
 
 const stillTheForm = evaluateSubmitSuccessPage({
     text: 'Attach your resume\nSubmit application',

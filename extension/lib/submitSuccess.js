@@ -22,12 +22,6 @@ function headingList(headings) {
     return (Array.isArray(headings) ? headings : []).map((h) => String(h || '').replace(/\s+/g, ' ').trim());
 }
 
-function isStrongThankYou(body, headings) {
-    const text = String(body || '');
-    if (STRONG_THANK_YOU_RE.test(text)) return true;
-    return headingList(headings).some((h) => STRONG_THANK_YOU_RE.test(h));
-}
-
 const JOB_CLOSED_RE = /\b(?:no longer (?:available|accepting)|job (?:has been )?closed|position (?:has been )?filled|this (?:job|position) (?:is|has been) (?:closed|filled))\b/i;
 
 /**
@@ -51,9 +45,10 @@ export function evaluateSubmitResponse({ url = '', status = 0, body = '' } = {})
 }
 
 /**
- * Applied when the submit response was accepted, or the apply form was
- * replaced by that site's confirmation view. A thank-you sentence on an
- * open form is not a finished bid.
+ * Check the bid the way a tracker does.
+ * Applied only when this attempt's submit was accepted, or the apply form
+ * is gone and the site's confirmation view is mounted.
+ * A thank-you sentence is not a state. An open form is still filling.
  */
 export function evaluateSubmitSuccessPage({
     text = '',
@@ -67,15 +62,13 @@ export function evaluateSubmitSuccessPage({
     confirmationShell = false,
     confirmationMounted = false,
     applicationIdInUrl = false,
-    submitAccepted = false,
-    formReplacedAfterAttempt = false,
-    atsHost = false
+    submitAccepted = false
 } = {}) {
     const body = String(text || '');
     const heads = headingList(headings);
     const headingHit = heads.some((h) => SUCCESS_HEADING_RE.test(h));
     const bodyHit = SUCCESS_RE.test(body);
-    const shell = !!confirmationShell || !!applicationIdInUrl || !!confirmationMounted;
+    const confirmationView = !!confirmationShell || !!applicationIdInUrl || !!confirmationMounted;
     const formOpen = formPresent === true
         || (formPresent == null && !!hasSubmitControl && (
             Number(visibleFieldCount) >= 1 || Number(radioCount) >= 1
@@ -84,32 +77,22 @@ export function evaluateSubmitSuccessPage({
     if (submitAccepted) {
         return { ok: true, reason: 'submit_accepted' };
     }
-
     if (hasValidationErrors || SUCCESS_NEGATIVE_RE.test(body)) {
         return { ok: false, reason: 'validation_errors' };
     }
     if (JOB_CLOSED_RE.test(body)) {
         return { ok: false, reason: 'job_closed' };
     }
-
-    if (shell && !formOpen) {
+    if (formOpen) {
+        return { ok: false, reason: (bodyHit || headingHit) ? 'form_still_open' : 'no_match' };
+    }
+    if (confirmationView) {
         if (applicationIdInUrl && !confirmationShell && !confirmationMounted) {
             return { ok: true, reason: 'application_id' };
         }
         return { ok: true, reason: confirmationMounted && !confirmationShell ? 'confirmation_view' : 'confirmation_shell' };
     }
-    if (formOpen) {
-        return { ok: false, reason: (bodyHit || headingHit) ? 'form_still_open' : 'no_match' };
-    }
-    if (formReplacedAfterAttempt && atsHost) {
-        const loading = body.trim().length < 40 || /^loading\b/i.test(body.trim());
-        if (!loading) return { ok: true, reason: 'form_replaced' };
-    }
-    if (!bodyHit && !headingHit) return { ok: false, reason: 'no_match' };
-    return {
-        ok: true,
-        reason: isStrongThankYou(body, heads) ? 'strong_thank_you' : (bodyHit ? 'body' : 'heading')
-    };
+    return { ok: false, reason: 'no_match' };
 }
 
 /** Pick the best frame result: any SUCCESS wins; else keep the most informative fail. */
