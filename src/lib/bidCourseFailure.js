@@ -196,7 +196,7 @@ export function isFailureEvent(eventType, meta) {
 export function isSuccessEvent(eventType) {
     const t = String(eventType || '');
     if (/success_revoked|false_success_cleared/i.test(t)) return false;
-    return /marked_applied|submitted_ok|mark_applied|submit_success_detected/i.test(t);
+    return /marked_applied|submitted_ok|mark_applied|submit_success_detected|run_success/i.test(t);
 }
 
 export function isFilledEvent(eventType) {

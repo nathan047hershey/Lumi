@@ -4365,6 +4365,10 @@ async function processReadyQueue(opts = {}) {
             // Submit success path — proof screenshot defaults to site thank-you / success message.
             // Never treat engine submitClicked as intentional when Auto-submit is OFF.
             submitted = !!fillStats?.submitClicked && !!prefs.autoSubmit;
+            if (!submitted && opened?.tabId) {
+                const alreadyConfirmed = await detectSubmitSuccess(opened.tabId).catch(() => false);
+                if (alreadyConfirmed) submitted = true;
+            }
             if (fillStats?.submitClicked && !prefs.autoSubmit) {
                 await logCourseEvent(item.id, 'submit_suppressed', {
                     reason: 'auto_submit_off',
@@ -4776,7 +4780,8 @@ async function processReadyQueue(opts = {}) {
                         });
                         await setAppRunState(item.id, 'success', {
                             tabId: opened.tabId,
-                            eventType: 'run_success'
+                            eventType: 'marked_applied',
+                            missingRequired: []
                         }).catch(() => {});
                         await watchLearnAfterSuccess(opened.tabId, item.id, {
                             source: 'auto_watch'
@@ -4871,13 +4876,33 @@ async function processReadyQueue(opts = {}) {
                 );
             }
 
-            // Pause for Next unless autoNext
-            if (!prefs.autoNext) {
+            // A confirmed application ends this bid. The panel must show Applied, not Bidding.
+            if (siteSuccess && i >= items.length - 1) {
+                await setQueueState({
+                    running: false,
+                    status: 'done',
+                    lastTabId: null,
+                    lastApplicationId: item.id,
+                    lastStatusEvent: 'marked_applied',
+                    lastStatusAt: Date.now(),
+                    lastStatusMeta: { success: true, via: 'site_confirmation' },
+                    runState: 'success',
+                    missingRequired: [],
+                    queueEndedAt: Date.now()
+                }).catch(() => {});
+            } else if (!prefs.autoNext) {
                 await setQueueState({
                     running: true,
                     status: 'awaiting_next',
                     lastTabId: null,
-                    lastApplicationId: item.id
+                    lastApplicationId: item.id,
+                    ...(siteSuccess ? {
+                        lastStatusEvent: 'marked_applied',
+                        lastStatusAt: Date.now(),
+                        lastStatusMeta: { success: true, via: 'site_confirmation' },
+                        runState: 'success',
+                        missingRequired: []
+                    } : {})
                 });
                 await notify('Bidder', 'Click Next in Auto Bidder / Live monitor to continue');
                 await waitForBidderNext();
@@ -5091,6 +5116,11 @@ async function waitForBidderNext(timeoutMs = 60 * 60 * 1000) {
             return;
         }
         if (st?.stopRequested) return;
+        // Site already confirmed this application — do not sit on "bidding" waiting for Next.
+        if (
+            String(st?.status || '') === 'done'
+            && /marked_applied/i.test(String(st?.lastStatusEvent || ''))
+        ) return;
         if (st?.pauseRequested) {
             const pg = await waitWhileBidderPaused();
             if (pg.stopped) return;
