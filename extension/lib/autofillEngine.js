@@ -157,11 +157,10 @@ export function lessonFillsToAnswers(fills, source = 'fill_lesson') {
             const label = String(f?.label || f?.fieldLabel || f?.field_key || f?.id || '').trim();
             const answer = String(f?.answer ?? f?.value ?? '').trim();
             if (!label || !answer) return null;
-            const choiceQ = /\b(race|ethnicity|veteran|gender|disabilit|hispanic|latino)\b/i.test(label);
-            const cityTyped = /\b[A-Z]{2}\s+\d{5}\b/.test(answer) || (/palo alto/i.test(answer) && /\d{5}/.test(answer));
-            if (choiceQ && cityTyped) return null;
-            // Replay selects and short choices. Do not paste the previous bid's essay again.
-            if (!choiceQ && answer.length > 80) return null;
+            const choiceQ = /\b(race|ethnicity|veteran|gender|disabilit|hispanic|latino|how do you identify)\b/i.test(label);
+            const cityTyped = /\b[A-Z]{2}\s+\d{5}\b/.test(answer) || /\bpalo alto\b/i.test(answer);
+            // Choice questions keep one option. Text questions are answered fresh each job.
+            if (!choiceQ || cityTyped) return null;
             return {
                 id: String(f.id || label).slice(0, 120),
                 label,

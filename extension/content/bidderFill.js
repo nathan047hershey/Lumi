@@ -1121,7 +1121,14 @@
     }
 
     function setNativeValue(el, value) {
-        const str = value == null ? '' : String(value);
+        let str = value == null ? '' : String(value);
+        try {
+            const guard = window.__lumiQuestionReq?.guard;
+            if (el && guard && window.__lumiQuestionReq.looksLikeLocation(str)) {
+                const next = guard(el, str, '');
+                if (next?.text) str = next.text;
+            }
+        } catch (_) { /* ignore */ }
         if (window.__lumiPageFill?.setTextValue) {
             try {
                 const r = window.__lumiPageFill.setTextValue(el, str, { blur: true });
@@ -1595,6 +1602,13 @@
         const helper = cm();
         let raw = String(wanted || '').trim();
         if (!raw || !el) return { ok: false, chosen: '', reason: 'empty' };
+        try {
+            const guarded = window.__lumiQuestionReq?.guard?.(el, raw, kind);
+            if (guarded?.text) {
+                raw = guarded.text;
+                if (guarded.kind) kind = guarded.kind;
+            }
+        } catch (_) { /* ignore */ }
 
         // Essay dumped into a fixed dropdown (e.g. REST APIs) → short option aliases + open-only.
         if (kind === 'race_ethnicity' || labelLooksLikeRace(label)) {
@@ -2451,7 +2465,10 @@
                 if (['hidden', 'tel', 'email', 'checkbox', 'radio', 'file'].includes(type)) return false;
                 if (isDialCountryOnly({ kind: 'city' }, el)) return false;
                 const lab = labelFor(el);
-                if (labelLooksLikeRace(lab)) return false;
+                const beside = window.__lumiQuestionReq?.beside?.(el) || '';
+                if (labelLooksLikeRace(lab) || labelLooksLikeRace(beside)
+                    || window.__lumiQuestionReq?.requirement?.(beside)
+                    || window.__lumiQuestionReq?.requirement?.(lab)) return false;
                 return /location\s*\(?\s*city|\bcity\s*\*|^\s*city\b/i.test(lab);
             });
             if (cityEl) {
@@ -2528,15 +2545,25 @@
             if (labelLooksLikeSkillDescribe(field.label) || kind === 'skill_project_brief') {
                 want = skillDescribeAnswer(profile, field.label);
             }
-            const liveLab = labelFor(el) || field.label || '';
-            if (labelLooksLikeRace(liveLab) || labelLooksLikeRace(field.label)) {
+            const beside = window.__lumiQuestionReq?.beside?.(el) || '';
+            const liveLab = beside || labelFor(el) || field.label || '';
+            const req = window.__lumiQuestionReq?.requirement?.(beside)
+                || window.__lumiQuestionReq?.requirement?.(liveLab)
+                || window.__lumiQuestionReq?.requirement?.(field.label || '')
+                || '';
+            const canonical = window.__lumiQuestionReq?.canonical?.(req) || '';
+            if (canonical) want = canonical;
+            else if (labelLooksLikeRace(liveLab) || labelLooksLikeRace(field.label)) {
                 want = 'Black or African American';
             }
+            const choiceKind = canonical
+                ? req
+                : ((labelLooksLikeRace(liveLab) || labelLooksLikeRace(field.label)) ? 'race_ethnicity' : kind);
             let res = await fillCombobox(
                 el,
                 want,
-                (labelLooksLikeRace(liveLab) || labelLooksLikeRace(field.label)) ? 'race_ethnicity' : kind,
-                forceOpen ? 'open' : strategy,
+                choiceKind,
+                forceOpen || canonical ? 'open' : strategy,
                 profile,
                 liveLab || field.label || ''
             );
@@ -2545,14 +2572,22 @@
                 if (sel?.ok) return { ...sel, strategy: 'native_select' };
             }
             // Location select often lists US states — retry with state name if city string missed.
-            if (!res?.ok && !labelLooksLikeRace(liveLab) && (kind === 'city' || kind === 'state')) {
+            if (res?.ok && (canonical || labelLooksLikeRace(liveLab))) {
+                try {
+                    window.__lumiQuestionReq?.remember?.(
+                        beside || liveLab,
+                        req || 'race_ethnicity'
+                    );
+                } catch (_) { /* ignore */ }
+            }
+            if (!res?.ok && !canonical && !labelLooksLikeRace(liveLab) && (kind === 'city' || kind === 'state')) {
                 const st = String(wanted || '').split(',').pop()?.trim();
                 if (st && st.toLowerCase() !== String(wanted || '').toLowerCase()) {
                     res = await fillCombobox(el, st, 'state', 'type', profile, field.label || '');
                 }
             }
             // Dropdown miss — type City, ST ZIP as free text (Evio-style manual entry).
-            if (!res?.ok && !labelLooksLikeRace(liveLab) && (kind === 'city' || /\blocation\b/i.test(String(field?.label || '')))) {
+            if (!res?.ok && !canonical && !labelLooksLikeRace(liveLab) && (kind === 'city' || /\blocation\b/i.test(String(field?.label || '')))) {
                 const freeText = formatLocationFreeText(profile, wanted);
                 if (freeText) {
                     try {
@@ -2569,7 +2604,7 @@
                 || kind === 'gender' || kind === 'race_ethnicity' || kind === 'disability_status'
                 || kind === 'interview_attend_yes' || kind === 'state' || kind === 'city')) {
                 res = await fillCombobox(
-                    el, want, kind, 'open', profile, field.label || '', { skipSimplify: true }
+                    el, want, choiceKind || kind, 'open', profile, liveLab || field.label || '', { skipSimplify: true }
                 );
             }
             // Jobwize gate: displayed value must not still be Select…

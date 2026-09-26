@@ -413,7 +413,11 @@
 
     /** Prefer MAIN-world writer when available; fall back to isolated setter. */
     function setNativeValue(el, value, { blur = true } = {}) {
-        const str = value == null ? '' : String(value);
+        let str = value == null ? '' : String(value);
+        if (el && looksLikeLocationAnswer(str)) {
+            const guarded = guardChoiceValue(el, str, '');
+            if (guarded.text && guarded.text !== str) str = guarded.text;
+        }
         if (pageFillReady() && el) {
             try {
                 const r = window.__lumiPageFill.setTextValue(el, str, { blur });
@@ -692,6 +696,20 @@
                 if (t) return t;
             }
         }
+        // Greenhouse: <div class="field"><label>…</label><div class="select">…
+        let node = control;
+        for (let depth = 0; depth < 5 && node; depth += 1) {
+            const parent = node.parentElement;
+            if (!parent) break;
+            const lab = [...parent.children].find((n) => /^(LABEL|LEGEND|P|DIV|SPAN)$/.test(n.tagName)
+                && n !== node
+                && !n.querySelector?.('input, textarea, select'));
+            const t = cleanLabelText(lab?.innerText || lab?.textContent || '');
+            if (t && t.length >= 8 && t.length < 180 && /\b(race|ethnic|identify|veteran|gender|disabilit|hispanic|latino)\b/i.test(t)) {
+                return t;
+            }
+            node = parent;
+        }
         return '';
     }
 
@@ -857,6 +875,134 @@
         if (ph) return ph;
         return (el.name || el.id || '').trim();
     }
+
+    const QUESTION_REQ_KEY = 'lumi.questionReq.v1';
+    const questionReqCache = {};
+
+    function normQuestionKey(label) {
+        return String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 160);
+    }
+
+    function looksLikeLocationAnswer(text) {
+        const t = String(text || '').trim();
+        if (!t || t.length > 80) return false;
+        if (/\b\d{5}(?:-\d{4})?\b/.test(t) && /,/.test(t)) return true;
+        if (/\bpalo alto\b/i.test(t)) return true;
+        if (/,\s*[A-Z]{2}\b/.test(t) && t.length < 48) return true;
+        return false;
+    }
+
+    function choiceRequirementFromWords(label) {
+        const h = String(label || '').toLowerCase();
+        if (!h) return '';
+        if (/\b(race|ethnicity|ethnic)\b/.test(h) && !/\bhispanic|latino\b/.test(h)) return 'race_ethnicity';
+        if (/\bhow do you identify\b/.test(h) && !/\bgender|pronoun|veteran|disabilit\b/.test(h)) return 'race_ethnicity';
+        if (/\b(veteran|military[\s_-]*status|armed[\s_-]*forces)\b/.test(h)) return 'veteran_status';
+        if (/\b(hispanic|latino|latina|latinx)\b/.test(h)) return 'hispanic_latino';
+        if (/\bthink of yourself as\b/.test(h) || (/\bgender\b/.test(h) && !/\bsexual\b/.test(h))) return 'gender';
+        if (/\b(disabilit(?:y|ies)|disabled|\bada\b)\b/.test(h) && !/\b(date|signature)\b/.test(h)) return 'disability_status';
+        return '';
+    }
+
+    function canonicalChoice(req) {
+        if (req === 'race_ethnicity') return 'Black or African American';
+        if (req === 'veteran_status') return 'I am not a protected veteran';
+        if (req === 'hispanic_latino') return 'No';
+        if (req === 'gender') return 'Male';
+        if (req === 'disability_status') return 'No, I do not have a disability';
+        return '';
+    }
+
+    function isChoiceRequirement(req) {
+        return !!canonicalChoice(req);
+    }
+
+    function questionBesideControl(el) {
+        if (!el) return '';
+        try {
+            if (el.id) {
+                const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                const t = cleanLabelText(lab?.innerText || lab?.textContent || '');
+                if (t && choiceRequirementFromWords(t)) return t;
+            }
+        } catch (_) { /* ignore */ }
+        const labelled = el.getAttribute?.('aria-labelledby') || '';
+        if (labelled) {
+            const text = labelled
+                .split(/\s+/)
+                .map((id) => document.getElementById(id)?.innerText || '')
+                .join(' ');
+            const t = cleanLabelText(text);
+            if (t && choiceRequirementFromWords(t)) return t;
+        }
+        const control = el.closest?.(
+            '.select__control, [class*="select__control"], [class*="select-shell"]'
+        ) || el;
+        const starts = [control, control.parentElement, control.parentElement?.parentElement].filter(Boolean);
+        for (const start of starts) {
+            let prev = start.previousElementSibling;
+            for (let i = 0; i < 4 && prev; i += 1, prev = prev.previousElementSibling) {
+                if (prev.matches?.('input, textarea, select, button')) break;
+                if (prev.querySelector?.('input, textarea, select, [role="combobox"]')) break;
+                const lines = String(prev.innerText || prev.textContent || '')
+                    .split(/\n/)
+                    .map((s) => cleanLabelText(s))
+                    .filter((s) => s && s.length >= 6 && s.length < 200);
+                for (const line of lines) {
+                    if (choiceRequirementFromWords(line)) return line;
+                }
+                if (lines.some((line) => line.length >= 8)) return '';
+            }
+        }
+        return '';
+    }
+
+    function questionRequirement(label) {
+        const fromWords = choiceRequirementFromWords(label);
+        if (fromWords) return fromWords;
+        const learned = questionReqCache[normQuestionKey(label)];
+        return isChoiceRequirement(learned) ? learned : '';
+    }
+
+    function rememberQuestionRequirement(label, req) {
+        if (!isChoiceRequirement(req)) return;
+        const key = normQuestionKey(label);
+        if (!key || key.length < 12 || questionReqCache[key] === req) return;
+        questionReqCache[key] = req;
+        try {
+            chrome.storage.local.set({ [QUESTION_REQ_KEY]: { ...questionReqCache } }).catch(() => {});
+        } catch (_) { /* ignore */ }
+    }
+
+    function guardChoiceValue(el, text, kind) {
+        const beside = questionBesideControl(el);
+        const q = beside || (() => {
+            try { return labelFor(el) || ''; } catch (_) { return ''; }
+        })();
+        const req = questionRequirement(beside) || questionRequirement(q) || (isChoiceRequirement(kind) ? kind : '');
+        if (!isChoiceRequirement(req)) return { text: String(text || ''), kind: kind || '' };
+        const next = canonicalChoice(req);
+        const badLocation = looksLikeLocationAnswer(text) || kind === 'city' || kind === 'state';
+        const notAChoicePhrase = req === 'race_ethnicity'
+            && !/\b(black|african|asian|white|caucasian|hispanic|native|pacific|decline|prefer not|two or more)\b/i.test(String(text || ''));
+        if (next && (badLocation || notAChoicePhrase)) return { text: next, kind: req };
+        return { text: String(text || ''), kind: req };
+    }
+
+    try {
+        chrome.storage.local.get(QUESTION_REQ_KEY).then((bag) => {
+            Object.assign(questionReqCache, bag?.[QUESTION_REQ_KEY] || {});
+        }).catch(() => {});
+    } catch (_) { /* ignore */ }
+
+    window.__lumiQuestionReq = {
+        requirement: questionRequirement,
+        beside: questionBesideControl,
+        canonical: canonicalChoice,
+        looksLikeLocation: looksLikeLocationAnswer,
+        remember: rememberQuestionRequirement,
+        guard: guardChoiceValue
+    };
 
     function findNearbyQuestionText(el) {
         if (!el) return '';
@@ -4218,22 +4364,20 @@
         }
 
         // Swooped-style: sequential comboboxes AFTER identity + phone.
-        const choiceAnswers = await loadChoiceAnswers();
         for (const job of deferredCombos) {
-            const { field, writeValue: want0, short, kind } = job;
+            const { field, writeValue: want0, short } = job;
+            let kind = job.kind;
             const comboEl = findElByField(field) || job.el;
             if (!comboEl || isPhoneDialCountryControl(comboEl)) continue;
             let writeValue = want0;
-            const liveLab = (() => {
+            const beside = questionBesideControl(comboEl);
+            const liveLab = beside || (() => {
                 try { return labelFor(comboEl) || field.label || ''; } catch (_) { return field.label || ''; }
             })();
-            if (/\b(race|ethnicity|ethnic)\b/i.test(liveLab) && !/\bhispanic|latino\b/i.test(liveLab)
-                || (/\bhow do you identify\b/i.test(liveLab) && !/\bgender\b/i.test(liveLab))) {
-                kind = 'race_ethnicity';
-                writeValue = 'Black or African American';
-            } else if (kind !== 'city' && kind !== 'state' && kind !== 'country') {
-                const learned = choiceAnswers[normChoiceKey(liveLab)];
-                if (learned && !/\d{5}/.test(learned)) writeValue = learned;
+            const req = questionRequirement(beside) || questionRequirement(liveLab) || questionRequirement(field.label || '');
+            if (isChoiceRequirement(req)) {
+                kind = req;
+                writeValue = canonicalChoice(req);
             }
             dismissPhoneDialUi();
             await delay(80);
@@ -4373,9 +4517,8 @@
             await delay(90);
             if (okCombo) {
                 filled += 1;
-                if (kind !== 'city' && kind !== 'state' && kind !== 'country' && kind !== 'question') {
-                    saveChoiceAnswer(liveLab || field.label, writeValue).catch(() => {});
-                }
+                const learnedReq = questionRequirement(liveLab || field.label || '') || (isChoiceRequirement(kind) ? kind : '');
+                if (learnedReq) rememberQuestionRequirement(beside || liveLab || field.label, learnedReq);
                 if (kind === 'salary') filledSalary += 1;
                 if (kind === 'question') filledWritten += 1;
                 highlightFilledControl(comboEl);
@@ -5452,7 +5595,9 @@
         pickWhileTyping = true,
         minScore = 85
     } = {}) {
-        const full = String(text || '');
+        const guarded = guardChoiceValue(el, text, kind);
+        const full = String(guarded.text || '');
+        const kindNow = guarded.kind || kind;
         if (!el || !full) return { ok: false, typed: '' };
 
         try {
@@ -5476,21 +5621,21 @@
             await delay(perCharMs);
 
             // City typeahead: never early-pick mid-string (San→San Antonio). Only consider on last char.
-            const minTyped = kind === 'city' ? full.split(',')[0].trim().length : 3;
+            const minTyped = kindNow === 'city' ? full.split(',')[0].trim().length : 3;
             const atEnd = i === full.length - 1;
             if (
                 pickWhileTyping
                 && built.trim().length >= minTyped
-                && (kind === 'city' ? atEnd : (atEnd || i % 2 === 1))
+                && (kindNow === 'city' ? atEnd : (atEnd || i % 2 === 1))
             ) {
                 if (selectMenuIsLoading()) {
                     await waitForSelectOptions({ timeoutMs: 2500, pollMs: 150 });
                 }
                 const hit = pickFromOpenOptions(built, {
                     aliases: [built, ...aliases],
-                    kind,
+                    kind: kindNow,
                     allowCatchAll: false,
-                    minScore: kind === 'city' ? Math.max(minScore, 90) : minScore,
+                    minScore: kindNow === 'city' ? Math.max(minScore, 90) : minScore,
                     anchorEl: el
                 });
                 if (hit.ok) return { ok: true, typed: built, early: true };
@@ -6276,8 +6421,25 @@
         if (!wantRaw || !el) return Promise.resolve(false);
         let liveLabel = '';
         try { liveLabel = labelFor(el) || ''; } catch (_) { /* ignore */ }
-        if (/\b(race|ethnicity|how do you identify|veteran|disabilit|hispanic|latino|gender)\b/i.test(liveLabel)) {
-            return Promise.resolve(false);
+        const beside = questionBesideControl(el);
+        const reqNow = questionRequirement(beside) || questionRequirement(liveLabel);
+        if (isChoiceRequirement(reqNow)) {
+            const canonical = canonicalChoice(reqNow);
+            return new Promise((outerResolve) => {
+                enqueueCombobox(() => fillComboboxSimplify(el, canonical, {
+                    kind: reqNow,
+                    aliases: [canonical],
+                    maxAttempts: 2,
+                    minScore: 60
+                }).then((ok) => {
+                    if (ok) rememberQuestionRequirement(beside || liveLabel, reqNow);
+                    outerResolve(!!ok);
+                    return !!ok;
+                }).catch(() => {
+                    outerResolve(false);
+                    return false;
+                }));
+            });
         }
         const profileState = String(profile?.state || '').trim();
         const stateFull = (() => {
