@@ -74,19 +74,9 @@ async function pushBuffer(buffer) {
         contentType: 'application/octet-stream',
         cacheControlMaxAge: 60
     };
-    if (loadedEtag) options.ifMatch = loadedEtag;
-    try {
-        const result = await blob.put(PATHNAME, buffer, options);
-        loadedEtag = result.etag || loadedEtag;
-        console.log('[db-share] saved shared database', buffer.length, 'bytes');
-    } catch (err) {
-        const msg = String(err?.message || err);
-        if (/precondition|412|condition|does not match/i.test(msg)) {
-            console.warn('[db-share] remote database is newer; left it in place');
-            return;
-        }
-        throw err;
-    }
+    const result = await blob.put(PATHNAME, buffer, options);
+    loadedEtag = result.etag || loadedEtag;
+    console.log('[db-share] saved shared database', buffer.length, 'bytes');
 }
 
 function flushSharedDatabase() {

@@ -90,6 +90,7 @@ import {
     resolveJobLinksListState,
     writeSavedJobLinksListState
 } from '@/lib/jobLinksListState';
+import { forgetJobLink, readJobLinkCatalog, rememberJobLinks } from '@/lib/jobLinkCatalog';
 import { LOCATION_FLAGS } from '@/lib/locationFlags';
 import FilterChip from '@/components/FilterChip';
 import AppPage from '@/components/AppPage';
@@ -1541,7 +1542,6 @@ function JobLinks({ embedded = false }) {
         try {
             const parsed = JSON.parse(localStorage.getItem(VISIBLE_CACHE_KEY) || 'null');
             if (!parsed || parsed.cleared || !Array.isArray(parsed.rows) || !parsed.rows.length) return null;
-            if (Date.now() - Number(parsed.at) > 30 * 60 * 1000) return null;
             return parsed;
         } catch (_) {
             return null;
@@ -1848,8 +1848,8 @@ function JobLinks({ embedded = false }) {
                     filters.created_before = range.created_before;
                 }
             }
-            const remembered = readVisibleCache();
-            if (remembered?.rows?.length) filters.remembered = remembered.rows;
+            const remembered = readJobLinkCatalog();
+            if (remembered.length) filters.remembered = remembered;
             if (hasGeneratedResumeFilter) filters.has_generated_resume = 1;
             if (bidStateFilter && bidStateFilter !== 'all') filters.bid_state = bidStateFilter;
             if (sortFilter && sortFilter !== 'latest') filters.sort = sortFilter;
@@ -1915,7 +1915,10 @@ function JobLinks({ embedded = false }) {
             nextRows = mergeCvStatusForward(rowsRef.current, nextRows);
             setRows(nextRows);
             setTotal(nextTotal);
-            if (nextRows.length > 0) writeVisibleCache(nextRows, nextTotal);
+            if (nextRows.length > 0) {
+                writeVisibleCache(nextRows, nextTotal);
+                rememberJobLinks(nextRows);
+            }
             if (cronRes?.data) setCronStatus(cronRes.data);
         } catch (err) {
             if (requestId !== loadRequestRef.current) return;
@@ -2044,6 +2047,7 @@ function JobLinks({ embedded = false }) {
         if (!window.confirm(`Delete this job link (${TECHSTACK_LABEL[row.techstack] || row.techstack})?`)) return;
         try {
             await adminAPI.deleteJobLink(row.id);
+            forgetJobLink(row);
             const cached = readVisibleCache();
             if (cached) {
                 writeVisibleCache(
@@ -2439,6 +2443,7 @@ function JobLinks({ embedded = false }) {
                 onCreated={(row) => {
                     if (row?.id) {
                         rememberCreated(row);
+                        rememberJobLinks([row]);
                         setRows((prev) => {
                             const next = mergeJustCreated(prev);
                             writeVisibleCache(next, Math.max(next.length, 1));

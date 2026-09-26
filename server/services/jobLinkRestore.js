@@ -24,21 +24,23 @@ function pickRowsToRestore(rows, existing) {
             company_name: row.company_name ? String(row.company_name) : null,
             position_title: row.position_title ? String(row.position_title) : null,
             location: row.location ? String(row.location) : null,
-            fetch_status: ['pending', 'fetching', 'success', 'failed'].includes(row.fetch_status)
+            fetch_status: ['pending', 'fetching', 'success', 'failed', 'dead'].includes(row.fetch_status)
                 ? row.fetch_status
                 : (row.job_description ? 'success' : 'pending'),
             created_at: row.created_at ? String(row.created_at) : null,
+            location_flag: ['US', 'Brazil', 'EU', 'Asia', 'Other'].includes(row.location_flag) ? row.location_flag : 'US',
+            comment: row.comment ? String(row.comment) : null,
             is_available: row.is_available === 0 || row.is_available === false ? 0 : 1
         });
         ids.add(id);
         urls.add(apply);
-        if (out.length >= 50) break;
+        if (out.length >= 400) break;
     }
     return out;
 }
 
 function restoreRememberedJobLinks(rows, userId) {
-    const { getOne, runQuery } = require('../config/database');
+    const { getOne, txRunQuery, saveDatabase } = require('../config/database');
     const existingIds = [];
     const existingUrls = [];
     const chosen = pickRowsToRestore(rows, { ids: [], urls: [] });
@@ -58,28 +60,39 @@ function restoreRememberedJobLinks(rows, userId) {
     }
     let restored = 0;
     for (const row of toInsert) {
-        runQuery(
-            `INSERT INTO job_links (
-                id, techstack, source_url, job_apply_url, job_description,
-                company_name, position_title, location, is_available, fetch_status,
-                created_by, created_at, updated_at
-             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))`,
-            [
-                row.id,
-                row.techstack,
-                row.source_url,
-                row.job_apply_url,
-                row.job_description,
-                row.company_name,
-                row.position_title,
-                row.location,
-                row.is_available,
-                row.fetch_status,
-                userId || null,
-                row.created_at
-            ]
-        );
-        restored += 1;
+        try {
+            txRunQuery(
+                `INSERT INTO job_links (
+                    id, techstack, source_url, job_apply_url, job_description,
+                    company_name, position_title, location, location_flag, comment,
+                    is_available, fetch_status, created_by, created_at, updated_at
+                 ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(?, datetime('now')), datetime('now'))`,
+                [
+                    row.id,
+                    row.techstack,
+                    row.source_url,
+                    row.job_apply_url,
+                    row.job_description,
+                    row.company_name,
+                    row.position_title,
+                    row.location,
+                    row.location_flag || 'US',
+                    row.comment,
+                    row.is_available,
+                    row.fetch_status,
+                    userId || null,
+                    row.created_at
+                ]
+            );
+            restored += 1;
+        } catch (err) {
+            console.warn('[job-links] restore row skipped:', row.id, err.message);
+        }
+    }
+    if (restored) {
+        try { saveDatabase(); } catch (err) {
+            console.warn('[job-links] restore save skipped:', err.message);
+        }
     }
     return { restored, skipped: existingIds.length + existingUrls.length };
 }
