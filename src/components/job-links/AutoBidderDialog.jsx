@@ -1924,11 +1924,12 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     const reAutofillCurrentJob = async () => {
         setBusy(true);
         setError('');
-        setStatus('Re-autofilling current apply tab…');
+        setStatus('Opening the job site and starting autofill…');
         try {
             const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_REAUTOFILL', 180000, {
                 url: captchaApplyUrl || queueState?.currentJobUrl || undefined,
-                applicationId: queueState?.currentId
+                applicationId: detailAppId
+                    || queueState?.currentId
                     || queueState?.captchaApplicationId
                     || queueState?.lastApplicationId
                     || undefined
@@ -2800,6 +2801,16 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
         || /^(?:running|awaiting_captcha|awaiting_email_otp|awaiting_cv_regen|awaiting_next)$/i.test(String(queueState?.status || ''))
     );
     const canDockProcess = !busy && !!profileId && jobLinkIds.length > 0;
+    const canStartFromDock = canDockProcess || (
+        !busy && !!captchaApplyUrl && !!(detailAppId || queueAppId)
+    );
+    const startBidFromDock = () => {
+        setDockOpen(true);
+        setMonitorActive(true);
+        if (jobLinkIds.length && profileId && bidReady.length) return processSelected();
+        if (captchaApplyUrl && (detailAppId || queueAppId)) return reAutofillCurrentJob();
+        return processSelected();
+    };
     const dockProcessLabel = queueBlocked ? 'Stop & Process' : 'Process';
     const dockCvFilename = detail?.application?.resume_filename || '';
     const dockCvDownloadUrl = detail?.application?.download_url || '';
@@ -3639,12 +3650,8 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                 /running|awaiting_captcha|awaiting_email_otp|awaiting_manual_submit|awaiting_cv_regen|awaiting_next/i.test(String(queueState?.status || ''))
                 || !!queueState?.running
             }
-            onProcess={() => {
-                setDockOpen(true);
-                setMonitorActive(true);
-                return processSelected();
-            }}
-            canProcess={canDockProcess}
+            onProcess={startBidFromDock}
+            canProcess={canStartFromDock}
             processLabel="Start"
             onCheckUploadedCv={async () => {
                 const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_CHECK_RESUME', 20000, {

@@ -551,7 +551,7 @@ export default function BidMonitorDock({
                     </Button>
                 ) : null}
                 {typeof onProcess === 'function' ? (
-                    <Button type="button" size="sm" variant="default" className={btn} disabled={steerBusy || !canProcess} onClick={onProcess} title="Start auto bid for the selected jobs">
+                    <Button type="button" size="sm" variant="default" className={btn} disabled={steerBusy || !canProcess} onClick={onProcess} title="Open the job site and start autofill">
                         <Play className={btnIcon} />
                         {processLabel || 'Start'}
                     </Button>
@@ -857,7 +857,7 @@ export default function BidMonitorDock({
                         size="sm"
                         className="h-7 gap-1 px-2 text-[11px] font-semibold"
                         disabled={steerBusy || !canProcess}
-                        title="Start auto bid for the selected jobs"
+                        title="Open the job site and start autofill"
                         onClick={onProcess}
                     >
                         <Play className="h-3 w-3" />
