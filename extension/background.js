@@ -4043,6 +4043,19 @@ async function processReadyQueue(opts = {}) {
                     }
                 }
                 if (!formOk) {
+                    let href = '';
+                    try { href = (await chrome.tabs.get(opened.tabId))?.url || applyUrl || ''; } catch (_) { /* ignore */ }
+                    const livePage = /^https?:\/\//i.test(href) && !tabShowsBrowserErrorPage({ url: href });
+                    if (livePage && !/linkedin\.com/i.test(href)) {
+                        formOk = true;
+                        await logCourseEvent(item.id, 'form_detected_late', {
+                            reason: 'start_fill_after_open',
+                            url: href,
+                            waitMs: formWaitMs
+                        }).catch(() => {});
+                    }
+                }
+                if (!formOk) {
                     await logCourseEvent(item.id, 'no_form', {
                         waitMs: formWaitMs,
                         tabId: opened.tabId
@@ -9206,8 +9219,50 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 focusedExisting,
                 applicationId: wantedAppId || null,
                 url: patch.currentJobUrl || tabUrl || null,
-                needsRefill: !!(reopened || focusedExisting)
+                needsRefill: false
             });
+            const queueAlreadyFilling = String(st?.status || '') === 'running'
+                && !st?.reautofilling
+                && Number(st?.currentTabId) === Number(tabId);
+            if (wantedAppId && tabId && !queueAlreadyFilling && !/linkedin\.com/i.test(String(patch.currentJobUrl || tabUrl || ''))) {
+                const kickTab = tabId;
+                const kickApp = wantedAppId;
+                setTimeout(() => {
+                    (async () => {
+                        const now = await getQueueState().catch(() => null);
+                        if (now?.reautofilling) return;
+                        if (
+                            String(now?.status || '') === 'running'
+                            && Number(now?.currentTabId) === Number(kickTab)
+                            && !/no_form|awaiting_manual/i.test(String(now?.lastStatusEvent || ''))
+                        ) {
+                            return;
+                        }
+                        await ensureScripts(kickTab);
+                        await setQueueState({
+                            status: 'running',
+                            reautofilling: true,
+                            currentTabId: kickTab,
+                            currentId: kickApp,
+                            coachStatus: 'Starting fill…',
+                            coachAt: Date.now()
+                        }).catch(() => {});
+                        const prefs = await getBidderPrefs();
+                        await runBidderFillOnTab(kickTab, {
+                            id: kickApp,
+                            company_name: 'Job',
+                            job_role: ''
+                        }, {
+                            ...prefs,
+                            bidDeadline: Date.now() + BID_HARD_LIMIT_MS
+                        });
+                        await setQueueState({ reautofilling: false, coachStatus: 'Fill started' }).catch(() => {});
+                    })().catch((err) => {
+                        console.warn('[bidder] fill after open', err);
+                        setQueueState({ reautofilling: false }).catch(() => {});
+                    });
+                }, 1600);
+            }
         })().catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
     }

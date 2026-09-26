@@ -1917,27 +1917,14 @@ export default function AutoBidderDialog({
             const focusedUrl = body.url || res?.url || '';
             setStatus(
                 focusedExisting
-                    ? `Focused apply tab for this job${focusedUrl ? ` — ${String(focusedUrl).slice(0, 60)}` : ''}`
+                    ? `Focused apply tab — fill starting${focusedUrl ? ` — ${String(focusedUrl).slice(0, 48)}` : ''}`
                     : reopened
-                        ? 'Reopened apply tab (previous tab was closed — form may be empty)'
+                        ? 'Reopened apply tab — fill starting'
                         : navigated
-                            ? 'Switched apply tab to this job’s URL'
-                            : 'Opened apply tab'
+                            ? 'Switched apply tab — fill starting'
+                            : 'Opened apply tab — fill starting'
             );
             setError('');
-            // Empty form after reopen/focus — offer Re-fill immediately (don’t wait another Process).
-            if ((reopened || focusedExisting) && typeof window !== 'undefined') {
-                const shouldFill = window.confirm(
-                    reopened
-                        ? 'Apply tab was reopened empty. Run Re-fill now?'
-                        : 'Apply tab focused. Fields may still be empty — run Re-fill now?'
-                );
-                if (shouldFill) {
-                    setBusy(false);
-                    await reAutofillCurrentJob();
-                    return;
-                }
-            }
         } catch (err) {
             setError(
                 err.message

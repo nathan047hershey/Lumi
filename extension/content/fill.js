@@ -6425,21 +6425,15 @@
         const reqNow = questionRequirement(beside) || questionRequirement(liveLabel);
         if (isChoiceRequirement(reqNow)) {
             const canonical = canonicalChoice(reqNow);
-            return new Promise((outerResolve) => {
-                enqueueCombobox(() => fillComboboxSimplify(el, canonical, {
-                    kind: reqNow,
-                    aliases: [canonical],
-                    maxAttempts: 2,
-                    minScore: 60
-                }).then((ok) => {
-                    if (ok) rememberQuestionRequirement(beside || liveLabel, reqNow);
-                    outerResolve(!!ok);
-                    return !!ok;
-                }).catch(() => {
-                    outerResolve(false);
-                    return false;
-                }));
-            });
+            return fillComboboxSimplify(el, canonical, {
+                kind: reqNow,
+                aliases: [canonical],
+                maxAttempts: 2,
+                minScore: 60
+            }).then((ok) => {
+                if (ok) rememberQuestionRequirement(beside || liveLabel, reqNow);
+                return !!ok;
+            }).catch(() => false);
         }
         const profileState = String(profile?.state || '').trim();
         const stateFull = (() => {
