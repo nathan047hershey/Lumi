@@ -1050,11 +1050,25 @@ router.get('/bid-courses/:id/screenshots/:filename', (req, res) => {
         const artifacts = require('../services/bidderArtifactService');
         const course = getOne(`SELECT * FROM bid_courses WHERE id = ?`, [id]);
         if (!course) return res.status(404).json({ error: 'Course not found' });
-        const fp = artifacts.readScreenshotFile(course.application_id, req.params.filename);
-        if (!fp) return res.status(404).json({ error: 'Screenshot not found' });
+        const row = getOne(
+            `SELECT file_path, image_blob FROM bid_course_screenshots
+             WHERE course_id = ? AND (file_path LIKE ? OR file_path LIKE ?)
+             ORDER BY id DESC LIMIT 1`,
+            [course.id, `%${req.params.filename}`, `%${path.basename(req.params.filename)}`]
+        );
+        let bytes = artifacts.readScreenshotBytes(
+            course.application_id,
+            req.params.filename,
+            row?.image_blob || ''
+        );
+        if (!bytes && row?.file_path && require('fs').existsSync(row.file_path)) {
+            try { bytes = require('fs').readFileSync(row.file_path); } catch (_) { bytes = null; }
+        }
+        if (!bytes || bytes.length < 32) return res.status(404).json({ error: 'Screenshot not found' });
+        res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         res.setHeader('Pragma', 'no-cache');
-        res.sendFile(fp);
+        res.send(bytes);
     } catch (err) {
         res.status(500).json({ error: 'Failed to serve screenshot' });
     }

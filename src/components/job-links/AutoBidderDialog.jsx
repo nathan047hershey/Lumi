@@ -153,8 +153,14 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
                 const { data } = await api.getBidCourseScreenshot(courseId, filename, {
                     t: bust
                 });
-                if (!(data instanceof Blob) || data.size < 32) {
-                    throw new Error('empty image');
+                const contentType = String(data?.type || '').toLowerCase();
+                if (
+                    !(data instanceof Blob)
+                    || data.size < 32
+                    || contentType.includes('json')
+                    || contentType.startsWith('text/')
+                ) {
+                    throw new Error(contentType.includes('json') ? 'Screenshot not found' : 'empty image');
                 }
                 const objectUrl = URL.createObjectURL(data);
                 if (!alive) {

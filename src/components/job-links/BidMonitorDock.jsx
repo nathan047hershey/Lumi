@@ -1,5 +1,5 @@
 /**
- * Floating Auto Bidder Control Panel — draggable, clean status → actions → live preview.
+ * Floating Auto Bidder Control Panel — live preview and controls stay on one view.
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
@@ -170,8 +170,8 @@ export default function BidMonitorDock({
     const answersSigRef = useRef('');
     const answersDirtyRef = useRef(false);
     const answersJobRef = useRef('');
-    const [panelTab, setPanelTab] = useState('main');
     const [dockTab, setDockTab] = useState('live');
+    const [imgBroken, setImgBroken] = useState(false);
     const [instructText, setInstructText] = useState('');
     const [instructBusy, setInstructBusy] = useState(false);
     const [instructMsg, setInstructMsg] = useState('');
@@ -184,6 +184,10 @@ export default function BidMonitorDock({
     const cvLoadKeyRef = useRef('');
     const onLoadCvRef = useRef(onLoadCv);
     onLoadCvRef.current = onLoadCv;
+
+    useEffect(() => {
+        setImgBroken(false);
+    }, [imgSrc]);
 
     useEffect(() => {
         setMounted(true);
@@ -642,7 +646,7 @@ export default function BidMonitorDock({
                         variant="ghost"
                         className={btn}
                         disabled={cvPreviewBusy}
-                        onClick={() => { setPanelTab('main'); setDockTab('cv'); }}
+                        onClick={() => setDockTab('cv')}
                         title="Preview the generated CV"
                     >
                         <FileText className={btnIcon} />
@@ -959,35 +963,6 @@ export default function BidMonitorDock({
                         </div>
                     ) : null}
 
-                    <div className="flex gap-1 rounded-lg bg-black/40 p-0.5">
-                        <button
-                            type="button"
-                            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
-                                panelTab === 'main'
-                                    ? 'bg-white/15 text-white'
-                                    : 'text-white/45 hover:text-white/70'
-                            }`}
-                            onClick={() => setPanelTab('main')}
-                        >
-                            Main
-                        </button>
-                        <button
-                            type="button"
-                            className={`flex-1 rounded-md px-2 py-1.5 text-[11px] font-semibold transition ${
-                                panelTab === 'actions'
-                                    ? 'bg-white/15 text-white'
-                                    : 'text-white/45 hover:text-white/70'
-                            }`}
-                            onClick={() => setPanelTab('actions')}
-                        >
-                            Actions
-                        </button>
-                    </div>
-
-                    {panelTab === 'actions' ? actionBar : null}
-
-                    {panelTab === 'main' ? (
-                    <>
                     <div className="flex gap-1 rounded-lg bg-black/25 p-0.5">
                         <button
                             type="button"
@@ -1028,19 +1003,24 @@ export default function BidMonitorDock({
                         <>
                             {/* Preview */}
                             <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-black/50">
-                                {imgSrc ? (
+                                {imgSrc && !imgBroken ? (
                                     <button type="button" className="block w-full cursor-zoom-in" onClick={onFullscreen} title="Full screen">
                                         <img
                                             key={imgSrc}
                                             src={imgSrc}
                                             alt={shotStage || 'Apply page'}
-                                            className={`max-h-[min(32vh,16rem)] min-h-[8rem] w-full object-contain object-top ${loading ? 'opacity-80' : ''}`}
+                                            className={`max-h-[min(38vh,20rem)] min-h-[10rem] w-full object-contain object-top ${loading ? 'opacity-80' : ''}`}
+                                            onError={() => setImgBroken(true)}
                                         />
                                     </button>
                                 ) : (
-                                    <div className="flex h-28 flex-col items-center justify-center gap-1 px-3 text-center text-xs text-white/40">
-                                        <span>{loading ? 'Loading…' : imgErr || progressLabel || statusLine || 'Waiting for live frames…'}</span>
-                                        {!loading && !imgErr && (queueRunning || progressLabel) ? (
+                                    <div className="flex h-36 flex-col items-center justify-center gap-1 px-3 text-center text-xs text-white/40">
+                                        <span>
+                                            {loading && !imgBroken
+                                                ? 'Loading…'
+                                                : (imgBroken ? (imgErr || 'Preview could not load') : (imgErr || progressLabel || statusLine || 'Waiting for live frames…'))}
+                                        </span>
+                                        {!loading && !imgErr && !imgBroken && (queueRunning || progressLabel) ? (
                                             <span className="text-[10px] text-white/30">Live frame updates while this job is open</span>
                                         ) : null}
                                     </div>
@@ -1053,7 +1033,7 @@ export default function BidMonitorDock({
                                         <span className="rounded bg-black/70 px-1.5 py-0.5 text-[10px] text-emerald-300">{liveUpdatedLabel}</span>
                                     ) : null}
                                 </div>
-                                {imgSrc ? (
+                                {imgSrc && !imgBroken ? (
                                     <Button
                                         type="button"
                                         size="sm"
@@ -1265,10 +1245,14 @@ export default function BidMonitorDock({
                             {answersMsg ? <p className="text-[10px] text-white/45">{answersMsg}</p> : null}
                         </div>
                     )}
-                    </>
-                    ) : null}
                 </div>
             )}
+
+            {!minimized ? (
+                <div className="shrink-0 border-t border-white/[0.06] bg-[hsl(222_24%_8%)] p-2">
+                    {actionBar}
+                </div>
+            ) : null}
 
             {minimized && (
                 <div className="space-y-1.5 border-t border-white/[0.06] px-3 py-2">

@@ -1200,6 +1200,11 @@ async function initDatabase() {
     `);
     db.run(`CREATE INDEX IF NOT EXISTS idx_bid_shots_course ON bid_course_screenshots(course_id)`);
     db.run(`CREATE INDEX IF NOT EXISTS idx_bid_shots_app ON bid_course_screenshots(application_id)`);
+    const shotInfo = db.exec('PRAGMA table_info(bid_course_screenshots)');
+    const shotCols = shotInfo[0]?.values.map((r) => r[1]) || [];
+    if (shotCols.length && !shotCols.includes('image_blob')) {
+      db.run('ALTER TABLE bid_course_screenshots ADD COLUMN image_blob TEXT');
+    }
   } catch (error) {
     console.warn('bid_courses tables migration skipped:', error?.message || error);
   }

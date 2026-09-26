@@ -150,6 +150,23 @@ function listScreenshots(applicationId) {
     }
 }
 
+function readScreenshotBytes(applicationId, filename, imageBlob) {
+    const fp = readScreenshotFile(applicationId, filename);
+    if (fp) {
+        try {
+            const buf = fs.readFileSync(fp);
+            if (buf && buf.length >= 32) return buf;
+        } catch (_) { /* fall through to stored bytes */ }
+    }
+    if (!imageBlob) return null;
+    try {
+        const buf = Buffer.from(String(imageBlob), 'base64');
+        return buf && buf.length >= 32 ? buf : null;
+    } catch (_) {
+        return null;
+    }
+}
+
 function readScreenshotFile(applicationId, filename) {
     const safe = path.basename(filename);
     const roots = [];
@@ -181,6 +198,7 @@ module.exports = {
     saveCoursePackage,
     listScreenshots,
     readScreenshotFile,
+    readScreenshotBytes,
     DEFAULT_ROOT,
     FALLBACK_ROOT
 };

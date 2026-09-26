@@ -3782,24 +3782,25 @@ router.get('/bid-courses/:id/screenshots/:filename', (req, res) => {
             : getOne(`SELECT * FROM bid_courses WHERE id = ? AND user_id = ?`, [id, req.user.id]);
         if (!course) return res.status(404).json({ error: 'Course not found' });
         const artifacts = require('../services/bidderArtifactService');
-        const fp = artifacts.readScreenshotFile(course.application_id, req.params.filename);
-        if (!fp) {
-            // Fall back to DB-recorded absolute path (legacy rows / moved DATA_ROOT).
-            const row = getOne(
-                `SELECT file_path FROM bid_course_screenshots
-                 WHERE course_id = ? AND (file_path LIKE ? OR file_path LIKE ?)
-                 ORDER BY id DESC LIMIT 1`,
-                [course.id, `%${req.params.filename}`, `%${path.basename(req.params.filename)}`]
-            );
-            const alt = row?.file_path && require('fs').existsSync(row.file_path) ? row.file_path : null;
-            if (!alt) return res.status(404).json({ error: 'Screenshot not found' });
-            res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-            res.setHeader('Pragma', 'no-cache');
-            return res.sendFile(alt);
+        const row = getOne(
+            `SELECT file_path, image_blob FROM bid_course_screenshots
+             WHERE course_id = ? AND (file_path LIKE ? OR file_path LIKE ?)
+             ORDER BY id DESC LIMIT 1`,
+            [course.id, `%${req.params.filename}`, `%${path.basename(req.params.filename)}`]
+        );
+        let bytes = artifacts.readScreenshotBytes(
+            course.application_id,
+            req.params.filename,
+            row?.image_blob || ''
+        );
+        if (!bytes && row?.file_path && require('fs').existsSync(row.file_path)) {
+            try { bytes = require('fs').readFileSync(row.file_path); } catch (_) { bytes = null; }
         }
+        if (!bytes || bytes.length < 32) return res.status(404).json({ error: 'Screenshot not found' });
+        res.setHeader('Content-Type', 'image/png');
         res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
         res.setHeader('Pragma', 'no-cache');
-        res.sendFile(fp);
+        res.send(bytes);
     } catch (error) {
         console.error('Screenshot serve error:', error);
         res.status(500).json({ error: 'Failed to serve screenshot' });
@@ -3883,6 +3884,10 @@ router.post('/bid-courses/screenshot', (req, res) => {
             skipEvent: true
         });
         const saved = artifacts.saveScreenshot(applicationId, stage, body.image_base64);
+        let imageBlob = String(body.image_base64 || '');
+        const dataUrl = imageBlob.match(/^data:image\/\w+;base64,(.+)$/);
+        if (dataUrl) imageBlob = dataUrl[1];
+        if (imageBlob.length > 1500000) imageBlob = '';
         // Upsert one DB row per stage (overwrite live.png path) instead of endless inserts.
         const existingShot = getOne(
             `SELECT id FROM bid_course_screenshots WHERE course_id = ? AND stage = ? ORDER BY id DESC LIMIT 1`,
@@ -3890,8 +3895,8 @@ router.post('/bid-courses/screenshot', (req, res) => {
         );
         if (existingShot?.id) {
             runQuery(
-                `UPDATE bid_course_screenshots SET file_path = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?`,
-                [saved.path, existingShot.id]
+                `UPDATE bid_course_screenshots SET file_path = ?, image_blob = ?, created_at = CURRENT_TIMESTAMP WHERE id = ?`,
+                [saved.path, imageBlob || null, existingShot.id]
             );
             // Drop older duplicates for the same stage (pre-upsert spam).
             runQuery(
@@ -3900,9 +3905,9 @@ router.post('/bid-courses/screenshot', (req, res) => {
             );
         } else {
             runQuery(
-                `INSERT INTO bid_course_screenshots (course_id, application_id, stage, file_path)
-                 VALUES (?, ?, ?, ?)`,
-                [course.id, applicationId, stage, saved.path]
+                `INSERT INTO bid_course_screenshots (course_id, application_id, stage, file_path, image_blob)
+                 VALUES (?, ?, ?, ?, ?)`,
+                [course.id, applicationId, stage, saved.path, imageBlob || null]
             );
         }
         res.json({
