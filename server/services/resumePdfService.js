@@ -103,7 +103,10 @@ async function renderResumePdfBuffer({ resumeHtml, styleSpec, font = 'Arial' }) 
         throw new Error('resumeHtml is required');
     }
 
-    const printHtml = buildPrintHtml(resumeHtml, styleSpec, font);
+    const gluedHtml = templateRenderer.glueHyphenCompoundsInHtml
+        ? templateRenderer.glueHyphenCompoundsInHtml(resumeHtml)
+        : resumeHtml;
+    const printHtml = buildPrintHtml(gluedHtml, styleSpec, font);
     const browser = await getBrowser();
     const page = await browser.newPage();
 

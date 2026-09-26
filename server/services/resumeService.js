@@ -473,17 +473,8 @@ function reorderResumeSections(resumeHtml) {
 /** Collapse "e- commerce", then wrap letter-hyphen compounds so HTML
  *  preview / PDF cannot break mid-token. */
 function protectHyphenCompoundsInHtml(html) {
-    return String(html || '').replace(/(^|>)([^<]+)(?=<|$)/g, (m, lead, text) => {
-        let t = text
-            .replace(/([A-Za-z])[\u00AD\u2010\u2011\-]\s+([A-Za-z])/g, '$1-$2')
-            .replace(/([A-Za-z])\s+[\u00AD\u2010\u2011\-]\s*([A-Za-z])/g, '$1-$2');
-        // Multi-segment compounds: e-commerce, end-to-end, on-call, …
-        t = t.replace(
-            /\b([A-Za-z]+(?:-[A-Za-z]+)+)\b/g,
-            (full) => `<span class="nbh">${full.replace(/-/g, '\u2011')}</span>`
-        );
-        return lead + t;
-    });
+    const { glueHyphenCompoundsInHtml } = require('./templateRenderer');
+    return glueHyphenCompoundsInHtml(html);
 }
 
 /**
@@ -1717,7 +1708,6 @@ const UNIT_PATTERN = '(?:years?|yrs?|%+|percent|x|ms|s|engineers?|developers?|se
         // generated resumes (stored in job_applications) are NOT re-processed;
         // only the resumeHtml produced by THIS call is touched.
         resumeHtml = applyWorkModeOverride(resumeHtml, ['Remote']);
-        resumeHtml = protectHyphenCompoundsInHtml(resumeHtml);
 
         // Deterministic polish: summary opener, banned phrases, control chars, periods
         const polished = polishResumeHtml(resumeHtml, {
@@ -1725,7 +1715,7 @@ const UNIT_PATTERN = '(?:years?|yrs?|%+|percent|x|ms|s|engineers?|developers?|se
             coreSkills: options.coreSkills || '',
             jobDescription: jobDescription || ''
         });
-        resumeHtml = polished.html;
+        resumeHtml = protectHyphenCompoundsInHtml(polished.html);
         const polishMs = polished.polish_ms || 0;
         const outputChars = resumeHtml.length;
 

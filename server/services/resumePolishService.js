@@ -514,7 +514,7 @@ function boldStacksInSummary(resumeHtml, coreSkills = '', jobDescription = '') {
                     let s = part;
                     for (const sk of stacks) {
                         const esc = sk.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-                        const re = new RegExp(`\\b(${esc})\\b`, 'gi');
+                        const re = new RegExp(`(?<![A-Za-z0-9-])(${esc})(?![A-Za-z0-9-])`, 'gi');
                         s = s.replace(re, '<strong>$1</strong>');
                     }
                     return s;
@@ -863,7 +863,7 @@ function boldHighlightSegment(text, stacks) {
             const token = String(sk || '').trim();
             if (token.length < 2 || token.length > 40) continue;
             const esc = token.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-            s = s.replace(new RegExp(`\\b(${esc})\\b`, 'gi'), '<strong>$1</strong>');
+            s = s.replace(new RegExp(`(?<![A-Za-z0-9-])(${esc})(?![A-Za-z0-9-])`, 'gi'), '<strong>$1</strong>');
         }
         return s;
     }).join('');

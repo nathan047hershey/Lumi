@@ -105,15 +105,14 @@ function buildNameAndContact(profile, styleSpec, font) {
         // Never indent the name — template indents + right-align left a
         // huge empty left gutter that looks like a broken header.
         spacing: { after: ptToTwip(2) },
-        children:  [new TextRun({
-            text: protectHyphenCompounds(nameText),
+        children: textRunsWithNoBreakHyphens(nameText, {
             size:   halfPt(nameSize / 2),
             font:   effectiveFont(nameSlot, font),
             bold:   nameSlot?.bold !== false,
             underline: nameSlot?.underline === true,
             italics: nameSlot?.italic === true,
             color:  nameSlot?.color || null
-        })]
+        })
     }));
 
     // Honour the user-built template's contact-field order when the
@@ -129,8 +128,7 @@ function buildNameAndContact(profile, styleSpec, font) {
     const contactSize = contactSlot?.size_half_pt || 20;
     const contactFont = effectiveFont(contactSlot, font);
     const linkColor = '0563C1';
-    const contactRun = (text, { link = false } = {}) => new TextRun({
-        text: protectHyphenCompounds(text),
+    const contactRuns = (text, { link = false } = {}) => textRunsWithNoBreakHyphens(text, {
         size: halfPt(contactSize / 2),
         font: contactFont,
         bold: contactSlot?.bold === true,
@@ -139,18 +137,18 @@ function buildNameAndContact(profile, styleSpec, font) {
         color: link ? linkColor : (contactSlot?.color || null),
         style: link ? 'Hyperlink' : undefined
     });
-    const sepRun = () => contactRun(` ${contactSep} `);
+    const sepRun = () => contactRuns(` ${contactSep} `);
     if (primary.length) {
         const children = [];
         primary.forEach((part, i) => {
-            if (i > 0) children.push(sepRun());
+            if (i > 0) children.push(...sepRun());
             if ((part.kind === 'email' || part.kind === 'url') && part.href) {
                 children.push(new ExternalHyperlink({
-                    children: [contactRun(part.text, { link: true })],
+                    children: contactRuns(part.text, { link: true }),
                     link: part.href
                 }));
             } else {
-                children.push(contactRun(part.text));
+                children.push(...contactRuns(part.text));
             }
         });
         out.push(new Paragraph({
@@ -166,7 +164,7 @@ function buildNameAndContact(profile, styleSpec, font) {
             spacing: spacingFromSlot(contactSlot, i === urls.length - 1 ? 5 : 1),
             children: [
                 new ExternalHyperlink({
-                    children: [contactRun(u.text, { link: true })],
+                    children: contactRuns(u.text, { link: true }),
                     link: u.href
                 })
             ]
@@ -193,13 +191,45 @@ function effectiveFont(slot, userFont) {
  *  compounds from wrapping via Word's w:noBreakHyphen. */
 function collapseBrokenHyphens(text) {
     return String(text || '')
-        .replace(/([A-Za-z])[\u00AD\u2010\u2011\-]\s+([A-Za-z])/g, '$1-$2')
-        .replace(/([A-Za-z])\s+[\u00AD\u2010\u2011\-]\s*([A-Za-z])/g, '$1-$2');
+        .replace(/[\u2010\u2011\u00AD]/g, '-')
+        .replace(/([A-Za-z0-9])-\s+([A-Za-z0-9])/g, '$1-$2')
+        .replace(/([A-Za-z0-9])\s+-\s*([A-Za-z0-9])/g, '$1-$2');
 }
 
 function protectHyphenCompounds(text) {
-    // Kept for HTML / callers that still want a single string.
-    return collapseBrokenHyphens(text).replace(/([A-Za-z])-([A-Za-z])/g, '$1\u2011$2');
+    // ASCII hyphen only. U+2011 is missing from the PDF font and draws
+    // as "Python- based". DOCX uses w:noBreakHyphen instead.
+    return collapseBrokenHyphens(text);
+}
+
+/** Repair saved HTML and keep hyphen compounds (Python-based, vinh-ly-l4) intact. */
+function glueHyphenCompoundsInHtml(html) {
+    let s = String(html || '');
+    s = s.replace(/[\u2010\u2011\u00AD]/g, '-');
+    s = s.replace(/&nbsp;|&#160;|&#x0*a0;/gi, ' ');
+    s = s.replace(/(^|>)([^<]*)(?=<|$)/g, (m, lead, text) => {
+        const t = collapseBrokenHyphens(text);
+        return lead + t;
+    });
+    s = s.replace(/([A-Za-z0-9])(<\/(?:strong|em|b|span|a)>)\s*-\s+([A-Za-z0-9])/gi, '$1$2-$3');
+    s = s.replace(/([A-Za-z0-9])-\s+(<(?:strong|em|b|span|a)\b[^>]*>)([A-Za-z0-9])/gi, '$1-$2$3');
+
+    const chunks = s.split(/(<span\b[^>]*\bnbh\b[^>]*>[\s\S]*?<\/span>)/gi);
+    return chunks.map((part, idx) => {
+        if (idx % 2 === 1) return part.replace(/[\u2010\u2011\u00AD]/g, '-');
+        let next = part.replace(/(^|>)([^<]+)(?=<|$)/g, (m, lead, text) => {
+            const t = text.replace(
+                /(^|[^A-Za-z0-9>])([A-Za-z0-9]+(?:-[A-Za-z0-9]+)+)/g,
+                (all, pre, word) => `${pre}<span class="nbh" style="white-space:nowrap">${word}</span>`
+            );
+            return lead + t;
+        });
+        next = next.replace(
+            /(<(?:strong|em|b)\b[^>]*>[A-Za-z0-9]+<\/(?:strong|em|b)>-[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*)/gi,
+            (full) => `<span class="nbh" style="white-space:nowrap">${full}</span>`
+        );
+        return next;
+    }).join('');
 }
 
 /** Split text into TextRuns with real OOXML no-break hyphens between
@@ -215,7 +245,7 @@ function textRunsWithNoBreakHyphens(text, baseOpts = {}) {
         const isHy = ch === '-' || ch === '\u2011' || ch === '\u2010' || ch === '\u00AD';
         const prev = cleaned[i - 1];
         const next = cleaned[i + 1];
-        if (isHy && prev && next && /[A-Za-z]/.test(prev) && /[A-Za-z]/.test(next)) {
+        if (isHy && prev && next && /[A-Za-z0-9]/.test(prev) && /[A-Za-z0-9]/.test(next)) {
             if (buf) pieces.push({ type: 'text', text: buf });
             buf = '';
             pieces.push({ type: 'nbh' });
@@ -716,7 +746,6 @@ function htmlToParagraph(html, styleSpec, font, sectionHint = null) {
         // document matches the original template's visual hierarchy.
         const headingText = headingSpec.uppercase ? String(text || '').toUpperCase() : text;
         const runOpts = {
-            text: protectHyphenCompounds(headingText),
             bold: headingSpec.bold !== false,
             size: halfPt((headingSpec.size_half_pt || 24) / 2),
             font: effectiveFont(headingSpec, font)
@@ -762,7 +791,7 @@ function htmlToParagraph(html, styleSpec, font, sectionHint = null) {
                 if (!b) return undefined;
                 return { bottom: { ...b, space: 0 } };
             })(),
-            children: [new TextRun(runOpts)]
+            children: textRunsWithNoBreakHyphens(headingText, runOpts)
         });
     }
 
@@ -1121,15 +1150,13 @@ function buildSkillLineParagraph(category, skills, styleSpec, font) {
         .filter(Boolean)
         .join(', ');
     const children = [
-        new TextRun({
-            text: protectHyphenCompounds(String(category || '').trim().replace(/:+\s*$/, '') + ': '),
+        ...textRunsWithNoBreakHyphens(String(category || '').trim().replace(/:+\s*$/, '') + ': ', {
             size: sz,
             font: f,
             bold: true,
             color
         }),
-        new TextRun({
-            text: protectHyphenCompounds(cleanedSkills),
+        ...textRunsWithNoBreakHyphens(cleanedSkills, {
             size: sz,
             font: f,
             bold: false,
@@ -1219,21 +1246,34 @@ function parseInlineRuns(html, bodySpec, font) {
         chunks[chunks.length - 1].text = chunks[chunks.length - 1].text.replace(/\s+$/, '');
     }
 
-    const makeRuns = (chunk) => {
-        const opts = {
-            size,
-            font: f,
-            bold:      chunk.isBold,
-            underline: defaults.underline,
-            italics:    defaults.italic
-        };
-        if (color) opts.color = color;
-        return textRunsWithNoBreakHyphens(chunk.text, opts);
-    };
-
     if (chunks.length) {
         const cleaned = chunks.filter(c => c.text);
-        if (cleaned.length) return cleaned.flatMap(makeRuns);
+        if (cleaned.length) {
+            const runs = [];
+            let prevText = '';
+            for (const chunk of cleaned) {
+                let text = chunk.text;
+                const opts = {
+                    size,
+                    font: f,
+                    bold: chunk.isBold,
+                    underline: defaults.underline,
+                    italics: defaults.italic
+                };
+                if (color) opts.color = color;
+                if (/[A-Za-z0-9]$/.test(prevText) && /^[-\u2010\u2011\u00AD]\s*[A-Za-z0-9]/.test(text)) {
+                    text = text.replace(/^[-\u2010\u2011\u00AD]\s*/, '');
+                    runs.push(new TextRun({
+                        ...opts,
+                        text: undefined,
+                        children: [new NoBreakHyphen()]
+                    }));
+                }
+                runs.push(...textRunsWithNoBreakHyphens(text, opts));
+                prevText = text;
+            }
+            if (runs.length) return runs;
+        }
     }
 
     const fallbackText = stripTagsPreserveWhitespace(html).replace(/^\s+/, '').replace(/\s+$/, '');
@@ -1510,7 +1550,6 @@ function buildWorkSummaryParagraph(text, styleSpec, font) {
     const slot = styleSpec?.body || {};
     const inner = decodeEntities(text);
     const runOpts = {
-        text: protectHyphenCompounds(inner),
         size: halfPt((slot.size_half_pt || 20) / 2),
         font: effectiveFont(slot, font),
         bold: false,
@@ -1520,13 +1559,14 @@ function buildWorkSummaryParagraph(text, styleSpec, font) {
     return new Paragraph({
         alignment: alignmentFromSpec(slot.align),
         spacing: { after: ptToTwip(2) },
-        children: [new TextRun(runOpts)]
+        children: textRunsWithNoBreakHyphens(inner, runOpts)
     });
 }
 
 // Public: build a DOCX buffer from raw resume HTML + profile + style spec + font.
 async function buildDocx({ resumeHtml, profile, styleSpec, font }) {
-    const ordered = reorderBySpec(resumeHtml, styleSpec);
+    const glued = glueHyphenCompoundsInHtml(resumeHtml);
+    const ordered = reorderBySpec(glued, styleSpec);
     const headerChildren = buildNameAndContact(profile, styleSpec, font);
     const bodyChildren   = htmlToDocxChildren(ordered, styleSpec, font);
 
@@ -1717,7 +1757,8 @@ function buildPdfCss(styleSpec, font) {
             margin-top: 0;
             margin-bottom: 6pt;
         }
-        span.nbh, .nbh { white-space: nowrap; }
+        span.nbh, .nbh { white-space: nowrap; word-break: keep-all; }
+        header.resume-head a, p.slot-contact, p.slot-contact a { white-space: nowrap; }
         /* Skill rows: bold category label only; skill names normal weight. */
         .slot-skill_line, li.slot-skill_line {
             ${(skillDecls || '').replace(/font-weight\s*:\s*[^;]+;?/gi, '')}
@@ -1930,6 +1971,7 @@ module.exports = {
     decorateResumeHtmlForPreview,
     looksLikeEducationLine,
     protectHyphenCompounds,
+    glueHyphenCompoundsInHtml,
     textRunsWithNoBreakHyphens,
     collapseBrokenHyphens,
     // Exposed for unit testing
@@ -1944,7 +1986,7 @@ module.exports = {
  */
 function decorateResumeHtmlForPreview(html) {
     if (!html || typeof html !== 'string') return html || '';
-    let out = html;
+    let out = glueHyphenCompoundsInHtml(html);
 
     out = out.replace(/<\/?header\b[^>]*>/gi, '');
     out = out.replace(/\sclass="slot-[a-z_]+"/gi, '');
