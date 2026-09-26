@@ -1237,6 +1237,12 @@
             && (labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab)
                 || kind === 'skill_list' || kind === 'skill_project_brief');
         if (wrongYesEssay) return false;
+        if (kind === 'city' || /location\s*\(?\s*city/i.test(lab)) {
+            const cityName = want.split(',')[0].trim();
+            if (!cityName || /^(yes|no)$/i.test(cityName) || !cur.toLowerCase().includes(cityName.toLowerCase())) {
+                return false;
+            }
+        }
         if (kind === 'gender' && want) {
             const wantMale = /\bmale\b/i.test(want) && !/\bfemale\b/i.test(want);
             if (wantMale && /\bfemale\b/i.test(cur) && !/\bmale\b/i.test(cur.replace(/female/ig, ''))) {
@@ -1430,6 +1436,11 @@
         const helper = cm();
         const w = String(wanted || '').toLowerCase().replace(/\s+/g, ' ').trim();
         const g = String(got || '').toLowerCase().replace(/\s+/g, ' ').trim();
+        if (kind === 'city' || /\blocation\b/i.test(String(kind || ''))) {
+            const cityName = w.split(',')[0].trim();
+            if (!cityName || /^(yes|no|y|n)$/.test(cityName)) return false;
+            return g.includes(cityName);
+        }
         if (!w) return true;
         if (!g) return false;
         if (g === w) return true;
@@ -1616,6 +1627,14 @@
             raw = 'Black or African American';
             strategy = 'open';
         }
+        if (kind === 'city' || /location\s*\(?\s*city/i.test(String(label || ''))) {
+            const place = formatLocationFreeText(profile, raw);
+            const head = String(place || '').split(',')[0].trim();
+            if (place && head && !/^(yes|no)$/i.test(head)) raw = place;
+            else if (/^(yes|no)$/i.test(String(raw).split(',')[0].trim())) {
+                return { ok: false, chosen: '', reason: 'not_a_city' };
+            }
+        }
         const looksLikeEssay = raw.length > 48
             || /^(i have|i am|with \d|my experience|over the (past|last))/i.test(raw)
             || /\bproduction experience\b/i.test(raw);
@@ -1715,11 +1734,22 @@
                     }
                 }
                 if (shown && !isPlaceholderValue(shown)) {
-                    try {
-                        document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-                    } catch (_) { /* ignore */ }
-                    try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
-                    return { ok: true, chosen: shown, reason: 'simplify' };
+                    const cityName = String(profile?.city || raw || '').split(',')[0].trim();
+                    const cityField = kind === 'city' || /\blocation\b/i.test(kind);
+                    const cityOk = !cityField
+                        || (
+                            !!cityName
+                            && !/^(yes|no)$/i.test(cityName)
+                            && shown.toLowerCase().includes(cityName.toLowerCase())
+                        );
+                    if (cityOk) {
+                        try {
+                            document.body.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+                        } catch (_) { /* ignore */ }
+                        try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
+                        return { ok: true, chosen: shown, reason: 'simplify' };
+                    }
+                    try { setNativeValue(el, ''); } catch (_) { /* clear the wrong place */ }
                 }
             } catch (_) { /* one legacy pick below */ }
         }
@@ -2056,15 +2086,14 @@
                 }
                 const need = isCity ? cityMin : minScore;
                 pick = bestScore >= need ? best : null;
-                // Location: if still no score hit, take the first real hint (top suggestion).
-                if (!pick && isCity) {
-                    const first = (options || []).find((o) => {
-                        const t = (o.textContent || '').replace(/\s+/g, ' ').trim();
-                        return t && !isCatchAll(t) && !/no options|loading|type to/i.test(t);
-                    });
-                    if (first) pick = first;
+                if (pick && isCity) {
+                    const cityName = String(profile?.city || raw || '').split(',')[0].trim().toLowerCase();
+                    const pickedText = String(pick.textContent || '').replace(/\s+/g, ' ').trim().toLowerCase();
+                    if (!cityName || /^(yes|no)$/.test(cityName) || !pickedText.includes(cityName)) {
+                        pick = null;
+                    }
                 }
-                if (!pick && !(kind === 'discipline' || kind === 'degree' || kind === 'school'
+                if (!pick && !isCity && !(kind === 'discipline' || kind === 'degree' || kind === 'school'
                     || kind === 'skill_experience')) {
                     pick = catchAll || null;
                 }
@@ -2475,7 +2504,13 @@
                 const shown = String(
                     cityEl.value || cityEl.closest('.select__control')?.innerText || ''
                 ).replace(/\s+/g, ' ').trim();
-                if (!shown || /^(select|search|city|location)/i.test(shown)) {
+                const cityName = String(profile?.city || '').split(',')[0].trim();
+                const wrongPlace = !!(cityName && shown
+                    && !shown.toLowerCase().includes(cityName.toLowerCase()));
+                if (!shown || /^(select|search|city|location)/i.test(shown) || wrongPlace) {
+                    if (wrongPlace) {
+                        try { setNativeValue(cityEl, ''); } catch (_) { /* clear Yesagyo-style miss */ }
+                    }
                     const res = await fillCombobox(cityEl, cityWanted, 'city', 'type', profile, 'Location (City)');
                     if (!res?.ok) {
                         setNativeValue(cityEl, cityWanted);
@@ -3421,6 +3456,24 @@
         );
         const autoSubmit = !!payload.autoSubmit;
         const applicationId = payload.applicationId || null;
+        let answerShotN = 0;
+        const shotFilledAnswer = async (el) => {
+            if (!applicationId) return;
+            try { el?.scrollIntoView?.({ block: 'center', inline: 'nearest' }); } catch (_) { /* ignore */ }
+            await sleep(60);
+            answerShotN += 1;
+            const stage = `ans_${String(answerShotN).padStart(2, '0')}`;
+            try {
+                await Promise.race([
+                    chrome.runtime.sendMessage({
+                        type: 'BIDDER_ANSWER_SHOT',
+                        applicationId,
+                        stage
+                    }),
+                    sleep(2200)
+                ]);
+            } catch (_) { /* shot is best-effort */ }
+        };
         const attempts = [];
         let pages = 0;
         let filled = 0;
@@ -3546,12 +3599,14 @@
                 if (wanted && valuesMatch(wanted, already, field.kind)) {
                     filled += 1;
                     if (field.required) requiredOk += 1;
+                    await shotFilledAnswer(fieldEl);
                     continue;
                 }
                 // One-time fill: do not keep rewriting a real answer.
                 if (shouldKeepExistingAnswer(field, already, wanted)) {
                     filled += 1;
                     if (field.required) requiredOk += 1;
+                    await shotFilledAnswer(fieldEl);
                     continue;
                 }
 
@@ -3578,16 +3633,14 @@
                             application_id: applicationId,
                             page_index: pages,
                             field_id: field.id,
-                            field_label: field.label,
                             field_kind: field.kind,
-                            wanted,
-                            chosen,
                             ok: true,
                             strategy,
                             attempt_n: attempt
                         });
                         filled += 1;
                         if (field.required) requiredOk += 1;
+                        await shotFilledAnswer(fieldEl);
                         break;
                     }
                     if (attempt === maxTries) {
@@ -3595,10 +3648,7 @@
                             application_id: applicationId,
                             page_index: pages,
                             field_id: field.id,
-                            field_label: field.label,
                             field_kind: field.kind,
-                            wanted,
-                            chosen: got || chosen,
                             ok: false,
                             strategy,
                             attempt_n: attempt,
@@ -3666,8 +3716,22 @@
                             try { el.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (_) { /* ignore */ }
                             await sleep(120);
                         }
-                        const r = await fillOne(f, wanted || (isSelectLikeField(f) ? 'Yes' : ''), 2 + round, profile);
-                        if (r?.ok && !isPlaceholderValue(readCurrentValue(f))) n += 1;
+                        const locField = effectiveFieldKind(f) === 'city'
+                            || /location\s*\(?\s*city|\bcity\b/i.test(String(f.label || ''));
+                        const locWant = locField ? formatLocationFreeText(profile, wanted) : '';
+                        if (locField && (!locWant || /^(yes|no)$/i.test(locWant.split(',')[0].trim()))) {
+                            continue;
+                        }
+                        const r = await fillOne(
+                            f,
+                            locField ? locWant : (wanted || (isSelectLikeField(f) ? 'Yes' : '')),
+                            2 + round,
+                            profile
+                        );
+                        if (r?.ok && !isPlaceholderValue(readCurrentValue(f))) {
+                            n += 1;
+                            await shotFilledAnswer(el);
+                        }
                         closeOpenSelectMenus();
                         await sleep(120);
                     }

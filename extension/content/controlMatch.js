@@ -203,17 +203,13 @@
                 || /\bunited states\b/.test(t);
             const looksLikeLocationWant = /,\s*[a-z]{2}\b/.test(w) || /,\s*[a-z .'-]+$/.test(w);
             if (looksLikeLocationWant || looksLikeLocationOpt) {
+                // "Yes" is not a city. "yesagyo" must not win because it starts with "yes".
+                if (/^(yes|no|y|n)$/.test(cityWant)) return -1;
                 if (cityWant.length >= 3 && cityOpt.length >= 3) {
                     if (cityWant === cityOpt) return 94;
-                    if (cityOpt.startsWith(cityWant) || cityWant.startsWith(cityOpt)) return 90;
-                    if (t.startsWith(cityWant) || t.includes(`${cityWant},`)) return 88;
+                    if (t.startsWith(`${cityWant},`) || t.startsWith(`${cityWant} `)) return 90;
                 }
-                if (cityWant.length >= 3 && t.includes(cityWant)) {
-                    if (/\bca\b/.test(w) && /\bcalifornia\b/.test(t)) return 86;
-                    if (/\bny\b/.test(w) && /\bnew york\b/.test(t)) return 86;
-                    if (/\btx\b/.test(w) && /\btexas\b/.test(t)) return 86;
-                    if (/\bwa\b/.test(w) && /\bwashington\b/.test(t)) return 86;
-                }
+                if (cityWant.length >= 3 && cityOpt !== cityWant) return -1;
             }
         }
 

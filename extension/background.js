@@ -30,7 +30,6 @@ import {
     upsertQuestionMemory
 } from './lib/api.js';
 import {
-    saveCapturedQuestionsPack,
     getLatestCapturedPack,
     updateCapturedItemAnswer
 } from './lib/capturedQuestions.js';
@@ -1641,19 +1640,10 @@ async function autofillAfterGenerate({
                     const live = await sendTabMessage(tabId, { type: 'COLLECT_FILLED_QA' });
                     pageQa = Array.isArray(live?.items) ? live.items : [];
                 } catch (_) { /* ignore */ }
-                const pack = await saveCapturedQuestionsPack({
-                    applicationId: result.application_id || result.applicationId || null,
-                    company: job.company || result.company_name || '',
-                    jobRole: job.title || result.job_role || '',
-                    url: job.url || '',
-                    questions: writtenQuestions,
-                    answers: [...(cached?.answers || []), ...pageQa]
-                });
-                if (pack?.items?.length) {
+                if (pageQa.length) {
                     await sendTabMessage(tabId, {
                         type: 'UPDATE_AUTOFILL_PANEL',
-                        qa: pack.items,
-                        status: `${pack.items.length} question(s) saved in panel`
+                        status: `${pageQa.length} field(s) filled`
                     }).catch(() => {});
                 }
             } else if (cached?.answers?.length) {
@@ -1707,24 +1697,6 @@ async function autofillAfterGenerate({
                 });
                 await applyAiAnswers(viaAssistant);
             }
-            try {
-                const latestAnswers = answersPayload?.answers || [];
-                const pack = await saveCapturedQuestionsPack({
-                    applicationId: result.application_id || result.applicationId || null,
-                    company: job.company || result.company_name || '',
-                    jobRole: job.title || result.job_role || '',
-                    url: job.url || '',
-                    questions: writtenQuestions,
-                    answers: latestAnswers
-                });
-                if (pack?.items?.length) {
-                    await sendTabMessage(tabId, {
-                        type: 'UPDATE_AUTOFILL_PANEL',
-                        qa: pack.items,
-                        status: `${pack.items.length} question(s) saved in panel`
-                    }).catch(() => {});
-                }
-            } catch (_) { /* ignore */ }
         } catch (err) {
             if (gapFillOnly) {
                 console.warn('[bidder] continue fill answers skipped', err);
@@ -2956,13 +2928,12 @@ async function keepLumiTabInFront() {
     }
 }
 
-/** Open the job in a background tab. Leave the Lumi page in front. */
+/** Open the job behind the current tab. Do not change which tab is in front. */
 async function openVisibleApplyTab(url) {
     const applyUrl = isAshbyJobDescriptionUrl(url) ? ashbyApplicationUrl(url) : String(url || '').trim();
     if (!/^https?:\/\//i.test(applyUrl)) return null;
     const existing = await findLiveApplyTabForUrl(applyUrl);
     if (existing?.id) {
-        await keepLumiTabInFront();
         return { tabId: existing.id, url: applyUrl, windowId: existing.windowId, reused: true };
     }
     let windowId;
@@ -2975,8 +2946,6 @@ async function openVisibleApplyTab(url) {
         active: false,
         ...(windowId ? { windowId } : {})
     });
-    await keepLumiTabInFront();
-    setTimeout(() => { keepLumiTabInFront().catch(() => {}); }, 400);
     return tab?.id ? { tabId: tab.id, url: applyUrl, windowId: tab.windowId, reused: false } : null;
 }
 
@@ -3009,49 +2978,9 @@ async function closeBidderTab(tabId) {
 
 const successFinishStarted = new Set();
 
-function choiceRequirementFromLabel(label) {
-    const h = String(label || '').toLowerCase();
-    if (!h) return '';
-    if (/\b(race|ethnicity|ethnic)\b/.test(h) && !/\bhispanic|latino\b/.test(h)) return 'race_ethnicity';
-    if (/\bhow do you identify\b/.test(h) && !/\bgender|pronoun|veteran|disabilit\b/.test(h)) return 'race_ethnicity';
-    if (/\b(veteran|military[\s_-]*status|armed[\s_-]*forces)\b/.test(h)) return 'veteran_status';
-    if (/\b(hispanic|latino|latina|latinx)\b/.test(h)) return 'hispanic_latino';
-    if (/\bthink of yourself as\b/.test(h) || (/\bgender\b/.test(h) && !/\bsexual\b/.test(h))) return 'gender';
-    if (/\b(disabilit(?:y|ies)|disabled|\bada\b)\b/.test(h) && !/\b(date|signature)\b/.test(h)) return 'disability_status';
-    return '';
-}
-
-function answerLooksLikeLocation(text) {
-    const t = String(text || '').trim();
-    if (!t || t.length > 80) return false;
-    if (/\b\d{5}(?:-\d{4})?\b/.test(t) && /,/.test(t)) return true;
-    if (/\bpalo alto\b/i.test(t)) return true;
-    if (/,\s*[A-Z]{2}\b/.test(t) && t.length < 48) return true;
-    return false;
-}
-
-/** Remember what each choice question was asking. Do not store a city as that answer. */
 async function learnSuccessfulAnswers(applicationId) {
     if (!applicationId) return { learned: 0 };
-    const data = await chrome.storage.local.get(['lumiCapturedPacks', 'lumi.questionReq.v1']);
-    const packs = Array.isArray(data.lumiCapturedPacks) ? data.lumiCapturedPacks : [];
-    const pack = packs.find((p) => String(p?.applicationId) === String(applicationId));
-    const cache = { ...(data['lumi.questionReq.v1'] || {}) };
-    let learned = 0;
-    for (const row of pack?.items || []) {
-        const req = choiceRequirementFromLabel(row?.label);
-        if (!req) continue;
-        if (answerLooksLikeLocation(row?.answer)) continue;
-        const key = String(row.label || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 160);
-        if (key.length < 12 || cache[key] === req) continue;
-        cache[key] = req;
-        learned += 1;
-    }
-    if (learned) {
-        await chrome.storage.local.set({ 'lumi.questionReq.v1': cache });
-    }
-    await logCourseEvent(applicationId, 'success_studied', { learned }).catch(() => {});
-    return { learned };
+    return { learned: 0 };
 }
 
 /** Leave the apply window and open the Job Links list. */
@@ -4607,7 +4536,7 @@ async function processReadyQueue(opts = {}) {
                 eventType: 'run_verifying'
             }).catch(() => {});
             const fillIncompleteEarly = isFillIncomplete(fillStats);
-            await savePackage(item.id, fillStats?.answersList || [], {
+            await savePackage(item.id, [], {
                 filled: fillStats?.filled,
                 company: item.company_name,
                 role: item.job_role,
@@ -4615,14 +4544,6 @@ async function processReadyQueue(opts = {}) {
                 requiredOk: fillStats?.requiredOk,
                 requiredTotal: fillStats?.requiredTotal
             });
-            await saveCapturedQuestionsPack({
-                applicationId: item.id,
-                company: item.company_name || '',
-                jobRole: item.job_role || '',
-                url: applyUrl || item.open_url || '',
-                questions: fillStats?.questionsList || [],
-                answers: fillStats?.answersList || []
-            }).catch(() => {});
 
             // Submit success path — proof screenshot defaults to site thank-you / success message.
             // Never treat engine submitClicked as intentional when Auto-submit is OFF.
@@ -5209,6 +5130,12 @@ async function processReadyQueue(opts = {}) {
                             error: msg
                         }).catch(() => {});
                         if (opened?.tabId) openTabs.delete(opened.tabId);
+                        await finishSuccessfulBid({
+                            tabId: opened?.tabId || null,
+                            applicationId: item.id,
+                            via: 'success_after_api_error',
+                            endQueue: i >= items.length - 1
+                        });
                         continue;
                     }
                 }
@@ -5995,36 +5922,6 @@ async function watchLearnAfterSuccess(tabId, applicationId, meta = {}) {
             ats: lesson.ats,
             source: lesson.source
         }).catch(() => {});
-        // Studying Engine: learn Policy answers from successful fill lessons
-        try {
-            const fills = Array.isArray(lesson.actions?.fills) ? lesson.actions.fills : [];
-            for (const fill of fills) {
-                const label = String(fill.label || fill.fieldLabel || '').trim();
-                const answer = String(fill.answer || fill.value || '').trim();
-                if (!label || !answer || answer.length > 160) continue;
-                const kindGuess = (() => {
-                    const h = label.toLowerCase();
-                    if (/disabilit|ada\b/.test(h) && !/insurance/.test(h)) return 'disability_status';
-                    if (/sponsor|visa/.test(h)) return 'requires_sponsorship';
-                    if (/previous|former|worked for|employed/.test(h)) return 'previous_employer_no';
-                    if (/background\s*check/.test(h)) return 'background_check_yes';
-                    if (/non[\s-]*compete/.test(h)) return 'non_compete_no';
-                    if (/salary|compensation/.test(h) && /comfortable|outlined|accept/.test(h)) {
-                        return 'salary_comfort_yes';
-                    }
-                    return '';
-                })();
-                if (!kindGuess) continue;
-                await upsertQuestionMemory({
-                    kind: kindGuess,
-                    question: label,
-                    answer,
-                    source: 'success',
-                    knockout: ['disability_status', 'requires_sponsorship', 'previous_employer_no',
-                        'background_check_yes', 'non_compete_no'].includes(kindGuess)
-                }).catch(() => {});
-            }
-        } catch (_) { /* ignore */ }
         await setQueueState({
             coachStatus: `Learned — ${lesson.fieldKey} @ ${host}`,
             coachAt: Date.now()
@@ -6692,9 +6589,7 @@ async function ensureApplyFormVisible(tabId, opts = {}) {
             const childId = await followApplyOpenedTab(tabId, beforeIds, 4500);
             if (childId && childId !== tabId) {
                 activeTabId = childId;
-                try {
-                    await chrome.tabs.update(activeTabId, { active: true });
-                } catch (_) { /* ignore */ }
+                await keepLumiTabInFront();
                 await setQueueState({ currentTabId: activeTabId }).catch(() => {});
             }
             try {
@@ -7035,40 +6930,13 @@ async function generateBidderAnswersForItem(item, app, questions, engineLabel, b
         });
         // Persist immediately so skip / rebid can reuse without another LLM call.
         if (answers.length) {
-            await savePackage(item.id, answers, {
+            await savePackage(item.id, [], {
                 reason: 'bidder_answers_ready',
                 count: answers.length,
                 reused: !!brain.reused,
                 provider: brain.provider || null
             }).catch(() => {});
         }
-        // Simplify-style: capture questions + answers for popup review / edit.
-        await saveCapturedQuestionsPack({
-            applicationId: item.id,
-            company: app.company_name || item.company_name || '',
-            jobRole: app.job_role || item.job_role || '',
-            url: item.open_url || '',
-            questions,
-            answers
-        }).catch(() => {});
-        // Persist Policy labels into question memory so the next bid studies them.
-        try {
-            for (const a of answers) {
-                const lane = String(a?.lane || '');
-                const src = String(a?.match_source || a?.source || '');
-                if (lane !== 'policy' && !/hard_lock|question_memory|regex|fixed/.test(src)) continue;
-                const label = String(a.label || '').trim();
-                const answer = String(a.answer || '').trim();
-                if (!label || !answer || answer.length > 160) continue;
-                await upsertQuestionMemory({
-                    kind: a.kind || undefined,
-                    question: label,
-                    answer,
-                    source: 'success',
-                    knockout: !!a.knockout
-                }).catch(() => {});
-            }
-        } catch (_) { /* ignore */ }
         return answers;
     } catch (err) {
         await logCourseEvent(item.id, 'ai_failed', {
@@ -7761,7 +7629,7 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
         });
     }
 
-    await savePackage(item.id, answers, {
+    await savePackage(item.id, [], {
         engine: engineLabel || engineLabelForAts(ats),
         ats,
         filled: totalFilled + totalUploaded,
@@ -7785,7 +7653,7 @@ async function runAutofillEngineOnTab(tabId, item, prefs, ctx) {
     return {
         filled: totalFilled,
         submitClicked,
-        answersList: answers,
+        answersList: [],
         submitStats: { clicked: submitClicked },
         engine: engineLabel || engineLabelForAts(ats),
         ats,
@@ -8631,7 +8499,16 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
 
         if (Array.isArray(result.attempts) && result.attempts.length) {
             try {
-                await logBidderFieldAttempts(item.id, result.attempts);
+                await logBidderFieldAttempts(item.id, result.attempts.map((row) => ({
+                    application_id: row?.application_id,
+                    page_index: row?.page_index,
+                    field_id: row?.field_id,
+                    field_kind: row?.field_kind,
+                    ok: row?.ok,
+                    strategy: row?.strategy,
+                    attempt_n: row?.attempt_n,
+                    error: row?.error
+                })));
             } catch (err) {
                 console.warn('[bidder] field attempts', err);
             }
@@ -8763,27 +8640,19 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             });
         }
 
-        await savePackage(item.id, answers, {
+        await savePackage(item.id, [], {
             engine: engineLabel,
             filled: result.filled,
             requiredComplete: result.requiredComplete,
             incomplete: !result.requiredComplete,
             missing: result.missingRequired || []
         });
-        await saveCapturedQuestionsPack({
-            applicationId: item.id,
-            company: app.company_name || item.company_name || '',
-            jobRole: app.job_role || item.job_role || '',
-            url: item.open_url || '',
-            questions,
-            answers
-        }).catch(() => {});
 
         return {
             filled: result.filled || 0,
             submitClicked: !!result.submitClicked,
-            answersList: answers,
-            questionsList: questions,
+            answersList: [],
+            questionsList: [],
             submitStats: { clicked: !!result.submitClicked },
             engine: engineLabel,
             requiredComplete: !!result.requiredComplete,
@@ -9033,6 +8902,19 @@ function handleExtensionMessage(msg, _sender, sendResponse) {
         })()
             .then((pack) => sendResponse({ ok: true, pack }))
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
+        return true;
+    }
+    if (msg?.type === 'BIDDER_ANSWER_SHOT') {
+        const tabId = _sender?.tab?.id;
+        const applicationId = Number(msg.applicationId) || 0;
+        const stage = String(msg.stage || '').replace(/[^a-z0-9_]/gi, '').slice(0, 24);
+        if (!tabId || !applicationId || !/^ans_\d+$/.test(stage)) {
+            sendResponse({ ok: false });
+            return false;
+        }
+        uploadScreenshot(applicationId, stage, tabId, { stayInApp: true, settleMs: 0 })
+            .then((ok) => sendResponse({ ok: !!ok }))
+            .catch(() => sendResponse({ ok: false }));
         return true;
     }
     if (msg?.type === 'ENSURE_US_DIAL_CODE') {
@@ -10088,7 +9970,7 @@ function handleExtensionMessage(msg, _sender, sendResponse) {
                     engine: 'control-panel-answers'
                 });
                 if (appId) {
-                    await savePackage(appId, answers, {
+                    await savePackage(appId, [], {
                         filled: fillResp?.fillStats?.filled,
                         source: 'control_panel',
                         ats: fillResp?.ats || null
