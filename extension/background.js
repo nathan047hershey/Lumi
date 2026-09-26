@@ -3704,9 +3704,11 @@ async function processReadyQueue(opts = {}) {
                     ) {
                         formOk = true;
                         await ensureScripts(opened.tabId).catch(() => {});
+                        const typed = await typeKnownProfileIntoForm(opened.tabId, item).catch(() => ({ filled: 0 }));
                         await logCourseEvent(item.id, 'form_detected', {
                             reason: 'page_open_start_fill',
-                            url: liveUrl
+                            url: liveUrl,
+                            typed: typed?.filled || 0
                         }).catch(() => {});
                         await setWorkProgress({
                             kind: 'queue',
@@ -4257,9 +4259,9 @@ async function processReadyQueue(opts = {}) {
                     });
                     break;
                 }
-                const midWall = await detectCaptchaOrLogin(opened.tabId);
-                // Form already detected — ignore passive reCAPTCHA widgets; only block real walls.
-                if (isBlockingCaptchaWall(midWall, { formReady: true })) {
+                const midWall = attempt === 0 ? null : await detectCaptchaOrLogin(opened.tabId);
+                // First pass types immediately. Do not sit on a CAPTCHA/login guess before any keystrokes.
+                if (midWall && isBlockingCaptchaWall(midWall, { formReady: true })) {
                     await setAppRunState(item.id, 'paused_captcha', {
                         tabId: opened.tabId,
                         captcha: true,
@@ -4948,7 +4950,7 @@ async function processReadyQueue(opts = {}) {
                     missingRequired: [],
                     queueEndedAt: Date.now()
                 }).catch(() => {});
-            } else if (!prefs.autoNext) {
+            } else if (!prefs.autoNext && Number(fillStats?.filled || 0) > 0) {
                 await setQueueState({
                     running: true,
                     status: 'awaiting_next',
@@ -5958,6 +5960,102 @@ async function tryCreateAtsAccount(tabId, profileEmail) {
  * so fill + Live monitor screenshots show the form, not the job poster.
  * Also follows new tabs and can start ATS account creation.
  */
+/** Type name, email, and phone into the open page without waiting on the fill engine. */
+async function typeKnownProfileIntoForm(tabId, item) {
+    const first = String(item?.first_name || '').trim();
+    const last = String(item?.last_name || '').trim();
+    const email = String(item?.email || item?.profile_email || item?.candidate_email || '').trim();
+    const phone = String(item?.phone || item?.mobile || '').trim();
+    let profile = { first, last, email, phone };
+    try {
+        const packed = await Promise.race([
+            getBidderApplication(item?.id),
+            new Promise((resolve) => setTimeout(() => resolve(null), 4000))
+        ]);
+        const p = packed?.profile || {};
+        profile = {
+            first: String(p.first_name || profile.first).trim(),
+            last: String(p.last_name || profile.last).trim(),
+            email: String(p.email || profile.email).trim(),
+            phone: String(p.phone || p.mobile || p.telephone || profile.phone).trim()
+        };
+    } catch (_) { /* use the names already on the queue item */ }
+    if (!profile.first && !profile.last && !profile.email && !profile.phone) {
+        return { filled: 0 };
+    }
+    try {
+        const [inj] = await chrome.scripting.executeScript({
+            target: { tabId },
+            func: (who) => {
+                const setVal = (el, value) => {
+                    const str = String(value || '');
+                    if (!el || !str) return false;
+                    const proto = el.tagName === 'TEXTAREA'
+                        ? window.HTMLTextAreaElement.prototype
+                        : window.HTMLInputElement.prototype;
+                    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+                    try { el.focus(); } catch (_) { /* ignore */ }
+                    try {
+                        const tracker = el._valueTracker;
+                        if (tracker && typeof tracker.setValue === 'function') tracker.setValue('');
+                    } catch (_) { /* ignore */ }
+                    if (desc?.set) desc.set.call(el, str);
+                    else el.value = str;
+                    el.dispatchEvent(new Event('input', { bubbles: true }));
+                    el.dispatchEvent(new Event('change', { bubbles: true }));
+                    return true;
+                };
+                const textOf = (el) => String(el?.innerText || el?.textContent || '').replace(/\s+/g, ' ').trim();
+                const labelFor = (el) => {
+                    const bits = [];
+                    if (el.id) {
+                        const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                        if (lab) bits.push(textOf(lab));
+                    }
+                    const wrap = el.closest('label');
+                    if (wrap) bits.push(textOf(wrap));
+                    bits.push(el.getAttribute('aria-label') || '', el.getAttribute('placeholder') || '', el.name || '');
+                    let prev = el.previousElementSibling;
+                    for (let i = 0; i < 3 && prev; i += 1, prev = prev.previousElementSibling) {
+                        bits.push(textOf(prev));
+                    }
+                    const parent = el.parentElement;
+                    if (parent) bits.push(textOf(parent).slice(0, 180));
+                    return bits.join(' ').toLowerCase();
+                };
+                const inputs = [...document.querySelectorAll('input, textarea')].filter((el) => {
+                    const type = String(el.type || '').toLowerCase();
+                    if (['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'password'].includes(type)) return false;
+                    const r = el.getBoundingClientRect();
+                    return r.width > 8 && r.height > 8;
+                });
+                const rules = [
+                    [/first\s*name|given\s*name/, who.first],
+                    [/last\s*name|family\s*name|surname/, who.last],
+                    [/e-?mail/, who.email],
+                    [/phone|mobile|\btel\b/, who.phone]
+                ];
+                let filled = 0;
+                const used = new Set();
+                for (const [re, value] of rules) {
+                    if (!value) continue;
+                    const el = inputs.find((node) => !used.has(node) && re.test(labelFor(node)));
+                    if (el && setVal(el, value)) {
+                        used.add(el);
+                        filled += 1;
+                    }
+                }
+                return { filled };
+            },
+            args: [profile]
+        });
+        return { filled: Number(inj?.result?.filled || 0), profile };
+    } catch (err) {
+        console.warn('[bidder] direct profile type', err?.message || err);
+        return { filled: 0, profile };
+    }
+}
+
 async function ensureApplyFormVisible(tabId, opts = {}) {
     try {
         await ensureScripts(tabId);
