@@ -165,6 +165,14 @@
         return stripped;
     }
 
+    function labelLooksLikeRace(lab) {
+        const s = String(lab || '');
+        if (/\bhispanic|latino|latina|latinx\b/i.test(s) && !/\b(race|ethnicity|ethnic)\b/i.test(s)) return false;
+        if (/\b(race|ethnicity|ethnic)\b/i.test(s)) return true;
+        if (/\bhow do you identify\b/i.test(s) && !/\bgender|pronoun|veteran|disabilit\b/i.test(s)) return true;
+        return false;
+    }
+
     function labelFor(el) {
         if (!el) return '';
         if (el.id) {
@@ -195,6 +203,13 @@
             'label, .field, .form-field, .application-field, [class*="field"], [class*="education"], .form-group'
         );
         if (wrap) {
+            const controlCount = wrap.querySelectorAll(
+                'input:not([type="hidden"]), textarea, select, [role="combobox"]'
+            ).length;
+            // A form-wide wrapper repeats the same early text (often the city) on every select.
+            if (controlCount > 3) {
+                // fall through to the nearest question above this control
+            } else {
             const clone = wrap.cloneNode(true);
             clone.querySelectorAll(
                 'input, textarea, select, button, .select__placeholder, [class*="placeholder"], '
@@ -202,6 +217,7 @@
             ).forEach((n) => n.remove());
             const t = cleanLabelText((clone.innerText || '').replace(/\s+/g, ' ').trim());
             if (t && !isYesNoOnlyLabel(t)) return t.slice(0, 200);
+            }
         }
         // Previous sibling title (common Greenhouse education / essay layout).
         // Essay prompts are often 100–300 chars — the old <80 cap dropped them and
@@ -211,7 +227,12 @@
         const maxSibling = el.tagName === 'TEXTAREA' ? 420 : 140;
         for (let i = 0; i < 6 && prev; i++, prev = prev.previousElementSibling) {
             const t = cleanLabelText(prev.innerText || prev.textContent || '');
-            if (t && t.length <= maxSibling) return t.slice(0, maxSibling);
+            if (!t || t.length > maxSibling || isPlaceholderLabelText(t) || isYesNoOnlyLabel(t)) continue;
+            // Skip a neighboring select's chosen value ("Palo Alto") and keep looking for the question.
+            if (t.length < 24 && !/[?]|\b(race|ethnic|veteran|gender|disabilit|hispanic|latino|city|location|state)\b/i.test(t)) {
+                continue;
+            }
+            return t.slice(0, maxSibling);
         }
         // Parent field shell often holds the long question text above a textarea.
         if (el.tagName === 'TEXTAREA') {
@@ -328,6 +349,7 @@
 
     function classify(label, name = '') {
         const hay = `${label} ${name}`.toLowerCase();
+        if (labelLooksLikeRace(hay)) return 'race_ethnicity';
         if (/\b(first[\s_-]*name|given[\s_-]*name)\b/.test(hay)) return 'first_name';
         if (/\b(last[\s_-]*name|family[\s_-]*name|surname)\b/.test(hay)) return 'last_name';
         if (/\b(full[\s_-]*name|your[\s_-]*name)\b/.test(hay) && !/first|last/.test(hay)) return 'full_name';
@@ -1249,6 +1271,7 @@
         const kind = String(field?.kind || '');
         const lab = String(field?.label || '');
         const name = String(field?.name || field?.id || '');
+        if (labelLooksLikeRace(lab)) return 'race_ethnicity';
         if (labelLooksLikeWorkAuthYes(lab) || labelLooksLikeAuthorizedWithoutSponsorship(lab)) {
             return 'work_authorization';
         }
@@ -1574,6 +1597,11 @@
         if (!raw || !el) return { ok: false, chosen: '', reason: 'empty' };
 
         // Essay dumped into a fixed dropdown (e.g. REST APIs) → short option aliases + open-only.
+        if (kind === 'race_ethnicity' || labelLooksLikeRace(label)) {
+            kind = 'race_ethnicity';
+            raw = 'Black or African American';
+            strategy = 'open';
+        }
         const looksLikeEssay = raw.length > 48
             || /^(i have|i am|with \d|my experience|over the (past|last))/i.test(raw)
             || /\bproduction experience\b/i.test(raw);
@@ -1878,6 +1906,10 @@
             || el.parentElement?.querySelector('.select__control')
             || el;
         const input = control.querySelector('input') || el;
+        if (kind === 'race_ethnicity' || kind === 'gender' || kind === 'veteran_status'
+            || kind === 'disability_status' || kind === 'hispanic_latino') {
+            try { setNativeValue(input, ''); } catch (_) { /* ignore */ }
+        }
         // Clear leftover essay typing in the filter input before open-and-pick.
         if (kind === 'skill_experience' || looksLikeEssay || /^education_(start|end)_/.test(kind)) {
             try {
@@ -2419,6 +2451,7 @@
                 if (['hidden', 'tel', 'email', 'checkbox', 'radio', 'file'].includes(type)) return false;
                 if (isDialCountryOnly({ kind: 'city' }, el)) return false;
                 const lab = labelFor(el);
+                if (labelLooksLikeRace(lab)) return false;
                 return /location\s*\(?\s*city|\bcity\s*\*|^\s*city\b/i.test(lab);
             });
             if (cityEl) {
@@ -2495,20 +2528,31 @@
             if (labelLooksLikeSkillDescribe(field.label) || kind === 'skill_project_brief') {
                 want = skillDescribeAnswer(profile, field.label);
             }
-            let res = await fillCombobox(el, want, kind, forceOpen ? 'open' : strategy, profile, field.label || '');
+            const liveLab = labelFor(el) || field.label || '';
+            if (labelLooksLikeRace(liveLab) || labelLooksLikeRace(field.label)) {
+                want = 'Black or African American';
+            }
+            let res = await fillCombobox(
+                el,
+                want,
+                (labelLooksLikeRace(liveLab) || labelLooksLikeRace(field.label)) ? 'race_ethnicity' : kind,
+                forceOpen ? 'open' : strategy,
+                profile,
+                liveLab || field.label || ''
+            );
             if (!res?.ok && nativeSel) {
                 const sel = await fillSelect(nativeSel, want);
                 if (sel?.ok) return { ...sel, strategy: 'native_select' };
             }
             // Location select often lists US states — retry with state name if city string missed.
-            if (!res?.ok && (kind === 'city' || kind === 'state')) {
+            if (!res?.ok && !labelLooksLikeRace(liveLab) && (kind === 'city' || kind === 'state')) {
                 const st = String(wanted || '').split(',').pop()?.trim();
                 if (st && st.toLowerCase() !== String(wanted || '').toLowerCase()) {
                     res = await fillCombobox(el, st, 'state', 'type', profile, field.label || '');
                 }
             }
             // Dropdown miss — type City, ST ZIP as free text (Evio-style manual entry).
-            if (!res?.ok && (kind === 'city' || /\blocation\b/i.test(String(field?.label || '')))) {
+            if (!res?.ok && !labelLooksLikeRace(liveLab) && (kind === 'city' || /\blocation\b/i.test(String(field?.label || '')))) {
                 const freeText = formatLocationFreeText(profile, wanted);
                 if (freeText) {
                     try {
