@@ -3694,6 +3694,29 @@ async function processReadyQueue(opts = {}) {
             let lastGateShotAt = 0;
             while (Date.now() < formDeadline) {
                 try {
+                    const liveTab = await chrome.tabs.get(opened.tabId).catch(() => null);
+                    const liveUrl = String(liveTab?.url || '');
+                    if (
+                        liveTab?.status === 'complete'
+                        && /^https?:\/\//i.test(liveUrl)
+                        && !/linkedin\.com/i.test(liveUrl)
+                        && !tabShowsBrowserErrorPage(liveTab)
+                    ) {
+                        formOk = true;
+                        await ensureScripts(opened.tabId).catch(() => {});
+                        await logCourseEvent(item.id, 'form_detected', {
+                            reason: 'page_open_start_fill',
+                            url: liveUrl
+                        }).catch(() => {});
+                        await setWorkProgress({
+                            kind: 'queue',
+                            phase: 'filling',
+                            label: 'Job page open — starting fill…',
+                            company: item.company_name || '',
+                            applicationId: item.id
+                        }).catch(() => {});
+                        break;
+                    }
                     await ensureScripts(opened.tabId);
                     // Keep Live monitor updating during the gate wait (was stuck on “Waiting…”).
                     if (Date.now() - lastGateShotAt > 1200) {
@@ -4221,6 +4244,7 @@ async function processReadyQueue(opts = {}) {
 
             // Full fill — at most 2 attempts, and only retry tab/script disconnects.
             // Re-running the whole fill 4× was why one bid could exceed 10 minutes.
+            await clearFillLock().catch(() => {});
             let fillStats = null;
             let fillErr = null;
             let submitted = false;
@@ -7466,8 +7490,37 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             lastStatusAt: Date.now(),
             lastStatusMeta: { filled: filledEarly, phase: 'early_profile' }
         }).catch(() => {});
+        if (filledEarly < 1) {
+            await new Promise((r) => setTimeout(r, 700));
+            await ensureScripts(tabId).catch(() => {});
+            await sendTabMessage(tabId, {
+                type: 'FILL_FORM',
+                payload: {
+                    profile: { ...profile, ...payload.profile },
+                    answers: [],
+                    autoSubmit: false,
+                    skipFiles: true,
+                    skipQuestions: true,
+                    profileOnly: true,
+                    profileGapFill: true
+                }
+            }).catch(() => null);
+        }
     } catch (err) {
         console.warn('[bidder] early profile fill', err);
+        await new Promise((r) => setTimeout(r, 800));
+        await ensureScripts(tabId).catch(() => {});
+        await sendTabMessage(tabId, {
+            type: 'FILL_FORM',
+            payload: {
+                profile: { ...profile, ...payload.profile },
+                answers: [],
+                autoSubmit: false,
+                skipFiles: true,
+                skipQuestions: true,
+                profileOnly: true
+            }
+        }).catch(() => null);
     }
 
     const prepPromise = prepareBidderApplicationFiles(tabId, item, app, prefs, profile);
