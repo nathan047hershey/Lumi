@@ -159,21 +159,30 @@ function fixBrandonBulletIndent() {
 
 // Ensure the templates directory exists and that the built-in default
 // template row is seeded. Idempotent.
+function isBrandonSystemSpec(stored) {
+    if (!stored || stored.source?.file !== 'builtin:brandon') return false;
+    const bulletAt = (Number(stored.list?.indent_left_pt) || 0) - (Number(stored.list?.indent_hanging_pt) || 0);
+    return bulletAt >= 36
+        && stored.fonts?.body === 'Cambria'
+        && stored.experience_row?.separator === '•'
+        && stored.section_labels?.experience === 'Experiences';
+}
+
 function ensureDefaultTemplate() {
-    if (!fs.existsSync(TEMPLATES_DIR)) {
-        fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
-    }
+    try {
+        if (!fs.existsSync(TEMPLATES_DIR)) {
+            fs.mkdirSync(TEMPLATES_DIR, { recursive: true });
+        }
+    } catch (_) { /* serverless disk may be read-only; the spec row still has to update */ }
     const description = 'System default (Brandon layout). Experience bullets sit one tab right of the role.';
     const specJson = JSON.stringify(DEFAULT_STYLE_SPEC);
     const existing = getOne('SELECT id, style_spec FROM resume_templates WHERE is_default = 1 LIMIT 1');
     if (existing) {
         let stored = {};
         try { stored = JSON.parse(existing.style_spec || '{}'); } catch (_) { stored = {}; }
-        const bulletAt = (Number(stored.list?.indent_left_pt) || 0) - (Number(stored.list?.indent_hanging_pt) || 0);
-        const legacy = !stored.experience_row
-            || stored.source?.file === 'builtin:default'
-            || (stored.source?.file === 'builtin:brandon' && bulletAt < 36);
-        if (legacy) {
+        // Always replace a non-Brandon system default. The old check left the
+        // broken Arial builtin in place whenever this function had not run.
+        if (!isBrandonSystemSpec(stored)) {
             runQuery(
                 `UPDATE resume_templates SET style_spec = ?, description = ?, name = 'Default' WHERE id = ?`,
                 [specJson, description, existing.id]
