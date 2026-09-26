@@ -2855,7 +2855,7 @@ export default function AutoBidderDialog({
     const Subcopy = pageMode ? 'p' : DialogDescription;
 
     return (
-        <>
+        <div className={pageMode ? 'grid w-full items-start gap-4 lg:grid-cols-[minmax(0,1fr)_28rem]' : 'contents'}>
         <BidderShell pageMode={pageMode} open={open} onOpenChange={onOpenChange}>
                 <div className={pageMode
                     ? 'flex flex-col gap-3 p-5 sm:p-6'
@@ -3605,8 +3605,10 @@ export default function AutoBidderDialog({
             isAdmin={isAdmin}
             refreshKey={shotBustKey}
         />
+        <div className={pageMode ? 'min-w-0 lg:sticky lg:top-4' : 'contents'}>
         <BidMonitorDock
-            open={dockOpen || monitorActive}
+            embedded={pageMode}
+            open={pageMode || dockOpen || monitorActive}
             minimized={dockMinimized}
             onClose={() => {
                 setDockOpen(false);
@@ -3823,6 +3825,7 @@ export default function AutoBidderDialog({
                 if (monitorFrames.length) setMonitorFrameIndex(monitorFrames.length - 1);
             }}
         />
-        </>
+        </div>
+        </div>
     );
 }

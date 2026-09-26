@@ -71,6 +71,7 @@ function loadPos() {
 
 export default function BidMonitorDock({
     open,
+    embedded = false,
     minimized,
     onMinimizedChange,
     onClose,
@@ -426,7 +427,8 @@ export default function BidMonitorDock({
         }
     }, [awaitingCaptcha, outcomeKind]);
 
-    if (!mounted || !open || typeof document === 'undefined') return null;
+    if (!open) return null;
+    if (!embedded && (!mounted || typeof document === 'undefined')) return null;
 
     const hasFrames = frameCount > 0;
     const canPrev = hasFrames && frameIndex > 0;
@@ -791,30 +793,39 @@ export default function BidMonitorDock({
 
     const body = (
         <div
-            className="lumi-control pointer-events-auto fixed z-[2147483000] flex flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[hsl(240_6%_9%/0.94)] shadow-[0_24px_64px_-20px_rgba(0,0,0,0.75),0_0_0_1px_hsla(187,85%,53%,0.12)] backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-200"
-            style={{
-                left: pos.x,
-                top: pos.y,
-                width: minimized ? 280 : DOCK_W,
-                maxWidth: 'calc(100vw - 16px)',
-                minHeight: DOCK_H_MIN,
-                maxHeight: minimized
-                    ? undefined
-                    : `min(calc(100vh - ${Math.max(8, pos.y)}px - 8px), calc(100vh - 16px))`
-            }}
-            role="dialog"
+            className={embedded
+                ? 'lumi-control pointer-events-auto relative flex w-full flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[hsl(240_6%_9%)] shadow-[0_0_0_1px_hsla(187,85%,53%,0.12)]'
+                : 'lumi-control pointer-events-auto fixed z-[2147483000] flex flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[hsl(240_6%_9%/0.94)] shadow-[0_24px_64px_-20px_rgba(0,0,0,0.75),0_0_0_1px_hsla(187,85%,53%,0.12)] backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-200'}
+            style={embedded
+                ? {
+                    minHeight: DOCK_H_MIN,
+                    maxHeight: minimized ? undefined : 'calc(100vh - 5.5rem)'
+                }
+                : {
+                    left: pos.x,
+                    top: pos.y,
+                    width: minimized ? 280 : DOCK_W,
+                    maxWidth: 'calc(100vw - 16px)',
+                    minHeight: DOCK_H_MIN,
+                    maxHeight: minimized
+                        ? undefined
+                        : `min(calc(100vh - ${Math.max(8, pos.y)}px - 8px), calc(100vh - 16px))`
+                }}
+            role={embedded ? 'region' : 'dialog'}
             aria-label="Lumi control panel"
         >
             {/* Header */}
             <div
-                className="relative flex shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] px-3 py-2 active:cursor-grabbing select-none"
+                className={embedded
+                    ? 'relative flex shrink-0 items-center gap-2 border-b border-white/[0.06] px-3 py-2 select-none'
+                    : 'relative flex shrink-0 cursor-grab items-center gap-2 border-b border-white/[0.06] px-3 py-2 active:cursor-grabbing select-none'}
                 style={{
                     background: 'linear-gradient(135deg, hsla(187,85%,53%,0.12) 0%, hsla(240,6%,12%,0.9) 50%, hsla(240,5%,10%,0.95) 100%)'
                 }}
-                onPointerDown={onPointerDown}
-                title="Drag to move"
+                onPointerDown={embedded ? undefined : onPointerDown}
+                title={embedded ? undefined : 'Drag to move'}
             >
-                <GripVertical className="h-3.5 w-3.5 shrink-0 text-white/30" />
+                {embedded ? null : <GripVertical className="h-3.5 w-3.5 shrink-0 text-white/30" />}
                 <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5">
                         <span
@@ -867,9 +878,11 @@ export default function BidMonitorDock({
                 <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 px-2 text-[11px] text-white/70 hover:bg-white/10 hover:text-white" title="Open the bid log" onClick={onExpandDialog}>
                     More view
                 </Button>
-                <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 text-white/45 hover:bg-white/10 hover:text-white" title="Close" onClick={onClose}>
-                    <X className="h-3.5 w-3.5" />
-                </Button>
+                {embedded ? null : (
+                    <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 text-white/45 hover:bg-white/10 hover:text-white" title="Close" onClick={onClose}>
+                        <X className="h-3.5 w-3.5" />
+                    </Button>
+                )}
             </div>
 
             {!minimized && (
@@ -1340,5 +1353,6 @@ export default function BidMonitorDock({
         </div>
     );
 
+    if (embedded) return body;
     return createPortal(body, document.body);
 }
