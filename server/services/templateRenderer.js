@@ -1383,7 +1383,17 @@ function reorderBySpec(html, styleSpec) {
         return b;
     });
 
-    return header + labelled.map((b) => b.heading + b.body).join('');
+    // Section titles match SUMMARY: Core Skills → CORE SKILLS, Work
+    // Experience → WORK EXPERIENCE. Job lines are <p><strong>, not <h2>.
+    return uppercaseSectionHeadings(header + labelled.map((b) => b.heading + b.body).join(''));
+}
+
+function uppercaseSectionHeadings(html) {
+    return String(html || '').replace(/<h2\b([^>]*)>([\s\S]*?)<\/h2>/gi, (full, attrs, inner) => {
+        const text = inner.replace(/<[^>]+>/g, '');
+        if (!text || text === text.toUpperCase()) return full;
+        return `<h2${attrs}>${text.toUpperCase()}</h2>`;
+    });
 }
 
 function classifySection(headingText) {
@@ -1741,7 +1751,7 @@ function buildPdfCss(styleSpec, font) {
         h1.slot-name, h1 { ${nameDecls} margin-top: 0; margin-bottom: 2pt; }
         p.slot-contact, header.resume-head > p { ${contactDecls || 'text-align:center; font-size:10pt;'} margin-top: 0; margin-bottom: 1pt; }
         header.resume-head { margin-bottom: 8pt; }
-        h2, .slot-section_heading { ${sectionDecls} margin-top: 10pt; margin-bottom: 4pt; }
+        h2, .slot-section_heading { ${sectionDecls} text-transform: uppercase; margin-top: 10pt; margin-bottom: 4pt; }
         .slot-position_line, p.slot-position_line > strong { ${positionDecls || 'font-weight:bold;'} }
         .slot-education_line, p.slot-education_line, p.slot-education_line > strong {
             ${educationDecls || 'font-weight:bold;'}
@@ -1972,6 +1982,7 @@ module.exports = {
     looksLikeEducationLine,
     protectHyphenCompounds,
     glueHyphenCompoundsInHtml,
+    uppercaseSectionHeadings,
     textRunsWithNoBreakHyphens,
     collapseBrokenHyphens,
     // Exposed for unit testing

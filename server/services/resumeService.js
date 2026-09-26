@@ -1716,6 +1716,7 @@ const UNIT_PATTERN = '(?:years?|yrs?|%+|percent|x|ms|s|engineers?|developers?|se
             jobDescription: jobDescription || ''
         });
         resumeHtml = protectHyphenCompoundsInHtml(polished.html);
+        resumeHtml = require('./templateRenderer').uppercaseSectionHeadings(resumeHtml);
         const polishMs = polished.polish_ms || 0;
         const outputChars = resumeHtml.length;
 

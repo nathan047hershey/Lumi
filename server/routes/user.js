@@ -563,15 +563,9 @@ router.post('/regenerate-resume', async (req, res) => {
     try {
         const {
             application_id,
-            resume_filename,
-            job_description,
-            template_id: providedTemplateId,
-            font_family: providedFont
+            resume_filename
         } = req.body;
 
-        if (!job_description) {
-            return res.status(400).json({ error: 'Job description is required' });
-        }
         if (!application_id && !resume_filename) {
             return res.status(400).json({ error: 'Application ID or resume filename is required' });
         }
@@ -608,9 +602,9 @@ router.post('/regenerate-resume', async (req, res) => {
             return res.status(404).json({ error: 'Application not found or access denied' });
         }
 
-        // Only allow regeneration when status is pending
-        if (existing.status !== 'pending') {
-            return res.status(400).json({ error: `Cannot regenerate a resume for an application with status "${existing.status}"` });
+        const job_description = String(req.body.job_description || existing.job_description || '').trim();
+        if (!job_description) {
+            return res.status(400).json({ error: 'Job description is required' });
         }
 
         // Load the profile
@@ -1085,6 +1079,13 @@ router.get('/applications/:profileId', (req, res) => {
             const term = '%' + String(urlRaw).toLowerCase().trim() + '%';
             filters.push(`LOWER(COALESCE(a.job_url, '')) LIKE ?`);
             filterParams.push(term);
+        }
+        if (req.query.id && String(req.query.id).trim()) {
+            const appId = parseInt(req.query.id, 10);
+            if (appId) {
+                filters.push('a.id = ?');
+                filterParams.push(appId);
+            }
         }
         if (req.query.status && req.query.status !== 'all') {
             filters.push('a.status = ?');

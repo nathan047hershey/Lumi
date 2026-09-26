@@ -961,10 +961,10 @@ const [assignedTemplate, setAssignedTemplate] = useState(null);
 
         const hydrate = async () => {
             try {
-                const { data } = await userAPI.getApplications(profileId, { limit: 100, page: 1 });
+                const { data } = await userAPI.getApplications(profileId, { limit: 1, page: 1, id: appId });
                 if (cancelled) return;
                 const list = Array.isArray(data?.applications) ? data.applications : (Array.isArray(data) ? data : []);
-                const app = list.find((a) => Number(a.id) === appId);
+                const app = list.find((a) => Number(a.id) === appId) || list[0];
                 if (!app) return;
 
                 setApplicationId(app.id);
@@ -1404,7 +1404,7 @@ const [assignedTemplate, setAssignedTemplate] = useState(null);
             setError('Please generate a resume first');
             return;
         }
-        if (!jobDescription.trim()) {
+        if (!jobDescription.trim() && !idToUse) {
             setError('Please enter a job description');
             return;
         }
