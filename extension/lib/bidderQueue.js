@@ -30,6 +30,7 @@ import {
     SUCCESS_HEADING_RE,
     SUCCESS_NEGATIVE_RE,
     evaluateSubmitSuccessPage,
+    evaluateSubmitResponse,
     pickSubmitSuccessResult
 } from './submitSuccess.js';
 
@@ -1155,7 +1156,15 @@ function collectSubmitSuccessSignalsInPage(negativeReSource) {
         const t = controlText(el);
         return /\bsubmit\b/i.test(t) || el.type === 'submit';
     });
-    const resumeSlot = [...document.querySelectorAll('input[type="file"]')].some(isVisible);
+    const applyForm = [...document.querySelectorAll('form')].some((form) => {
+        if (!isVisible(form)) return false;
+        const file = [...form.querySelectorAll('input[type="file"]')].some(isVisible);
+        const submit = [...form.querySelectorAll('button, input[type="submit"], input[type="button"]')].some((el) => {
+            if (!isVisible(el)) return false;
+            return el.type === 'submit' || /\bsubmit\b/i.test(controlText(el));
+        });
+        return file || submit;
+    });
     const href = String(location.href || '');
     const applicationIdInUrl = /[?&]application_id=/i.test(href);
     const viewMoreJobs = /\bview more jobs\b/i.test(text);
@@ -1164,6 +1173,15 @@ function collectSubmitSuccessSignalsInPage(negativeReSource) {
         && /initial screen/i.test(text)
         && /team interview/i.test(text);
     const confirmationShell = (viewMoreJobs && backToJobPost) || trackStages;
+    const atsHost = /greenhouse|lever\.co|ashbyhq|myworkday|smartrecruiters|icims|workable/i.test(String(location.hostname || ''));
+    const confirmationNode = [...document.querySelectorAll(
+        '#application_confirmation, .application_confirmation, [id*="confirmation" i], [class*="confirmation" i], [data-testid*="confirmation" i], [data-qa*="confirmation" i]'
+    )].find((el) => {
+        if (!isVisible(el)) return false;
+        try { if (el.closest('form')) return false; } catch (_) { /* ignore */ }
+        const r = el.getBoundingClientRect();
+        return r.width > 80 && r.height > 36;
+    });
     return {
         text,
         headings,
@@ -1172,9 +1190,11 @@ function collectSubmitSuccessSignalsInPage(negativeReSource) {
         hasSubmitControl,
         emptyVisibleFields,
         hasValidationErrors: !!(negativeRe && negativeRe.test(text)),
-        formPresent: !!(resumeSlot || hasSubmitControl),
+        formPresent: !!applyForm,
         confirmationShell,
-        applicationIdInUrl
+        confirmationMounted: !!confirmationNode && !applyForm,
+        applicationIdInUrl,
+        atsHost
     };
 }
 
@@ -1273,8 +1293,8 @@ async function collectSubmitSuccessSignalsAllFrames(tabId) {
     return (injected || []).map((row) => row?.result).filter(Boolean);
 }
 
-export async function detectSubmitSuccess(tabId) {
-    const detail = await detectSubmitSuccessDetail(tabId);
+export async function detectSubmitSuccess(tabId, opts = {}) {
+    const detail = await detectSubmitSuccessDetail(tabId, opts);
     return !!detail?.ok;
 }
 
@@ -1285,7 +1305,8 @@ export async function detectSubmitSuccess(tabId) {
 export async function pollDetectSubmitSuccess(tabId, {
     totalMs = 12000,
     gapMs = 800,
-    onTick = null
+    onTick = null,
+    formReplacedAfterAttempt = true
 } = {}) {
     const start = Date.now();
     const total = Math.max(2500, Number(totalMs) || 12000);
@@ -1294,7 +1315,7 @@ export async function pollDetectSubmitSuccess(tabId, {
     let last = { ok: false, reason: 'no_poll' };
     while (Date.now() - start < total) {
         attempts += 1;
-        last = await detectSubmitSuccessDetail(tabId);
+        last = await detectSubmitSuccessDetail(tabId, { formReplacedAfterAttempt });
         if (typeof onTick === 'function') {
             try { onTick({ attempt: attempts, ...last }); } catch (_) { /* ignore */ }
         }
@@ -1322,11 +1343,52 @@ export async function pollDetectSubmitSuccess(tabId, {
     };
 }
 
+async function readSubmitWatch(tabId) {
+    try {
+        const injected = await chrome.scripting.executeScript({
+            target: { tabId, allFrames: true },
+            world: 'MAIN',
+            func: () => {
+                const watch = window.__lumiSubmitWatch;
+                if (!watch) return null;
+                return {
+                    posts: Array.isArray(watch.posts) ? watch.posts.slice(-8) : [],
+                    greenhouseConfirmation: !!watch.greenhouseConfirmation
+                };
+            }
+        });
+        const rows = (injected || []).map((row) => row?.result).filter(Boolean);
+        const posts = [];
+        let greenhouseConfirmation = false;
+        for (const row of rows) {
+            if (row.greenhouseConfirmation) greenhouseConfirmation = true;
+            if (Array.isArray(row.posts)) posts.push(...row.posts);
+        }
+        return { posts, greenhouseConfirmation };
+    } catch (_) {
+        return { posts: [], greenhouseConfirmation: false };
+    }
+}
+
 /** Full detect payload (reason) for Update state / revoke false SUCCESS. */
-async function detectSubmitSuccessDetail(tabId) {
+async function detectSubmitSuccessDetail(tabId, opts = {}) {
     try {
         const frames = await collectSubmitSuccessSignalsAllFrames(tabId);
-        return pickSubmitSuccessResult(frames);
+        const watch = await readSubmitWatch(tabId);
+        const judged = (watch.posts || [])
+            .map((post) => evaluateSubmitResponse(post))
+            .filter(Boolean);
+        const latest = judged.length ? judged[judged.length - 1] : null;
+        const submitAccepted = !!(latest && latest.ok);
+        const submitRejected = !!(latest && !latest.ok);
+        const merged = (frames.length ? frames : [{}]).map((frame) => ({
+            ...frame,
+            submitAccepted,
+            hasValidationErrors: !!(frame.hasValidationErrors || submitRejected),
+            confirmationMounted: !!(frame.confirmationMounted || watch.greenhouseConfirmation),
+            formReplacedAfterAttempt: !!opts.formReplacedAfterAttempt
+        }));
+        return pickSubmitSuccessResult(merged);
     } catch (err) {
         return { ok: false, reason: err?.message || 'detect_failed' };
     }

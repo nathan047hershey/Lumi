@@ -28,10 +28,32 @@ function isStrongThankYou(body, headings) {
     return headingList(headings).some((h) => STRONG_THANK_YOU_RE.test(h));
 }
 
+const JOB_CLOSED_RE = /\b(?:no longer (?:available|accepting)|job (?:has been )?closed|position (?:has been )?filled|this (?:job|position) (?:is|has been) (?:closed|filled))\b/i;
+
 /**
- * Applied only when the apply form is gone and the site shows its confirmation
- * shell (or the form is gone and the remaining copy is a real receipt).
- * A thank-you sentence on an open form is not a finished bid.
+ * The apply POST is the proof. 2xx with no field-error payload is accepted.
+ * A validation payload is not. Unrelated requests are ignored.
+ */
+export function evaluateSubmitResponse({ url = '', status = 0, body = '' } = {}) {
+    const u = String(url || '');
+    const b = String(body || '');
+    const applyPost = /greenhouse|job_app|lever\.co|ashbyhq|myworkday|smartrecruiters|icims|workable|\/applications?\b/i.test(u);
+    if (!applyPost) return null;
+    const code = Number(status) || 0;
+    if (code >= 400 && code < 500) return { ok: false, reason: 'validation_errors' };
+    if (!(code >= 200 && code < 300)) return null;
+    if (/success["']?\s*:\s*false/i.test(b)) return { ok: false, reason: 'validation_errors' };
+    if (/"errors?"\s*:/.test(b) && /required|invalid|blank|missing/i.test(b)) {
+        return { ok: false, reason: 'validation_errors' };
+    }
+    if (/<(?:form|input)\b/i.test(b) && b.length > 400) return null;
+    return { ok: true, reason: 'submit_accepted' };
+}
+
+/**
+ * Applied when the submit response was accepted, or the apply form was
+ * replaced by that site's confirmation view. A thank-you sentence on an
+ * open form is not a finished bid.
  */
 export function evaluateSubmitSuccessPage({
     text = '',
@@ -43,30 +65,48 @@ export function evaluateSubmitSuccessPage({
     hasValidationErrors = false,
     formPresent = null,
     confirmationShell = false,
-    applicationIdInUrl = false
+    confirmationMounted = false,
+    applicationIdInUrl = false,
+    submitAccepted = false,
+    formReplacedAfterAttempt = false,
+    atsHost = false
 } = {}) {
     const body = String(text || '');
     const heads = headingList(headings);
     const headingHit = heads.some((h) => SUCCESS_HEADING_RE.test(h));
     const bodyHit = SUCCESS_RE.test(body);
-    const shell = !!confirmationShell || !!applicationIdInUrl;
+    const shell = !!confirmationShell || !!applicationIdInUrl || !!confirmationMounted;
     const formOpen = formPresent === true
         || (formPresent == null && !!hasSubmitControl && (
             Number(visibleFieldCount) >= 1 || Number(radioCount) >= 1
         ));
 
-    // Greenhouse replaces the form with View more jobs / Back to job post /
-    // Track your application. The employer's sentence is custom, so the shell
-    // is the proof. The same words on a still-open form are not.
-    if (shell && !formOpen) {
-        return { ok: true, reason: applicationIdInUrl && !confirmationShell ? 'application_id' : 'confirmation_shell' };
+    if (submitAccepted) {
+        return { ok: true, reason: 'submit_accepted' };
     }
 
     if (hasValidationErrors || SUCCESS_NEGATIVE_RE.test(body)) {
         return { ok: false, reason: 'validation_errors' };
     }
+    if (JOB_CLOSED_RE.test(body)) {
+        return { ok: false, reason: 'job_closed' };
+    }
+
+    if (shell && !formOpen) {
+        if (applicationIdInUrl && !confirmationShell && !confirmationMounted) {
+            return { ok: true, reason: 'application_id' };
+        }
+        return { ok: true, reason: confirmationMounted && !confirmationShell ? 'confirmation_view' : 'confirmation_shell' };
+    }
     if (formOpen) {
         return { ok: false, reason: (bodyHit || headingHit) ? 'form_still_open' : 'no_match' };
+    }
+    if (formReplacedAfterAttempt && atsHost) {
+        const textLooksLikeForm = /\bsubmit\b/i.test(body) && /\b(?:resume|cv)\b/i.test(body);
+        const confirmationPage = body.length >= 40 && body.length <= 6000 && heads.length >= 1;
+        if (!textLooksLikeForm && confirmationPage) {
+            return { ok: true, reason: 'form_replaced' };
+        }
     }
     if (!bodyHit && !headingHit) return { ok: false, reason: 'no_match' };
     return {

@@ -9,7 +9,8 @@ import {
     SUCCESS_RE,
     SUCCESS_HEADING_RE,
     SUCCESS_NEGATIVE_RE,
-    evaluateSubmitSuccessPage
+    evaluateSubmitSuccessPage,
+    evaluateSubmitResponse
 } from '../lib/submitSuccess.js';
 
 const checks = [];
@@ -151,6 +152,67 @@ const crexiConfirmation = evaluateSubmitSuccessPage({
 checks.push(['greenhouse confirmation shell is applied', crexiConfirmation.ok === true]);
 checks.push(['confirmation shell reason', crexiConfirmation.reason === 'confirmation_shell']);
 checks.push(['custom thanks sentence alone is not a match', SUCCESS_RE.test('Thanks for reaching out!') === false]);
+
+const acceptedPost = evaluateSubmitResponse({
+    url: 'https://job-boards.greenhouse.io/embed/job_app?for=crexi&token=1',
+    status: 200,
+    body: '{"success":true}'
+});
+checks.push(['greenhouse 200 is an accepted submit', acceptedPost?.ok === true]);
+checks.push(['accepted submit reason', acceptedPost?.reason === 'submit_accepted']);
+
+const rejectedPost = evaluateSubmitResponse({
+    url: 'https://job-boards.greenhouse.io/embed/job_app?for=crexi&token=1',
+    status: 422,
+    body: '{"errors":{"resume":["is required"]}}'
+});
+checks.push(['greenhouse 422 is not applied', rejectedPost?.ok === false]);
+
+const analyticsPost = evaluateSubmitResponse({
+    url: 'https://www.google-analytics.com/g/collect',
+    status: 200,
+    body: ''
+});
+checks.push(['unrelated 200 is ignored', analyticsPost == null]);
+
+const fromResponse = evaluateSubmitSuccessPage({
+    text: 'Thanks for reaching out!',
+    headings: ['Thanks for reaching out!'],
+    formPresent: false,
+    submitAccepted: true
+});
+checks.push(['accepted submit finishes the bid', fromResponse.ok === true]);
+checks.push(['accepted submit reason on the page', fromResponse.reason === 'submit_accepted']);
+
+const customConfirmation = evaluateSubmitSuccessPage({
+    text: 'Thanks for reaching out!\nWe are excited to learn more about you.',
+    headings: ['Thanks for reaching out!'],
+    formPresent: false,
+    atsHost: true,
+    formReplacedAfterAttempt: true,
+    confirmationShell: false
+});
+checks.push(['form replaced on the job site is applied', customConfirmation.ok === true]);
+checks.push(['form replaced reason', customConfirmation.reason === 'form_replaced']);
+
+const stillTheForm = evaluateSubmitSuccessPage({
+    text: 'Attach your resume\nSubmit application',
+    headings: ['Apply'],
+    formPresent: true,
+    atsHost: true,
+    formReplacedAfterAttempt: true
+});
+checks.push(['open form is not applied after an attempt', stillTheForm.ok === false]);
+
+const closedJob = evaluateSubmitSuccessPage({
+    text: 'This job is no longer available.',
+    headings: ['Job closed'],
+    formPresent: false,
+    atsHost: true,
+    formReplacedAfterAttempt: true
+});
+checks.push(['closed job is not applied', closedJob.ok === false]);
+checks.push(['closed job reason', closedJob.reason === 'job_closed']);
 
 let failed = 0;
 for (const [name, ok] of checks) {

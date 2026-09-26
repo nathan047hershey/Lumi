@@ -3,6 +3,76 @@
  * inputs accept native setter + InputEvent(insertText) + focus/blur.
  * Injected via chrome.scripting.executeScript({ world: 'MAIN' }).
  */
+
+/** Record the apply POST itself. Page wording is not the proof. */
+(function installLumiSubmitWatch() {
+    if (window.__lumiSubmitWatch && window.__lumiSubmitWatch.version >= 1) return;
+    const watch = {
+        version: 1,
+        posts: [],
+        greenhouseConfirmation: false
+    };
+    window.__lumiSubmitWatch = watch;
+
+    function isApplyUrl(url) {
+        return /greenhouse|job_app|lever\.co|ashbyhq|myworkday|smartrecruiters|icims|workable|\/applications?\b/i.test(String(url || ''));
+    }
+
+    function remember(entry) {
+        watch.posts.push(entry);
+        if (watch.posts.length > 8) watch.posts.shift();
+    }
+
+    const origFetch = window.fetch;
+    if (typeof origFetch === 'function') {
+        window.fetch = function lumiWatchedFetch(input, init) {
+            const url = typeof input === 'string' ? input : (input && input.url) || '';
+            const method = (init && init.method) || (input && input.method) || 'GET';
+            const pending = origFetch.apply(this, arguments);
+            if (!/post|put/i.test(String(method)) || !isApplyUrl(url)) return pending;
+            return pending.then((res) => {
+                try {
+                    res.clone().text().then((body) => {
+                        remember({
+                            url: String(url),
+                            status: res.status,
+                            body: String(body || '').slice(0, 1500),
+                            at: Date.now()
+                        });
+                    }).catch(() => {});
+                } catch (_) { /* ignore */ }
+                return res;
+            });
+        };
+    }
+
+    const origOpen = XMLHttpRequest.prototype.open;
+    const origSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.open = function lumiWatchedOpen(method, url) {
+        this.__lumiMethod = method;
+        this.__lumiUrl = url;
+        return origOpen.apply(this, arguments);
+    };
+    XMLHttpRequest.prototype.send = function lumiWatchedSend() {
+        const xhr = this;
+        if (/post|put/i.test(String(xhr.__lumiMethod || '')) && isApplyUrl(xhr.__lumiUrl)) {
+            xhr.addEventListener('load', () => {
+                remember({
+                    url: String(xhr.__lumiUrl || ''),
+                    status: xhr.status,
+                    body: String(xhr.responseText || '').slice(0, 1500),
+                    at: Date.now()
+                });
+            });
+        }
+        return origSend.apply(this, arguments);
+    };
+
+    window.addEventListener('message', (ev) => {
+        if (ev?.data === 'greenhouse.confirmation') watch.greenhouseConfirmation = true;
+    });
+})();
+
 (function lumiPageWorldFill() {
     if (window.__lumiPageFill && window.__lumiPageFill.version >= 2) return;
 

@@ -3062,7 +3062,7 @@ async function noteConfirmedApplication(data, tabId, appId) {
     const now = Date.now();
     if (now - lastConfirmProbeAt < 8000) return data;
     lastConfirmProbeAt = now;
-    const ok = await detectSubmitSuccess(tabId).catch(() => false);
+    const ok = await detectSubmitSuccess(tabId, { formReplacedAfterAttempt: true }).catch(() => false);
     if (!ok) return data;
     try { await markApplicationApplied(appId); } catch (_) { /* ignore */ }
     await logCourseEvent(appId, 'marked_applied', { via: 'confirmation_shell' }).catch(() => {});
