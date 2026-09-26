@@ -1491,6 +1491,9 @@ label { font-size: var(--font-size-sm); color: hsl(var(--foreground)); font-weig
   margin-top: 0.75rem;
   margin-bottom: 0.35rem;
 }
+.resume-preview h2 {
+  text-transform: uppercase;
+}
 .resume-preview a { color: #0563C1; text-decoration: underline; }
 .resume-preview a:visited { color: #0563C1; }
 .resume-preview header.resume-head { text-align: center; margin-bottom: 0.75rem; }

@@ -1893,8 +1893,8 @@ async function htmlToDocx(html, options = {}) {
         margins: {
           top: 720,
           bottom: 720,
-          left: 720,
-          right: 720,
+          left: 1440,
+          right: 1440,
           header: 720,
           footer: 720,
           gutter: 0

@@ -2406,6 +2406,41 @@ router.delete('/interview-requests/:applicationId', (req, res) => {
     }
 });
 
+function renderOptionsForSavedCv(app, profile) {
+    const preferredId = profile?.preferred_template_id || null;
+    const savedId = app?.template_id || null;
+    const kind = String(profile?.preferred_template_kind || '').toLowerCase();
+    let styleSpec = null;
+    if (kind === 'user') {
+        styleSpec = userTemplateService.resolveStyleSpecAnyOwner(savedId || preferredId);
+    }
+    if (!styleSpec) {
+        styleSpec = templateService.resolveStyleSpec({ templateId: savedId || preferredId || null });
+    }
+    const font = templateService.normaliseFontName(app?.font_family)
+        || templateService.normaliseFontName(styleSpec?.fonts?.body)
+        || templateService.normaliseFontName(styleSpec?.body?.font)
+        || 'Arial';
+    return { styleSpec, font };
+}
+
+async function rebuildSavedCvDocx(app, profile, destPath) {
+    const html = String(app?.draft_html || '').trim();
+    if (!html || !profile) return false;
+    const { buildResumeDocx, writeReadyResumeCopy } = require('../services/resumeService');
+    const { styleSpec, font } = renderOptionsForSavedCv(app, profile);
+    const buf = await buildResumeDocx({
+        resumeHtml: html,
+        profile,
+        styleSpec,
+        font
+    });
+    fs.mkdirSync(path.dirname(destPath), { recursive: true });
+    fs.writeFileSync(destPath, buf);
+    writeReadyResumeCopy(buf, profile).catch(() => {});
+    return true;
+}
+
 // POST /api/user/resumes/:filename/from-draft
 // The generated file lives on the server that created it. A later download
 // can rebuild the DOCX from the HTML this browser already received.
@@ -2420,7 +2455,11 @@ router.post('/resumes/:filename/from-draft', async (req, res) => {
         const profile = getAccessibleProfile(profileId, req);
         if (!profile) return res.status(404).json({ error: 'Profile not found' });
         const { buildResumeDocx, buildUploadResumeFilename } = require('../services/resumeService');
-        const buf = await buildResumeDocx({ resumeHtml: html, profile });
+        const { styleSpec, font } = renderOptionsForSavedCv(
+            { template_id: req.body?.template_id || profile.preferred_template_id },
+            profile
+        );
+        const buf = await buildResumeDocx({ resumeHtml: html, profile, styleSpec, font });
         const downloadAs = buildUploadResumeFilename(profile, '.docx');
         res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
         res.setHeader('Content-Disposition', `attachment; filename="${downloadAs}"`);
@@ -2440,6 +2479,29 @@ router.get('/resumes/:filename', async (req, res) => {
             return res.status(400).json({ error: 'Invalid resume filename' });
         }
         let filepath = path.join(resumesDir, safeName);
+
+        // Always rebuild from the saved HTML with the current template so
+        // margin and heading updates apply without another AI generation.
+        // Fall through to the file on disk only when there is no draft.
+        try {
+            let app = getOne(
+                `SELECT * FROM job_applications WHERE resume_filename = ? ORDER BY id DESC LIMIT 1`,
+                [safeName]
+            );
+            if (!app && /\.pdf$/i.test(safeName)) {
+                const docxName = safeName.replace(/\.pdf$/i, '.docx');
+                app = getOne(
+                    `SELECT * FROM job_applications WHERE resume_filename = ? ORDER BY id DESC LIMIT 1`,
+                    [docxName]
+                );
+            }
+            const profile = app?.profile_id ? getAccessibleProfile(app.profile_id, req) : null;
+            if (app && profile && !/\.pdf$/i.test(safeName)) {
+                await rebuildSavedCvDocx(app, profile, filepath);
+            }
+        } catch (rebuildErr) {
+            console.warn('[resumes] current-template rebuild skipped:', rebuildErr?.message || rebuildErr);
+        }
 
         if (!fs.existsSync(filepath)) {
             // Vercel /tmp loses generated files across instances — rebuild from draft_html.
@@ -2577,29 +2639,18 @@ router.get('/resume-folder', async (req, res) => {
 
         const safeArchive = path.basename(archiveName);
         let srcPath = path.join(resumesDir, safeArchive);
-        if (!fs.existsSync(srcPath)) {
-            try {
-                const { buildResumeDocx, writeReadyResumeCopy } = require('../services/resumeService');
-                const { RESUMES_READY_DIR } = require('../config/paths');
-                const readyName = profile ? buildUploadResumeFilename(profile, '.docx') : '';
-                const readyPath = readyName ? path.join(RESUMES_READY_DIR, readyName) : '';
-                const app = Number.isInteger(applicationId) && applicationId > 0
-                    ? getAccessibleApplication(applicationId, req)
-                    : getOne(
-                        `SELECT * FROM job_applications WHERE resume_filename = ? ORDER BY id DESC LIMIT 1`,
-                        [safeArchive]
-                    );
-                if (readyPath && fs.existsSync(readyPath)) {
-                    srcPath = readyPath;
-                } else if (app?.draft_html && String(app.draft_html).trim() && profile) {
-                    const buf = await buildResumeDocx({ resumeHtml: app.draft_html, profile });
-                    fs.mkdirSync(resumesDir, { recursive: true });
-                    fs.writeFileSync(srcPath, buf);
-                    writeReadyResumeCopy(buf, profile).catch(() => {});
-                }
-            } catch (rebuildErr) {
-                console.warn('[resume-folder] rebuild skipped:', rebuildErr?.message || rebuildErr);
+        try {
+            const app = Number.isInteger(applicationId) && applicationId > 0
+                ? getAccessibleApplication(applicationId, req)
+                : getOne(
+                    `SELECT * FROM job_applications WHERE resume_filename = ? ORDER BY id DESC LIMIT 1`,
+                    [safeArchive]
+                );
+            if (app?.draft_html && profile) {
+                await rebuildSavedCvDocx(app, profile, srcPath);
             }
+        } catch (rebuildErr) {
+            console.warn('[resume-folder] rebuild skipped:', rebuildErr?.message || rebuildErr);
         }
         if (!fs.existsSync(srcPath)) {
             return res.status(404).json({ error: 'Resume file not found' });
