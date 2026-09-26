@@ -570,14 +570,17 @@
             return 'earliest_start_date';
         }
         if (/\b(notice[\s_-]*period|notice[\s_-]*time)\b/.test(hay)) return 'notice_period';
-        if (/\b(how[\s_-]*did[\s_-]*you[\s_-]*(hear|find)|hear[\s_-]*about|find[\s_-]*this[\s_-]*(position|role|job)|referral[\s_-]*source|source[\s_-]*of[\s_-]*hire)\b/.test(hay)) {
+        if (/\bif you selected\b/.test(hay) && /\bother\b/.test(hay)) {
+            return 'other_source_details';
+        }
+        if (/\b(how[\s_-]*did[\s_-]*you[\s_-]*(hear|find|learn)|where[\s_-]*(have|did)[\s_-]*you[\s_-]*(hear|learn|find|see)|learned[\s_-]*about|hear[\s_-]*about|find[\s_-]*this[\s_-]*(position|role|job)|referral[\s_-]*source|source[\s_-]*of[\s_-]*hire)\b/.test(hay)) {
             return 'how_heard';
         }
         if (/\b(how many companies|number of companies|companies have you worked)\b/.test(hay)) {
             return 'employer_count';
         }
-        if (/\b(current[\s_-]*company|current[\s_-]*employer|present[\s_-]*employer|company[\s_-]*name)\b/.test(hay)
-            && !/\b(previous|prior|former)\b/.test(hay)) {
+        if (/\b(most[\s_-]*recent[\s_-]*employer|current[\s_-]*company|current[\s_-]*employer|present[\s_-]*employer|company[\s_-]*name)\b/.test(hay)
+            && !/\b(previous|prior|former|have you|worked (?:at|for))\b/.test(hay)) {
             return 'current_company';
         }
         if (/\b(high[\s_-]*school)\b/.test(hay) && /\b(perform|performance|grade|mathematics|math|native language)\b/.test(hay)) {
@@ -1237,6 +1240,14 @@
             && (labelLooksLikeSkillList(lab) || labelLooksLikeSkillDescribe(lab)
                 || kind === 'skill_list' || kind === 'skill_project_brief');
         if (wrongYesEssay) return false;
+        if (kind === 'current_company' || /most[\s_-]*recent[\s_-]*employer|current[\s_-]*employer|current[\s_-]*company/i.test(lab)) {
+            if (/\bi have\b|production experience|including implementation/i.test(cur)) return false;
+            if (want && !cur.toLowerCase().includes(want.split(',')[0].trim().toLowerCase())) return false;
+        }
+        if (kind === 'how_heard' || /learned about|hear about|how did you hear/i.test(lab)) {
+            if (/^other\b|wasn'?t familiar|not familiar/i.test(cur)) return false;
+            if (want && !cur.toLowerCase().includes(String(want).toLowerCase())) return false;
+        }
         if (kind === 'city' || /location\s*\(?\s*city/i.test(lab)) {
             const cityName = want.split(',')[0].trim();
             if (!cityName || /^(yes|no)$/i.test(cityName) || !cur.toLowerCase().includes(cityName.toLowerCase())) {
@@ -1322,7 +1333,8 @@
         }
         // Re-classify skill dropdowns / education dates when initially scraped as question.
         const re = classify(lab, name);
-        if (re === 'skill_experience' || /^education_(start|end)_/.test(re)) {
+        if (re === 'skill_experience' || /^education_(start|end)_/.test(re)
+            || re === 'how_heard' || re === 'current_company' || re === 'other_source_details') {
             return re;
         }
         return kind || re || 'question';
@@ -1336,6 +1348,7 @@
      */
     function requiredFieldSatisfied(field, wanted, got) {
         const kind = effectiveFieldKind(field);
+        if (kind === 'other_source_details') return true;
         const el = findEl(field);
         if (isLocationSubmitWaived(el, field?.label)
             || (/\blocation\b/i.test(String(field?.label || '')) && isLocationSubmitWaived(el, field?.label))) {
@@ -1593,6 +1606,9 @@
         if (kind === 'data_protection') {
             aliases.push('Yes', 'I agree', 'I acknowledge', 'Agree', 'Confirm');
         }
+        if (kind === 'how_heard') {
+            aliases.push('LinkedIn', 'LinkedIn Jobs', 'Job board');
+        }
         if (/^(yes)\b/i.test(raw)) {
             aliases.push('Yes', 'Y', 'I agree', 'I acknowledge', 'Agree');
         }
@@ -1706,6 +1722,20 @@
             return { ok: true, chosen: already, reason: 'already_complete' };
         } else if (already && helper && helper.scoreChoice(raw, already, '') >= 70) {
             return { ok: true, chosen: already, reason: 'already_complete' };
+        }
+
+        if (kind === 'how_heard') {
+            const chipRoot = el.closest('.select__control, [class*="select__control"], [class*="Select"]')
+                || el.parentElement;
+            const removes = [...(chipRoot?.querySelectorAll?.(
+                '.select__multi-value__remove, [class*="multi-value__remove"]'
+            ) || [])];
+            for (const btn of removes) {
+                const chip = (btn.parentElement?.innerText || '').replace(/\s+/g, ' ').trim();
+                if (/linkedin/i.test(chip)) continue;
+                try { btn.click(); } catch (_) { /* ignore */ }
+                await sleep(40);
+            }
         }
 
         // Simplify: queue one dropdown at a time — open → wait options → click → VERIFY.
@@ -1933,6 +1963,13 @@
                     score = Math.max(score, 86);
                 }
             }
+            if (kind === 'how_heard') {
+                if (/^other\b|wasn'?t familiar|not familiar|did not know|don'?t know|i do not know|none of/i.test(tl)) {
+                    return -1;
+                }
+                if (/linkedin/.test(tl)) score = Math.max(score, 99);
+                else if (/job board|company website|career site/.test(tl)) score = Math.max(score, 84);
+            }
             if (/^education_(start|end)_month$/.test(kind)) {
                 const wantM = w.slice(0, 3);
                 const optM = tl.slice(0, 3);
@@ -2093,7 +2130,8 @@
                         pick = null;
                     }
                 }
-                if (!pick && !isCity && !(kind === 'discipline' || kind === 'degree' || kind === 'school'
+                if (!pick && !isCity && kind !== 'how_heard' && kind !== 'current_company'
+                    && !(kind === 'discipline' || kind === 'degree' || kind === 'school'
                     || kind === 'skill_experience')) {
                     pick = catchAll || null;
                 }
@@ -3123,9 +3161,17 @@
         if (kind === 'gender' || /\bgender\b/i.test(lab) || /\bthink of yourself as\b/i.test(lab)) {
             return profile?.gender || 'Male';
         }
+        if (kind === 'other_source_details'
+            || (/\bif you selected\b/i.test(lab) && /\bother\b/i.test(lab))) {
+            return '';
+        }
+        if (kind === 'how_heard'
+            || /\b(learned about|hear about|how did you (?:hear|learn|find)|where (?:have|did) you (?:hear|learn|find))\b/i.test(lab)) {
+            return profile?.how_heard || 'LinkedIn';
+        }
         if (kind === 'current_company'
-            || (/\b(current[\s_-]*company|current[\s_-]*employer|present[\s_-]*employer)\b/i.test(lab)
-                && !/\b(previous|prior|former)\b/i.test(lab))) {
+            || (/\b(most[\s_-]*recent[\s_-]*employer|current[\s_-]*company|current[\s_-]*employer|present[\s_-]*employer)\b/i.test(lab)
+                && !/\b(previous|prior|former|have you|worked (?:at|for))\b/i.test(lab))) {
             return currentCompanyFromProfile(profile);
         }
         if (kind === 'onsite_hub_yes'
@@ -3575,6 +3621,15 @@
 
             for (const field of fields) {
                 const fieldEl = findEl(field) || document.getElementById(field.id);
+                if (effectiveFieldKind(field) === 'other_source_details'
+                    || (/\bif you selected\b/i.test(String(field.label || ''))
+                        && /\bother\b/i.test(String(field.label || '')))) {
+                    const cur = String(readCurrentValue(field) || '').trim();
+                    if (cur && fieldEl && fieldEl.tagName !== 'SELECT') {
+                        try { setNativeValue(fieldEl, ''); } catch (_) { /* leave the Other-details box empty */ }
+                    }
+                    continue;
+                }
                 // Only skip the dial-code Country control — never skip Phone / City.
                 if (isDialCountryOnly(field, fieldEl)) {
                     const alreadyDial = typeof window.__lumiDialCountryIsSet === 'function'
@@ -3706,6 +3761,7 @@
                     });
                     // Same course: only leftover empties — never rewrite a first-pass answer.
                     for (const f of gaps) {
+                        if (effectiveFieldKind(f) === 'other_source_details') continue;
                         const current = readCurrentValue(f);
                         const wanted = wantedForField(
                             f, profile, answersById, answersByLabel, payload.jobDescription

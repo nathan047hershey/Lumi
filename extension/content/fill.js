@@ -1760,8 +1760,15 @@
             return 'data_protection';
         }
         if (/\b(notice[\s_-]*period|notice[\s_-]*time)\b/.test(hay)) return 'notice_period';
-        if (/\b(how[\s_-]*did[\s_-]*you[\s_-]*(hear|find)|hear[\s_-]*about|find[\s_-]*this[\s_-]*(position|role|job)|referral[\s_-]*source|source[\s_-]*of[\s_-]*hire)\b/.test(hay)) {
+        if (/\bif you selected\b/.test(hay) && /\bother\b/.test(hay)) {
+            return 'other_source_details';
+        }
+        if (/\b(how[\s_-]*did[\s_-]*you[\s_-]*(hear|find|learn)|where[\s_-]*(have|did)[\s_-]*you[\s_-]*(hear|learn|find|see)|learned[\s_-]*about|hear[\s_-]*about|find[\s_-]*this[\s_-]*(position|role|job)|referral[\s_-]*source|source[\s_-]*of[\s_-]*hire)\b/.test(hay)) {
             return 'how_heard';
+        }
+        if (/\b(most[\s_-]*recent[\s_-]*employer|current[\s_-]*company|current[\s_-]*employer|present[\s_-]*employer)\b/.test(hay)
+            && !/\b(previous|prior|former|have you)\b/.test(hay)) {
+            return 'current_company';
         }
         // Office hub / hybrid onsite days → Yes
         if (/\bopen to working\b.{0,120}\b(office|hub|onsite|on[\s_-]*site)|\b\d+\s+days?\b.{0,60}\b(office|hub)|office hubs?\b/i.test(hay)) {
@@ -3351,6 +3358,12 @@
                 // Prefer Agree — fill snaps to Yes / I agree / I acknowledge from the open menu.
                 return 'I agree';
             case 'how_heard': return profile.how_heard || 'LinkedIn';
+            case 'other_source_details': return '';
+            case 'current_company':
+                return String(
+                    profile.current_company || profile.current_employer
+                    || profile.company || profile.employer || ''
+                ).trim();
             case 'math_captcha': return '';
             // math filled via solveSimpleMathCaptcha + "X = N" aliases in the write path
             case 'previous_employer_no':
@@ -4483,10 +4496,7 @@
                         aliases.push('Yes', 'Y', 'True', 'I am', 'Eligible');
                     }
                     if (kind === 'how_heard') {
-                        aliases.push(
-                            'LinkedIn', 'Indeed', 'Company website', 'Referral',
-                            'Job board', 'Other', 'Glassdoor', 'Friend'
-                        );
+                        aliases.push('LinkedIn', 'LinkedIn Jobs', 'Job board', 'Company website');
                     }
                     if (kind === 'gender') {
                         aliases.push('Male', 'Man', 'Female', 'Woman', 'M', 'F');

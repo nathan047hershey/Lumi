@@ -808,6 +808,30 @@ export async function setFileInputViaDebugger(tabId, file) {
     }
 }
 
+async function captureViaDebugger(tabId) {
+    const attached = await attachPageDebugger(tabId);
+    if (!attached) return '';
+    try {
+        await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
+    } catch (_) { /* Page domain may already be enabled */ }
+    const attempts = [
+        { format: 'png', fromSurface: true },
+        { format: 'png', fromSurface: false }
+    ];
+    for (const params of attempts) {
+        try {
+            const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', params);
+            if (result?.data) return `data:image/png;base64,${result.data}`;
+        } catch (err) {
+            const msg = String(err?.message || err || '');
+            if (/showing error page|chrome-error/i.test(msg)) {
+                throw new Error('cannot capture Chrome error page (site failed to load)');
+            }
+        }
+    }
+    return '';
+}
+
 async function captureTabScreenshot(tabId, opts = {}) {
     const stayInApp = opts.stayInApp !== false;
     let tab;
@@ -867,22 +891,9 @@ async function captureTabScreenshot(tabId, opts = {}) {
     };
 
     if (stayInApp) {
-        const attached = await attachPageDebugger(tabId);
-        if (attached) {
-            try {
-                const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', {
-                    format: 'png',
-                    fromSurface: true
-                });
-                if (result?.data) return `data:image/png;base64,${result.data}`;
-            } catch (err) {
-                const msg = String(err?.message || err || '');
-                if (/showing error page|chrome-error/i.test(msg)) {
-                    throw new Error('cannot capture Chrome error page (site failed to load)');
-                }
-                console.warn('[bidder] debugger screenshot failed, using visible tab', err);
-            }
-        }
+        const quiet = await captureViaDebugger(tabId);
+        if (quiet) return quiet;
+        throw new Error('screenshot skipped so the job tab stays in the background');
     }
 
     const prevTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
