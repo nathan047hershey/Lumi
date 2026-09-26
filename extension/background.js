@@ -9936,7 +9936,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             const preferSuccessAmong = async (tabs) => {
                 for (const t of tabs) {
                     if (!t?.id) continue;
-                    if (await detectSubmitSuccess(t.id).catch(() => false)) {
+                    if (await detectSubmitSuccess(t.id, { formReplacedAfterAttempt: true }).catch(() => false)) {
                         return t.id;
                     }
                 }
@@ -9976,18 +9976,20 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 return;
             }
 
-            // CRITICAL: detect success BEFORE ensureApplyFormVisible — that helper
-            // clicks Apply again and leaves the thank-you page for a blank form.
-            let detect = await detectSubmitSuccessDetail(tabId).catch(() => ({ ok: false }));
+            // Read the page that is already open. Do not click Apply — that leaves
+            // the confirmation view and the check can no longer see it.
+            await ensureScripts(tabId).catch(() => {});
+            let detect = await detectSubmitSuccessDetail(tabId, {
+                formReplacedAfterAttempt: true
+            }).catch(() => ({ ok: false }));
             let success = !!detect?.ok;
-            if (!success) {
+            if (!success && msg.type !== 'BIDDER_UPDATE_STATE') {
                 await clearFalseSuccessOutlines(tabId).catch(() => {});
-                await ensureScripts(tabId).catch(() => {});
                 await ensureApplyFormVisible(tabId).catch(() => {});
-                detect = await detectSubmitSuccessDetail(tabId).catch(() => ({ ok: false }));
+                detect = await detectSubmitSuccessDetail(tabId, {
+                    formReplacedAfterAttempt: true
+                }).catch(() => ({ ok: false }));
                 success = !!detect?.ok;
-            } else {
-                await ensureScripts(tabId).catch(() => {});
             }
 
             if (msg.type === 'BIDDER_UPDATE_STATE') {
@@ -10043,8 +10045,8 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                                 stayInApp: true
                             })
                         );
-                    } else {
-                        // Clear prior false SUCCESS (customer-success regex, latch, DB applied).
+                    } else if (/form_still_open|validation_errors/i.test(String(detect?.reason || ''))) {
+                        // The apply form is still on screen. Clear a false SUCCESS.
                         await clearFalseSuccessOutlines(tabId).catch(() => {});
                         try {
                             await clearFalseApplicationSuccess(appId);
@@ -10069,6 +10071,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                         }).catch(() => {});
                     }
                 }
+                const sawOpenForm = /form_still_open|validation_errors/i.test(String(detect?.reason || ''));
                 await setQueueState({
                     lastStatusEvent: statusEvent,
                     lastStatusAt: Date.now(),
@@ -10084,6 +10087,12 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                     liveShotAt: Date.now(),
                     currentTabId: tabId,
                     currentId: appId || st?.currentId,
+                    ...(success ? {
+                        running: false,
+                        status: 'done',
+                        runState: 'success',
+                        queueEndedAt: Date.now()
+                    } : {}),
                     ...(appId ? {
                         tabsByAppId: {
                             ...(st?.tabsByAppId || {}),
@@ -10095,7 +10104,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 sendResponse({
                     ok: true,
                     success: !!success,
-                    revoked: !success,
+                    revoked: !success && sawOpenForm,
                     incomplete,
                     requiredOk,
                     requiredTotal,

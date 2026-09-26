@@ -102,11 +102,8 @@ export function evaluateSubmitSuccessPage({
         return { ok: false, reason: (bodyHit || headingHit) ? 'form_still_open' : 'no_match' };
     }
     if (formReplacedAfterAttempt && atsHost) {
-        const textLooksLikeForm = /\bsubmit\b/i.test(body) && /\b(?:resume|cv)\b/i.test(body);
-        const confirmationPage = body.length >= 40 && body.length <= 6000 && heads.length >= 1;
-        if (!textLooksLikeForm && confirmationPage) {
-            return { ok: true, reason: 'form_replaced' };
-        }
+        const loading = body.trim().length < 40 || /^loading\b/i.test(body.trim());
+        if (!loading) return { ok: true, reason: 'form_replaced' };
     }
     if (!bodyHit && !headingHit) return { ok: false, reason: 'no_match' };
     return {

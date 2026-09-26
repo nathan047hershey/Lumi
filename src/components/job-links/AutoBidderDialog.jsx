@@ -2064,7 +2064,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                     setQueueState(qs?.result || qs?.data || null);
                 } catch (_) { /* ignore */ }
                 await loadList({ silent: true });
-            } else {
+            } else if (body.revoked) {
                 successLatchRef.current = false;
                 setStatus('Update state — form open (not SUCCESS) — cleared false SUCCESS if any');
                 setDetail((prev) => {
@@ -2096,13 +2096,15 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                     const qs = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_QUEUE_STATE', 4000);
                     setQueueState(qs?.result || qs?.data || null);
                 } catch (_) { /* ignore */ }
+            } else if (!silent) {
+                setStatus('Checked the apply tab. It is not confirmed yet.');
             }
-            if (selectedId && (body.success || !silent)) {
+            if (selectedId && (body.success || body.revoked || body.incomplete)) {
                 detailSigRef.current = '';
                 await loadDetail(selectedId, {
                     silent: !!silent,
                     bumpLive: true,
-                    clearFalseSuccess: !silent && !body.success
+                    clearFalseSuccess: !silent && !body.success && !!(body.revoked || body.incomplete)
                 });
             }
             setLiveRefreshKey((k) => k + 1);
@@ -2137,7 +2139,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             || isSuccessEvent(last)
             || successLatchRef.current;
         if (applied) return undefined;
-        if (!/reautofill_done|fill_done|ready_to_submit|awaiting_manual_submit|fill_incomplete|after_fill/i.test(last)) {
+        if (!/reautofill_done|fill_done|ready_to_submit|awaiting_manual_submit|fill_incomplete|after_fill|submit_no_click|resume_required|submit_blocked|run_submitting|run_verifying|run_incomplete/i.test(last)) {
             return undefined;
         }
         const sig = `${detailAppId || queueState?.currentId || ''}|${last}|${queueState?.lastStatusAt || ''}`;

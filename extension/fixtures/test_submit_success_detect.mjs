@@ -195,6 +195,16 @@ const customConfirmation = evaluateSubmitSuccessPage({
 checks.push(['form replaced on the job site is applied', customConfirmation.ok === true]);
 checks.push(['form replaced reason', customConfirmation.reason === 'form_replaced']);
 
+const longConfirmation = evaluateSubmitSuccessPage({
+    text: `${'Thanks for reaching out. '.repeat(80)}View more jobs.`,
+    headings: [],
+    formPresent: false,
+    atsHost: true,
+    formReplacedAfterAttempt: true
+});
+checks.push(['long confirmation with no heading is applied', longConfirmation.ok === true]);
+checks.push(['long confirmation reason', longConfirmation.reason === 'form_replaced']);
+
 const stillTheForm = evaluateSubmitSuccessPage({
     text: 'Attach your resume\nSubmit application',
     headings: ['Apply'],

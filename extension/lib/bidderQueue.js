@@ -1132,7 +1132,8 @@ function collectSubmitSuccessSignalsInPage(negativeReSource) {
         .slice(0, 20);
     const isVisible = (el) => {
         try {
-            if (!el || el.disabled) return false;
+            if (!el) return false;
+            if (el.closest('[hidden], [aria-hidden="true"]')) return false;
             const st = window.getComputedStyle(el);
             if (st.display === 'none' || st.visibility === 'hidden' || Number(st.opacity) === 0) return false;
             const r = el.getBoundingClientRect();
@@ -1149,20 +1150,17 @@ function collectSubmitSuccessSignalsInPage(negativeReSource) {
     )].filter(isVisible);
     const emptyVisibleFields = fields.filter((el) => !String(el.value || '').trim()).length;
     const controlText = (el) => `${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''}`;
+    const isApplySubmit = (el) => /\bsubmit(\s+application)?\b/i.test(controlText(el));
     const hasSubmitControl = !![...document.querySelectorAll(
-        'button[type="submit"], input[type="submit"], button, a[role="button"], [data-qa*="submit" i], [data-testid*="submit" i]'
-    )].find((el) => {
-        if (!isVisible(el)) return false;
-        const t = controlText(el);
-        return /\bsubmit\b/i.test(t) || el.type === 'submit';
-    });
+        'button, input[type="submit"], input[type="button"], a[role="button"]'
+    )].find((el) => isVisible(el) && isApplySubmit(el));
+    // A search box or other type=submit control is not the apply form.
     const applyForm = [...document.querySelectorAll('form')].some((form) => {
         if (!isVisible(form)) return false;
         const file = [...form.querySelectorAll('input[type="file"]')].some(isVisible);
-        const submit = [...form.querySelectorAll('button, input[type="submit"], input[type="button"]')].some((el) => {
-            if (!isVisible(el)) return false;
-            return el.type === 'submit' || /\bsubmit\b/i.test(controlText(el));
-        });
+        const submit = [...form.querySelectorAll('button, input[type="submit"], input[type="button"]')].some((el) => (
+            isVisible(el) && isApplySubmit(el)
+        ));
         return file || submit;
     });
     const href = String(location.href || '');
@@ -1374,6 +1372,13 @@ async function readSubmitWatch(tabId) {
 async function detectSubmitSuccessDetail(tabId, opts = {}) {
     try {
         const frames = await collectSubmitSuccessSignalsAllFrames(tabId);
+        let tabIsAts = false;
+        try {
+            const tab = await chrome.tabs.get(tabId);
+            tabIsAts = /greenhouse|lever\.co|ashbyhq|myworkday|smartrecruiters|icims|workable/i.test(
+                new URL(tab?.url || tab?.pendingUrl || 'https://invalid.local').hostname
+            );
+        } catch (_) { /* tab gone */ }
         const watch = await readSubmitWatch(tabId);
         const judged = (watch.posts || [])
             .map((post) => evaluateSubmitResponse(post))
@@ -1386,6 +1391,7 @@ async function detectSubmitSuccessDetail(tabId, opts = {}) {
             submitAccepted,
             hasValidationErrors: !!(frame.hasValidationErrors || submitRejected),
             confirmationMounted: !!(frame.confirmationMounted || watch.greenhouseConfirmation),
+            atsHost: !!(frame.atsHost || tabIsAts),
             formReplacedAfterAttempt: !!opts.formReplacedAfterAttempt
         }));
         return pickSubmitSuccessResult(merged);
