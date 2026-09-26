@@ -3643,7 +3643,17 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                 return processSelected();
             }}
             canProcess={canDockProcess}
-            processLabel={dockProcessLabel}
+            processLabel="Start"
+            onCheckUploadedCv={async () => {
+                const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_CHECK_RESUME', 20000, {
+                    applicationId: detailAppId
+                        || queueState?.currentId
+                        || queueState?.captchaApplicationId
+                        || queueState?.lastApplicationId
+                        || undefined
+                });
+                return res?.result || res?.data || res || {};
+            }}
             cvFilename={dockCvFilename}
             cvDownloadUrl={dockCvDownloadUrl}
             cvEditHref={dockCvEditHref}

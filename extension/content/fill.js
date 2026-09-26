@@ -7799,13 +7799,24 @@
             || msg?.type === 'DETECT_APPLY_FORM'
             || msg?.type === 'DETECT_JOB_CLOSED'
             || msg?.type === 'CLICK_SUBMIT'
-            || msg?.type === 'UPDATE_AUTOFILL_PANEL';
+            || msg?.type === 'UPDATE_AUTOFILL_PANEL'
+            || msg?.type === 'INSPECT_RESUME';
         if (formMsg) {
             try {
                 if (window !== window.top) return false;
             } catch (_) {
                 return false;
             }
+        }
+        if (msg?.type === 'INSPECT_RESUME') {
+            try {
+                const form = collectForm();
+                const slot = inspectResumeSlot(form);
+                sendResponse({ ok: true, ...slot });
+            } catch (err) {
+                sendResponse({ ok: false, error: err?.message || String(err) });
+            }
+            return true;
         }
         if (msg?.type === 'SHOW_TOAST') {
             showToast(msg.text || '', msg.kind || 'info');

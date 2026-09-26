@@ -9177,6 +9177,36 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return true;
     }
     // Manual re-run of bidder fill on the current apply tab (FILLED / incomplete / post-CAPTCHA).
+    if (msg?.type === 'BIDDER_CHECK_RESUME') {
+        (async () => {
+            try {
+                const st = await getQueueState();
+                const appId = Number(msg.applicationId || st?.currentId || st?.lastApplicationId || 0) || null;
+                const tabId = await resolveOpenApplyTabId({
+                    tabId: msg.tabId || st?.currentTabId || st?.captchaTabId,
+                    applicationId: appId,
+                    url: msg.url || st?.currentJobUrl || ''
+                });
+                if (!tabId) {
+                    sendResponse({ ok: false, error: 'No apply tab open. Use Open, then Check CV.' });
+                    return;
+                }
+                await ensureScripts(tabId);
+                const slot = await sendTabMessage(tabId, { type: 'INSPECT_RESUME' }).catch(() => null);
+                sendResponse({
+                    ok: !!slot?.ok,
+                    filled: !!slot?.filled,
+                    filename: slot?.filename || '',
+                    nameOk: !!slot?.nameOk,
+                    error: slot?.ok ? '' : (slot?.error || 'Could not read the resume field.')
+                });
+            } catch (err) {
+                sendResponse({ ok: false, error: err?.message || String(err) });
+            }
+        })();
+        return true;
+    }
+
     if (msg?.type === 'BIDDER_LIST_QUESTIONS') {
         (async () => {
             try {

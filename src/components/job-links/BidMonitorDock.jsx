@@ -120,7 +120,8 @@ export default function BidMonitorDock({
     onStopQueue,
     onProcess = null,
     canProcess = false,
-    processLabel = 'Process',
+    processLabel = 'Start',
+    onCheckUploadedCv = null,
     cvFilename = '',
     cvDownloadUrl = '',
     cvEditHref = '',
@@ -171,6 +172,8 @@ export default function BidMonitorDock({
     const answersDirtyRef = useRef(false);
     const answersJobRef = useRef('');
     const [dockTab, setDockTab] = useState('live');
+    const [cvSiteNote, setCvSiteNote] = useState('');
+    const [cvSiteBusy, setCvSiteBusy] = useState(false);
     const [imgBroken, setImgBroken] = useState(false);
     const [instructText, setInstructText] = useState('');
     const [instructBusy, setInstructBusy] = useState(false);
@@ -547,10 +550,10 @@ export default function BidMonitorDock({
                         Resume queue
                     </Button>
                 ) : null}
-                {!captcha && !queueRunning && !queuePaused && typeof onProcess === 'function' ? (
-                    <Button type="button" size="sm" variant="default" className={btn} disabled={steerBusy || !canProcess} onClick={onProcess}>
+                {typeof onProcess === 'function' ? (
+                    <Button type="button" size="sm" variant="default" className={btn} disabled={steerBusy || !canProcess} onClick={onProcess} title="Start auto bid for the selected jobs">
                         <Play className={btnIcon} />
-                        {processLabel || 'Process'}
+                        {processLabel || 'Start'}
                     </Button>
                 ) : null}
                 {onOpenApplyTab ? (
@@ -653,6 +656,51 @@ export default function BidMonitorDock({
                         Preview CV
                     </Button>
                 ) : null}
+                {typeof onCheckUploadedCv === 'function' ? (
+                    <Button
+                        type="button"
+                        size="sm"
+                        variant="ghost"
+                        className={btn}
+                        disabled={steerBusy || cvSiteBusy}
+                        title="Read the resume file currently attached on the job site"
+                        onClick={async () => {
+                            setDockTab('cv');
+                            setCvSiteBusy(true);
+                            setCvSiteNote('Checking the job site…');
+                            try {
+                                const body = await onCheckUploadedCv();
+                                const filename = String(body?.filename || '').trim();
+                                const filled = !!body?.filled;
+                                const err = String(body?.error || '').trim();
+                                if (err && !filled && !filename) {
+                                    setCvSiteNote(err);
+                                } else if (filled && filename) {
+                                    const expected = String(cvFilename || '').trim();
+                                    const same = expected && filename.toLowerCase() === expected.toLowerCase();
+                                    setCvSiteNote(
+                                        same
+                                            ? `On the job site: ${filename}`
+                                            : (expected
+                                                ? `On the job site: ${filename} · Lumi file: ${expected}`
+                                                : `On the job site: ${filename}`)
+                                    );
+                                } else if (filled) {
+                                    setCvSiteNote('A file is attached on the job site, but its name could not be read.');
+                                } else {
+                                    setCvSiteNote('No resume file is attached on the job site form.');
+                                }
+                            } catch (err) {
+                                setCvSiteNote(err?.message || 'Could not read the job site resume.');
+                            } finally {
+                                setCvSiteBusy(false);
+                            }
+                        }}
+                    >
+                        <FileText className={btnIcon} />
+                        {cvSiteBusy ? 'Checking…' : 'Check CV'}
+                    </Button>
+                ) : null}
                 {hasCv && cvDownloadUrl ? (
                     <Button type="button" size="sm" variant="ghost" className={btn} asChild>
                         <a href={cvDownloadUrl} target="_blank" rel="noreferrer">
@@ -690,9 +738,9 @@ export default function BidMonitorDock({
                     <Play className="h-2.5 w-2.5" />Resume
                 </Button>
             ) : null}
-            {!captcha && !queueRunning && typeof onProcess === 'function' ? (
+            {typeof onProcess === 'function' ? (
                 <Button type="button" size="sm" className={compactBtn} disabled={steerBusy || !canProcess} onClick={onProcess}>
-                    <Play className="h-2.5 w-2.5" />{processLabel || 'Process'}
+                    <Play className="h-2.5 w-2.5" />{processLabel || 'Start'}
                 </Button>
             ) : null}
             {onOpenApplyTab ? (
@@ -803,6 +851,19 @@ export default function BidMonitorDock({
                 <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 text-white/45 hover:bg-white/10 hover:text-white" title={minimized ? 'Expand' : 'Minimize'} onClick={() => onMinimizedChange?.(!minimized)}>
                     {minimized ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                 </Button>
+                {typeof onProcess === 'function' ? (
+                    <Button
+                        type="button"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-[11px] font-semibold"
+                        disabled={steerBusy || !canProcess}
+                        title="Start auto bid for the selected jobs"
+                        onClick={onProcess}
+                    >
+                        <Play className="h-3 w-3" />
+                        Start
+                    </Button>
+                ) : null}
                 <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 px-2 text-[11px] text-white/70 hover:bg-white/10 hover:text-white" title="Open the bid log" onClick={onExpandDialog}>
                     More view
                 </Button>
@@ -1134,8 +1195,8 @@ export default function BidMonitorDock({
                     ) : dockTab === 'cv' ? (
                         <div className="overflow-hidden rounded-xl border border-white/[0.08] bg-white">
                             <div className="flex items-center justify-between gap-2 border-b border-black/10 px-2 py-1">
-                                <span className="truncate text-[10px] font-medium text-black/55">
-                                    {cvFilename || 'CV preview'}
+                                <span className="min-w-0 truncate text-[10px] font-medium text-black/55">
+                                    {cvSiteNote || cvFilename || 'CV preview'}
                                 </span>
                                 <button
                                     type="button"
