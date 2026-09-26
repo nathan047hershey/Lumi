@@ -1341,6 +1341,15 @@
             || /\burl\b.*\b(github|portfolio)\b|\b(github|portfolio)\b.*\burl\b/.test(hay)) {
             return 'github';
         }
+        // EEO choice lists before city/location. A wide label can contain both
+        // "location" and "race/ethnicity"; the race question must not be typed as a city.
+        if (/\b(race|ethnicity|ethnic)\b/.test(hay) && !/\bhispanic|latino\b/.test(hay)) return 'race_ethnicity';
+        if (/\bhow do you identify\b/.test(hay) && !/\bgender|pronoun|veteran|disabilit\b/.test(hay)) return 'race_ethnicity';
+        if (/\b(veteran|military[\s_-]*status|armed[\s_-]*forces)\b/.test(hay)) return 'veteran_status';
+        if (/\b(hispanic|latino|latina|latinx)\b/.test(hay)) return 'hispanic_latino';
+        if (/\b(gender|sex)\b/.test(hay) && !/\bsexual\b/.test(hay)) return 'gender';
+        if (/\bthink of yourself as\b/.test(hay)) return 'gender';
+        if (/\b(disabilit(?:y|ies)|disabled|\bada\b)\b/.test(hay) && !/\b(date|signature)\b/.test(hay)) return 'disability_status';
         // Yes/No location/remote BEFORE city/state/country — wording often contains those words.
         if (/\b(working from this state|perform all work from the state|consistently be working|legal entity.{0,40}working)\b/.test(hay)) {
             return 'work_authorization';
@@ -1438,7 +1447,7 @@
         // State/province picker — not "working from this state" / legal-entity Yes/No (handled above).
         if (
             /\b(state|province|region)\b/.test(hay)
-            && !/\b(gender|sex|veteran|disab|working from|employed in this role|legal entity|consistently be working)\b/.test(hay)
+            && !/\b(gender|sex|veteran|disab|race|ethnic|working from|employed in this role|legal entity|consistently be working)\b/.test(hay)
         ) {
             return 'state';
         }
@@ -1823,6 +1832,42 @@
         let out = parts.join(', ');
         if (zip) out = out ? `${out} ${zip}` : zip;
         return out || String(preferred || '').trim();
+    }
+
+    const CHOICE_STORE = 'lumi.choiceAnswers.v1';
+
+    function choiceHost() {
+        try { return String(location.hostname || '').replace(/^www\./i, '').toLowerCase(); }
+        catch (_) { return ''; }
+    }
+
+    function normChoiceKey(label) {
+        return String(label || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 140);
+    }
+
+    async function loadChoiceAnswers() {
+        try {
+            const bag = (await chrome.storage.local.get(CHOICE_STORE))[CHOICE_STORE] || {};
+            return bag[choiceHost()] || {};
+        } catch (_) {
+            return {};
+        }
+    }
+
+    async function saveChoiceAnswer(label, answer) {
+        const host = choiceHost();
+        const key = normChoiceKey(label);
+        const ans = String(answer || '').trim();
+        if (!host || !key || !ans || ans.length > 120) return;
+        if (/\b(race|ethnicity|how do you identify|veteran|disabilit|gender|hispanic)\b/i.test(label)
+            && /palo alto|\b[A-Z]{2}\s+\d{5}\b|\d{5}/i.test(ans)) {
+            return;
+        }
+        try {
+            const all = (await chrome.storage.local.get(CHOICE_STORE))[CHOICE_STORE] || {};
+            all[host] = { ...(all[host] || {}), [key]: ans };
+            await chrome.storage.local.set({ [CHOICE_STORE]: all });
+        } catch (_) { /* ignore */ }
     }
 
     function fieldMissingLabel(f) {
@@ -4173,16 +4218,28 @@
         }
 
         // Swooped-style: sequential comboboxes AFTER identity + phone.
+        const choiceAnswers = await loadChoiceAnswers();
         for (const job of deferredCombos) {
             const { field, writeValue: want0, short, kind } = job;
             const comboEl = findElByField(field) || job.el;
             if (!comboEl || isPhoneDialCountryControl(comboEl)) continue;
             let writeValue = want0;
+            const liveLab = (() => {
+                try { return labelFor(comboEl) || field.label || ''; } catch (_) { return field.label || ''; }
+            })();
+            if (/\b(race|ethnicity|ethnic)\b/i.test(liveLab) && !/\bhispanic|latino\b/i.test(liveLab)
+                || (/\bhow do you identify\b/i.test(liveLab) && !/\bgender\b/i.test(liveLab))) {
+                kind = 'race_ethnicity';
+                writeValue = 'Black or African American';
+            } else if (kind !== 'city' && kind !== 'state' && kind !== 'country') {
+                const learned = choiceAnswers[normChoiceKey(liveLab)];
+                if (learned && !/\d{5}/.test(learned)) writeValue = learned;
+            }
             dismissPhoneDialUi();
             await delay(80);
             let okCombo = false;
             try {
-                if (kind === 'city' || kind === 'state' || kind === 'country'
+                if ((kind === 'city' || kind === 'state' || kind === 'country') && kind !== 'race_ethnicity'
                     || kind === 'school' || kind === 'degree' || kind === 'discipline'
                     || kind === 'education_level' || kind === 'high_school_performance'
                     || kind === 'skill_experience' || kind === 'years_of_experience'
@@ -4316,6 +4373,9 @@
             await delay(90);
             if (okCombo) {
                 filled += 1;
+                if (kind !== 'city' && kind !== 'state' && kind !== 'country' && kind !== 'question') {
+                    saveChoiceAnswer(liveLab || field.label, writeValue).catch(() => {});
+                }
                 if (kind === 'salary') filledSalary += 1;
                 if (kind === 'question') filledWritten += 1;
                 highlightFilledControl(comboEl);
@@ -6214,6 +6274,11 @@
     function scheduleLocationAutocomplete(el, preferred, kind = '', profile = null) {
         const wantRaw = String(preferred || '').trim();
         if (!wantRaw || !el) return Promise.resolve(false);
+        let liveLabel = '';
+        try { liveLabel = labelFor(el) || ''; } catch (_) { /* ignore */ }
+        if (/\b(race|ethnicity|how do you identify|veteran|disabilit|hispanic|latino|gender)\b/i.test(liveLabel)) {
+            return Promise.resolve(false);
+        }
         const profileState = String(profile?.state || '').trim();
         const stateFull = (() => {
             const map = {
@@ -6458,9 +6523,12 @@
 
                     // Dropdown miss — site often asks for city, state, zip manually.
                     const freeText = formatLocationFreeText(profile, wantRaw);
-                    const wantManual = isLocationManualEntryHint(el, '')
-                        || kind === 'city'
-                        || /location/i.test(String(el?.getAttribute?.('aria-label') || el?.placeholder || ''));
+                    const wantManual = !/\b(race|ethnicity|veteran|disabilit|hispanic|latino|gender)\b/i.test(liveLabel)
+                        && (
+                            isLocationManualEntryHint(el, '')
+                            || kind === 'city'
+                            || /location/i.test(String(el?.getAttribute?.('aria-label') || el?.placeholder || ''))
+                        );
                     if (freeText && wantManual) {
                         try {
                             openReactSelect(el);

@@ -518,6 +518,38 @@ function textSimilarity(a, b) {
     return inter / (A.size + B.size - inter);
 }
 
+function loadRecentWrittenPairs(userId, limit = 24) {
+    if (!userId) return [];
+    try {
+        const rows = getAll(
+            `SELECT answers_json FROM bid_courses
+             WHERE user_id = ? AND answers_json IS NOT NULL AND TRIM(answers_json) <> ''
+             ORDER BY COALESCE(applied_at, filled_at, updated_at) DESC
+             LIMIT 30`,
+            [parseInt(userId, 10)]
+        );
+        const out = [];
+        for (const row of rows) {
+            let answers = [];
+            try { answers = JSON.parse(row.answers_json); } catch { continue; }
+            if (!Array.isArray(answers)) continue;
+            for (const a of answers) {
+                if (Array.isArray(a.options) && a.options.length) continue;
+                const text = String(a.answer || a.value || '').trim();
+                if (text.length < 24 || /^(yes|no)\b/i.test(text)) continue;
+                out.push({
+                    label: String(a.label || '').trim().slice(0, 160),
+                    text
+                });
+                if (out.length >= limit) return out;
+            }
+        }
+        return out;
+    } catch {
+        return [];
+    }
+}
+
 function loadRecentUniqueAnswers(userId, limit = 15) {
     if (!userId) return [];
     try {
@@ -555,14 +587,14 @@ function loadRecentUniqueAnswers(userId, limit = 15) {
 /**
  * Enforce Unique lane diversity vs recent bids. One regen hint via append if too similar.
  */
-function enforceUniqueAnswer(draft, recentUniqueAnswers, { maxLength = 0 } = {}) {
+function enforceUniqueAnswer(draft, recentUniqueAnswers, { maxLength = 0, minSimilarity = 0.72 } = {}) {
     let text = String(draft || '').trim();
     let unique_similarity = 0;
     let unique_regenerated = false;
     for (const prev of recentUniqueAnswers || []) {
         unique_similarity = Math.max(unique_similarity, textSimilarity(text, prev));
     }
-    if (unique_similarity >= 0.72 && text) {
+    if (unique_similarity >= minSimilarity && text) {
         // Soft diversify without a second LLM round-trip: rephrase opener + drop first clause echo.
         const diversifiers = [
             'For this specific role, ',
@@ -1189,7 +1221,7 @@ CONTENT:
 3. If a company is not in ALLOWED EMPLOYERS, do not write its name — describe the work without naming a fake employer.
 4. Do NOT answer salary / pay; those are filled separately.
 5. EEO demographics (gender, disability, veteran, race/ethnicity) → return "" (filled from profile elsewhere). Work authorization, sponsorship, prior employer at company, over-18, relocate, how-heard, years of experience → answer from PROFILE facts as Yes/No or an exact OPTIONS string when listed.
-6. Fresh wording every time. Never reuse another application's or another profile's phrasing.
+6. Fresh wording every time. Never reuse another application's or another profile's phrasing. If PREVIOUS TEXT ANSWERS are listed, write a different sentence — do not copy them. Radio, select, and checkbox answers may stay the same option.
 7. Ban: "I am drawn to", "particularly impressed", "leverage", "cutting-edge", "passionate about", "seamless", "thrilled", "as a [title] with experience in", "skills align", "opportunity to contribute", "dynamic team", "excited about the opportunity", "in today's fast-paced", "I am a [title] with", long dashes, and markdown/bold.
 8. If ANSWER STYLE is provided, match brevity/tone only.
 9. Non-empty answers for every id except fixed-profile skips (""). For OPTIONS questions, non-empty means an exact option string.
@@ -1211,6 +1243,11 @@ CONTENT:
         console.warn('[answers] playbook load skipped:', err.message);
     }
 
+    const recentWrittenPairs = loadRecentWrittenPairs(userId, 16);
+    const previousTextBlock = recentWrittenPairs.length
+        ? `PREVIOUS TEXT ANSWERS (do not copy these sentences; write different wording for text fields. Selects, radios, and checkboxes may keep the same option):\n${recentWrittenPairs.map((p) => `- ${p.label ? `${p.label}: ` : ''}${p.text.slice(0, 180)}`).join('\n')}\n`
+        : '';
+
     const buildUserPrompt = (questionList, { missingOnly = false } = {}) => `COMPANY: ${companyName || 'Unknown'}
 ROLE: ${jobRole || 'Unknown'}
 
@@ -1228,6 +1265,7 @@ ${String(jobDescription || '').slice(0, 3500)}
 GENERATED RESUME (text):
 ${resumeText || '(none)'}
 ${playbookBlock && !bidderMode ? `\nANSWER STYLE (tone only; new content for this job):\n${playbookBlock}\n` : ''}
+${previousTextBlock}
 ${promptExtras ? `\n${promptExtras}\n` : ''}
 QUESTIONS (answer ALL ids):
 ${JSON.stringify(questionList, null, 2)}`;
@@ -1982,15 +2020,25 @@ Return JSON only: {"reviews":[{"id":"q1","ok":true,"answer":"..."},{"id":"q2","o
                 options: q.options?.length ? q.options : undefined
             };
 
-            if (lane === 'unique' && !uniqueGateOff) {
+            const hasOptions = Array.isArray(q.options) && q.options.length > 0;
+            const sameLabelPrev = recentWrittenPairs
+                .filter((p) => p.label && q.label && textSimilarity(p.label, q.label) >= 0.45)
+                .map((p) => p.text);
+            if (!hasOptions && !uniqueGateOff && (lane === 'unique' || sameLabelPrev.length)) {
                 const maxLen = Number(q.maxLength || q.maxlength || 0) || 0;
-                const enforced = enforceUniqueAnswer(answer, recentUnique, { maxLength: maxLen });
-                meta.answer = enforced.text;
-                meta.unique_similarity = enforced.unique_similarity;
-                meta.unique_regenerated = enforced.unique_regenerated;
-                meta.truncated = enforced.truncated || undefined;
-                if (enforced.unique_regenerated) meta.failure_code = 'unique_regen';
-                if (enforced.text) recentUnique.unshift(enforced.text);
+                const pool = sameLabelPrev.length ? sameLabelPrev : recentUnique;
+                if (pool.length) {
+                    const enforced = enforceUniqueAnswer(answer, pool, {
+                        maxLength: maxLen,
+                        minSimilarity: sameLabelPrev.length ? 0.45 : 0.72
+                    });
+                    meta.answer = enforced.text;
+                    meta.unique_similarity = enforced.unique_similarity;
+                    meta.unique_regenerated = enforced.unique_regenerated;
+                    meta.truncated = enforced.truncated || undefined;
+                    if (enforced.unique_regenerated) meta.failure_code = 'unique_regen';
+                    if (enforced.text) recentUnique.unshift(enforced.text);
+                }
             }
 
             return meta;
