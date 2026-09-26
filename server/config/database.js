@@ -2051,45 +2051,8 @@ async function initDatabase() {
   }
   console.log('Default logins: vincent/123456 · admin/admin123 · bob/bob123 · henry/mgr123');
 
-  clearJobLinksAndBidLogsOnce();
-
   saveDatabase();
   return db;
-}
-
-/** One-shot. Existing server copies keep old rows until this code runs. */
-function clearJobLinksAndBidLogsOnce() {
-  const MARK = 'links-and-bid-logs-2026-09-24';
-  try {
-    db.run(`CREATE TABLE IF NOT EXISTS data_wipes (
-      id TEXT PRIMARY KEY,
-      applied_at TEXT
-    )`);
-    const already = db.exec(`SELECT id FROM data_wipes WHERE id = '${MARK}'`);
-    if (already[0]?.values?.length) return;
-    const tables = [
-      'bid_course_screenshots',
-      'bid_course_events',
-      'bid_courses',
-      'job_applications',
-      'job_links'
-    ];
-    for (const table of tables) {
-      try {
-        if (table === 'job_applications') {
-          db.run(`DELETE FROM job_applications WHERE job_link_id IS NOT NULL OR source = 'auto'`);
-        } else {
-          db.run(`DELETE FROM ${table}`);
-        }
-      } catch (err) {
-        console.warn(`[wipe] ${table} skipped:`, err.message);
-      }
-    }
-    db.run(`INSERT INTO data_wipes (id, applied_at) VALUES (?, datetime('now'))`, [MARK]);
-    console.log('[wipe] Removed all job links and auto-bid logs');
-  } catch (err) {
-    console.warn('[wipe] job links / bid logs skipped:', err.message);
-  }
 }
 
 // Save database to file
