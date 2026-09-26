@@ -72,8 +72,8 @@ export const BIDDER_DEFAULTS = {
     openGapMs: 500,
     /** Base form wait. Do not shorten — required fields mount after the first paint. */
     formWaitMs: 8000,
-    autoSubmit: false,
-    autoNext: false,
+    autoSubmit: true,
+    autoNext: true,
     soundEnabled: true,
     /** Pause opening more tabs until CAPTCHA/login is cleared (human handoff). */
     captchaFocus: true,
@@ -84,7 +84,7 @@ export const BIDDER_DEFAULTS = {
      * With captchaHelper ON, holds the apply tab focused for NopeCHA/CapSolver
      * so CAPTCHA can clear AFK. Without helper, short grace then park/skip.
      */
-    unattended: false,
+    unattended: true,
     /** Grace period before abandoning CAPTCHA in unattended mode (ms). 0 = skip immediately. */
     captchaGraceMs: 45 * 1000,
     /**
@@ -153,8 +153,10 @@ export async function getBidderPrefs() {
                 ? Math.min(600, Math.round(graceSec))
                 : Math.round(BIDDER_DEFAULTS.humanAssistWaitMs / 1000)));
     const humanAssistWaitMs = Math.round(resolvedAssistSec * 1000);
-    // Explicit true stays on; unset / null → OFF (never submit unless user opts in).
-    const autoSubmit = data.bidderAutoSubmit === true;
+    // Unset follows the hands-free default. An explicit false still parks for review.
+    const autoSubmit = data.bidderAutoSubmit == null
+        ? BIDDER_DEFAULTS.autoSubmit
+        : data.bidderAutoSubmit === true;
     let disabledFillLessons = {};
     try {
         const raw = data.bidderDisabledFillLessons;
@@ -165,11 +167,11 @@ export async function getBidderPrefs() {
     }
     return {
         autoSubmit,
-        autoNext: !!data.bidderAutoNext,
+        autoNext: data.bidderAutoNext == null ? BIDDER_DEFAULTS.autoNext : !!data.bidderAutoNext,
         soundEnabled: data.bidderSoundEnabled != null ? !!data.bidderSoundEnabled : true,
         // Default ON: freeze queue on CAPTCHA until you solve it (or click Resume).
         captchaFocus: data.bidderCaptchaFocus != null ? !!data.bidderCaptchaFocus : true,
-        unattended: !!data.bidderUnattended,
+        unattended: data.bidderUnattended == null ? BIDDER_DEFAULTS.unattended : !!data.bidderUnattended,
         humanAssistWaitMs,
         captchaGraceMs: humanAssistWaitMs,
         captchaHelper: data.bidderCaptchaHelper != null
@@ -279,6 +281,16 @@ function scheduleLiveShotOnStatus(applicationId, opts = {}) {
 
 async function setQueueState(patch) {
     const cur = (await chrome.storage.local.get([QUEUE_STATE_KEY]))[QUEUE_STATE_KEY] || {};
+    const nextEpoch = patch?.queueEpoch != null && Number(patch.queueEpoch) !== Number(cur.queueEpoch || 0);
+    if (nextEpoch) patch = { ...patch, successSeal: false };
+    if (cur?.successSeal && patch?.successSeal !== false && !nextEpoch) {
+        const sealedId = String(cur.lastApplicationId || cur.currentId || '');
+        const nextId = patch?.currentId != null ? String(patch.currentId) : sealedId;
+        const sameBid = !sealedId || nextId === sealedId;
+        if (sameBid && (patch?.status === 'running' || patch?.running === true)) {
+            patch = { ...patch, status: 'done', running: false, runState: 'success' };
+        }
+    }
     const statusChanged = patch?.status != null
         && String(patch.status) !== String(cur.status || '');
     const next = { ...cur, ...patch, updatedAt: Date.now() };

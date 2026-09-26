@@ -120,7 +120,6 @@ function PacketJobRow({
 export default function ApplicationPacketPanel({
     bidReadyItems = [],
     profileId,
-    requireBeforeProcess = true,
     onStatusChange
 }) {
     const [items, setItems] = useState([]);
@@ -233,16 +232,9 @@ export default function ApplicationPacketPanel({
             {expanded ? (
                 <div className="space-y-2 border-t border-white/[0.06] px-4 py-3">
                     <p className="text-[11px] text-white/45">
-                        {requireBeforeProcess
-                            ? 'Prepare answers before Process — policy fields (sponsorship, salary, EEO) are reviewed here first.'
-                            : 'Optional: pre-generate answers so Lumi skips LLM during the bid.'}
+                        Start fills and submits on its own. Prepare is optional if you want to review policy answers first.
                     </p>
                     {err ? <p className="text-[11px] text-rose-300">{err}</p> : null}
-                    {!allReady && requireBeforeProcess ? (
-                        <p className="text-[11px] font-medium text-amber-200/90">
-                            Click Prepare before Process, or edit empty policy answers below.
-                        </p>
-                    ) : null}
                     <div className="space-y-2">
                         {(items.length ? items : applicationIds.map((id) => {
                             const row = bidReadyItems.find((r) => String(r.id) === String(id));

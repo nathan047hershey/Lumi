@@ -2969,6 +2969,147 @@ async function closeBidderTab(tabId) {
     try { await chrome.tabs.remove(tabId); } catch (_) { /* ignore */ }
 }
 
+const successFinishStarted = new Set();
+
+function choiceRequirementFromLabel(label) {
+    const h = String(label || '').toLowerCase();
+    if (!h) return '';
+    if (/\b(race|ethnicity|ethnic)\b/.test(h) && !/\bhispanic|latino\b/.test(h)) return 'race_ethnicity';
+    if (/\bhow do you identify\b/.test(h) && !/\bgender|pronoun|veteran|disabilit\b/.test(h)) return 'race_ethnicity';
+    if (/\b(veteran|military[\s_-]*status|armed[\s_-]*forces)\b/.test(h)) return 'veteran_status';
+    if (/\b(hispanic|latino|latina|latinx)\b/.test(h)) return 'hispanic_latino';
+    if (/\bthink of yourself as\b/.test(h) || (/\bgender\b/.test(h) && !/\bsexual\b/.test(h))) return 'gender';
+    if (/\b(disabilit(?:y|ies)|disabled|\bada\b)\b/.test(h) && !/\b(date|signature)\b/.test(h)) return 'disability_status';
+    return '';
+}
+
+function answerLooksLikeLocation(text) {
+    const t = String(text || '').trim();
+    if (!t || t.length > 80) return false;
+    if (/\b\d{5}(?:-\d{4})?\b/.test(t) && /,/.test(t)) return true;
+    if (/\bpalo alto\b/i.test(t)) return true;
+    if (/,\s*[A-Z]{2}\b/.test(t) && t.length < 48) return true;
+    return false;
+}
+
+/** Remember what each choice question was asking. Do not store a city as that answer. */
+async function learnSuccessfulAnswers(applicationId) {
+    if (!applicationId) return { learned: 0 };
+    const data = await chrome.storage.local.get(['lumiCapturedPacks', 'lumi.questionReq.v1']);
+    const packs = Array.isArray(data.lumiCapturedPacks) ? data.lumiCapturedPacks : [];
+    const pack = packs.find((p) => String(p?.applicationId) === String(applicationId));
+    const cache = { ...(data['lumi.questionReq.v1'] || {}) };
+    let learned = 0;
+    for (const row of pack?.items || []) {
+        const req = choiceRequirementFromLabel(row?.label);
+        if (!req) continue;
+        if (answerLooksLikeLocation(row?.answer)) continue;
+        const key = String(row.label || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().slice(0, 160);
+        if (key.length < 12 || cache[key] === req) continue;
+        cache[key] = req;
+        learned += 1;
+    }
+    if (learned) {
+        await chrome.storage.local.set({ 'lumi.questionReq.v1': cache });
+    }
+    await logCourseEvent(applicationId, 'success_studied', { learned }).catch(() => {});
+    return { learned };
+}
+
+/** Leave the apply window and open the Job Links list. */
+async function redirectToJobLinks() {
+    try {
+        const tabs = await chrome.tabs.query({});
+        const appTabs = (tabs || []).filter((t) => t?.id && isAppUrl(t.url));
+        const target = appTabs.find((t) => /\/pipeline\/lumi/i.test(t.url || ''))
+            || appTabs.find((t) => /\/pipeline/i.test(t.url || ''))
+            || appTabs[0];
+        if (!target?.id) return false;
+        let nextUrl = target.url;
+        try {
+            const u = new URL(target.url);
+            if (/\/admin\/pipeline/i.test(u.pathname)) {
+                u.pathname = '/admin/pipeline';
+                u.search = '';
+                u.hash = '';
+                nextUrl = u.toString();
+            } else if (/\/user\/pipeline/i.test(u.pathname)) {
+                u.pathname = '/user/pipeline';
+                u.search = '';
+                u.hash = '';
+                nextUrl = u.toString();
+            }
+        } catch (_) { /* keep the current app tab */ }
+        await chrome.tabs.update(target.id, { url: nextUrl, active: true });
+        if (target.windowId != null) {
+            await chrome.windows.update(target.windowId, { focused: true });
+        }
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+/**
+ * Success page is already showing. Save it, study the bid, hold 7s, close the tab.
+ * The queue stays running until the last selected job, then returns to Job Links.
+ */
+async function finishSuccessfulBid({
+    tabId,
+    applicationId,
+    via = 'site_confirmation',
+    endQueue = true
+} = {}) {
+    const key = String(applicationId || tabId || '');
+    if (!key || successFinishStarted.has(key)) return;
+    successFinishStarted.add(key);
+    await setQueueState(endQueue
+        ? {
+            running: false,
+            status: 'done',
+            successSeal: true,
+            runState: 'success',
+            lastStatusEvent: 'marked_applied',
+            lastStatusAt: Date.now(),
+            lastStatusMeta: { success: true, via },
+            lastApplicationId: applicationId || null,
+            missingRequired: [],
+            queueEndedAt: Date.now()
+        }
+        : {
+            running: true,
+            status: 'running',
+            successSeal: false,
+            runState: 'success',
+            lastStatusEvent: 'marked_applied',
+            lastStatusAt: Date.now(),
+            lastStatusMeta: { success: true, via },
+            lastApplicationId: applicationId || null,
+            missingRequired: []
+        }
+    ).catch(() => {});
+    if (applicationId) {
+        await setAppRunState(applicationId, 'success', {
+            tabId,
+            eventType: 'marked_applied',
+            missingRequired: []
+        }).catch(() => {});
+    }
+    if (tabId && applicationId) {
+        await uploadSuccessProofScreenshot(applicationId, tabId, {
+            stayInApp: true,
+            waitMs: 1000
+        }).catch(() => {});
+    }
+    if (applicationId) await learnSuccessfulAnswers(applicationId).catch(() => {});
+    await new Promise((r) => setTimeout(r, 7000));
+    if (tabId) {
+        await closeBidderTab(tabId);
+        await clearTabMapping({ applicationId, tabId }).catch(() => {});
+    }
+    if (endQueue) await redirectToJobLinks();
+}
+
 /** Drop dead tab ids from queue maps so Control never shows a fake Focus chip. */
 async function clearTabMapping({ applicationId = null, tabId = null } = {}) {
     const st = await getQueueState().catch(() => null);
@@ -3071,17 +3212,36 @@ async function noteConfirmedApplication(data, tabId, appId) {
         eventType: 'marked_applied',
         missingRequired: []
     }).catch(() => {});
-    const patch = {
-        status: 'done',
-        running: false,
-        runState: 'success',
-        lastStatusEvent: 'marked_applied',
-        lastStatusAt: now,
-        lastStatusMeta: { success: true, via: 'confirmation_shell' },
-        missingRequired: []
-    };
+    const moreJobs = Number(data.total) > 0 && Number(data.index) < Number(data.total);
+    const patch = moreJobs
+        ? {
+            status: 'running',
+            running: true,
+            successSeal: false,
+            runState: 'success',
+            lastStatusEvent: 'marked_applied',
+            lastStatusAt: now,
+            lastStatusMeta: { success: true, via: 'confirmation_shell' },
+            missingRequired: []
+        }
+        : {
+            status: 'done',
+            running: false,
+            successSeal: true,
+            runState: 'success',
+            lastStatusEvent: 'marked_applied',
+            lastStatusAt: now,
+            lastStatusMeta: { success: true, via: 'confirmation_shell' },
+            missingRequired: [],
+            queueEndedAt: now
+        };
     await setQueueState(patch).catch(() => {});
-    uploadSuccessProofScreenshot(appId, tabId, { stayInApp: true, waitMs: 400 }).catch(() => {});
+    finishSuccessfulBid({
+        tabId,
+        applicationId: appId,
+        via: 'confirmation_shell',
+        endQueue: !moreJobs
+    }).catch(() => {});
     return { ...data, ...patch };
 }
 
@@ -3178,33 +3338,35 @@ async function openReadyApplication(item, { fromQueue = false } = {}) {
         throw new Error('CV not ready yet — wait for generation');
     }
 
-    // Production has no local disk — pull the CV into Downloads as soon as
-    // Start Bid fires: CVs/Vinh Ly/Vinh_Ly_CV_<time>/Vinh_Ly.docx
-    try {
-        const profileHint = {
-            first_name: item.first_name,
-            last_name: item.last_name
-        };
-        const resumeFile = await fetchResumeBase64(
-            settings.apiBaseUrl,
-            item.resume_filename,
-            settings.token,
-            {
-                profile: profileHint,
-                uploadFilename: item.resume_upload_filename || null
+    // Save a local CV copy without blocking the apply tab. The fill downloads
+    // the file again when it uploads; waiting here left Start sitting before the page opened.
+    void (async () => {
+        try {
+            const profileHint = {
+                first_name: item.first_name,
+                last_name: item.last_name
+            };
+            const resumeFile = await fetchResumeBase64(
+                settings.apiBaseUrl,
+                item.resume_filename,
+                settings.token,
+                {
+                    profile: profileHint,
+                    uploadFilename: item.resume_upload_filename || null
+                }
+            );
+            if (resumeFile) {
+                resumeFile.profile = profileHint;
+                resumeFile.applicationId = item.id;
+                const saved = await downloadResumeToCvLibrary(resumeFile, profileHint, item.id);
+                if (saved?.relPath) {
+                    await logCourseEvent(item.id, 'cv_downloaded', { path: saved.relPath }).catch(() => {});
+                }
             }
-        );
-        if (resumeFile) {
-            resumeFile.profile = profileHint;
-            resumeFile.applicationId = item.id;
-            const saved = await downloadResumeToCvLibrary(resumeFile, profileHint, item.id);
-            if (saved?.relPath) {
-                await logCourseEvent(item.id, 'cv_downloaded', { path: saved.relPath }).catch(() => {});
-            }
+        } catch (err) {
+            console.warn('[bidder] start-bid CV download', err);
         }
-    } catch (err) {
-        console.warn('[bidder] start-bid CV download', err);
-    }
+    })();
 
     // Ashby Overview JD has no form — open .../application directly.
     const applyUrl = isAshbyJobDescriptionUrl(item.open_url)
@@ -3314,6 +3476,12 @@ async function processReadyQueue(opts = {}) {
             'Queue already in progress — use Live monitor (Resume / Next / Stop). Do not click Process again.'
         );
     }
+    // A stopped or finished run must not overwrite a newer Start, or drop its lock.
+    const queueEpoch = Date.now();
+    const ownsThisQueue = async () => {
+        const st = await getQueueState().catch(() => null);
+        return Number(st?.queueEpoch) === queueEpoch;
+    };
 
     // Always start Process clean — a stuck Autofill lock or prior Stop must not block bidding.
     await clearFillLock();
@@ -3460,32 +3628,26 @@ async function processReadyQueue(opts = {}) {
             stopRequested: false,
             pauseRequested: false,
             nextClicked: false,
+            queueEpoch,
             queueStartedAt: Date.now()
         });
+        const selectedProfileId = Number(opts.profileId || settings.selectedProfileId) || null;
         let items = [];
         try {
             const data = await listBidderReady(
                 200,
-                // When the user picks Job Links in the UI, bid those ready CVs
-                // even if Lumi's popup profile differs (fill uses each app's profile).
-                jobLinkIds.length || applicationIds.length ? null : settings.selectedProfileId,
+                selectedProfileId,
                 jobLinkIds.length ? jobLinkIds : null,
                 Array.isArray(opts.remembered) ? opts.remembered : null
             );
             items = data?.items || [];
+            if (selectedProfileId) {
+                items = items.filter((it) => Number(it.profile_id) === selectedProfileId);
+            }
             if (applicationIds.length) {
-                const allow = new Set(applicationIds);
+                const allow = new Set(applicationIds.map((id) => Number(id)));
                 const scoped = items.filter((it) => allow.has(Number(it.id)));
                 if (scoped.length) items = scoped;
-                else if (!jobLinkIds.length) {
-                    items = [];
-                }
-            }
-            if (jobLinkIds.length && settings.selectedProfileId && items.length > 1) {
-                const preferred = items.filter(
-                    (it) => Number(it.profile_id) === Number(settings.selectedProfileId)
-                );
-                if (preferred.length) items = preferred;
             }
         } catch (err) {
             if (err.status === 401 || err.authExpired) {
@@ -3497,9 +3659,11 @@ async function processReadyQueue(opts = {}) {
         }
 
         if (!items.length) {
-            const msg = jobLinkIds.length || applicationIds.length
-                ? `No ready CVs for the selected Job Link(s) under this login. Use the same account in Lumi as Job Links (or click Process again so the page session syncs).`
-                : `No ready applications for Lumi profile #${settings.selectedProfileId}`;
+            const msg = selectedProfileId
+                ? `The profile you selected has no pending ready CV for this job, so the bid did not start.`
+                : (jobLinkIds.length || applicationIds.length
+                    ? `No ready CVs for the selected Job Link(s) under this login. Use the same account in Lumi as Job Links (or click Process again so the page session syncs).`
+                    : `No ready applications for Lumi profile #${settings.selectedProfileId}`);
             await notify('Bidder', msg);
             await setQueueState({ running: false, status: 'empty' });
             return { ok: false, processed: 0, queued: 0, error: msg, filtered: jobLinkIds.length > 0 };
@@ -3544,7 +3708,7 @@ async function processReadyQueue(opts = {}) {
             const pauseGate = await waitWhileBidderPaused();
             if (pauseGate.stopped) break;
             const state = await getQueueState();
-            if (state?.stopRequested) break;
+            if (state?.stopRequested || Number(state?.queueEpoch) !== queueEpoch) break;
 
             // Soft wait until under max tabs
             const maxTabs = Math.max(1, Math.min(5, Number(prefs.maxTabs) || BIDDER_DEFAULTS.maxTabs));
@@ -3576,6 +3740,13 @@ async function processReadyQueue(opts = {}) {
             }
 
             const item = items[i];
+            if (selectedProfileId && Number(item.profile_id) !== selectedProfileId) {
+                await logCourseEvent(item.id, 'wrong_profile_blocked', {
+                    selectedProfileId,
+                    itemProfileId: item.profile_id
+                }).catch(() => {});
+                continue;
+            }
             if (item.job_link_id && expiredJobLinkIds.has(Number(item.job_link_id))) {
                 await logCourseEvent(item.id, 'job_expired', {
                     job_link_id: item.job_link_id,
@@ -3619,6 +3790,11 @@ async function processReadyQueue(opts = {}) {
             }
             lastOpenAt = Date.now();
             openTabs.set(opened.tabId, item);
+            // Start the engine now. Do not wait for closed-job detection or the form gate.
+            const engineArm = startJobFillEngine(opened.tabId, item).catch((err) => {
+                console.warn('[bidder] engine start', err?.message || err);
+                return null;
+            });
             await setQueueState({
                 currentTabId: opened.tabId,
                 currentJobUrl: applyUrl || opened.url || null,
@@ -3640,7 +3816,10 @@ async function processReadyQueue(opts = {}) {
 
             try {
             let siteSuccess = false;
-            const closedAtOpen = await probeJobClosed(opened.tabId);
+            const closedAtOpen = await Promise.race([
+                probeJobClosed(opened.tabId),
+                new Promise((resolve) => setTimeout(() => resolve(null), 1500))
+            ]);
             if (closedAtOpen?.closed) {
                 if (item.job_link_id) expiredJobLinkIds.add(Number(item.job_link_id));
                 await finishExpiredJob({
@@ -3655,23 +3834,13 @@ async function processReadyQueue(opts = {}) {
 
             // Wait for form. Prefer clicking Apply — never CAPTCHA-pause while Apply is still on the page.
             let formOk = false;
+            let engineStartedOnOpen = false;
             let captchaHandoff = false;
             let applyClickedOnce = false;
             let lastApplyMeta = null;
-            let profileEmail = String(
+            const profileEmail = String(
                 item.email || item.profile_email || item.candidate_email || ''
             ).trim();
-            if (!profileEmail) {
-                try {
-                    const packed = await getBidderApplication(item.id);
-                    profileEmail = String(
-                        packed?.profile?.email
-                        || packed?.email
-                        || packed?.application?.email
-                        || ''
-                    ).trim();
-                } catch (_) { /* ignore */ }
-            }
             // Apply-gate wait — start fill as soon as the form paints (do not sit 20–45s).
             const formWaitMs = Math.min(
                 Math.max(
@@ -3703,12 +3872,14 @@ async function processReadyQueue(opts = {}) {
                         && !tabShowsBrowserErrorPage(liveTab)
                     ) {
                         formOk = true;
-                        await ensureScripts(opened.tabId).catch(() => {});
-                        const typed = await typeKnownProfileIntoForm(opened.tabId, item).catch(() => ({ filled: 0 }));
+                        engineStartedOnOpen = true;
+                        await Promise.race([
+                            engineArm,
+                            new Promise((resolve) => setTimeout(resolve, 500))
+                        ]);
                         await logCourseEvent(item.id, 'form_detected', {
                             reason: 'page_open_start_fill',
-                            url: liveUrl,
-                            typed: typed?.filled || 0
+                            url: liveUrl
                         }).catch(() => {});
                         await setWorkProgress({
                             kind: 'queue',
@@ -3850,6 +4021,13 @@ async function processReadyQueue(opts = {}) {
             }
 
             if (opened.expired) continue;
+
+            if (formOk && !engineStartedOnOpen && opened?.tabId) {
+                engineStartedOnOpen = true;
+                await startJobFillEngine(opened.tabId, item).catch((err) => {
+                    console.warn('[bidder] engine start', err?.message || err);
+                });
+            }
 
             // Unattended / user may have closed the apply tab — try URL rebind before skip.
             {
@@ -4141,14 +4319,15 @@ async function processReadyQueue(opts = {}) {
                 }
             }
 
-            // Greenhouse JD sits above the form — click Apply + scroll before capture/fill.
-            const revealed = await ensureApplyFormVisible(opened.tabId);
+            // The engine already started on the open page. Do not click Apply now —
+            // that navigates away and the engine never runs on the form the user sees.
+            const revealed = engineStartedOnOpen
+                ? { formAlreadyOpen: true, clicked: false }
+                : await ensureApplyFormVisible(opened.tabId);
             await logCourseEvent(item.id, 'form_revealed', revealed);
             await refocusStayInAppHome();
 
-            // Form already passed DETECT in the gate loop — only a short stability check
-            // before fill (was a second full 8s wait that delayed typing).
-            await ensureApplyFormVisible(opened.tabId);
+            if (!engineStartedOnOpen) await ensureApplyFormVisible(opened.tabId);
             const ready = await waitForFormReady(opened.tabId, {
                 minFields: 2,
                 requireIdentity: false,
@@ -4292,7 +4471,7 @@ async function processReadyQueue(opts = {}) {
                     }).catch(() => {});
                 }
                 try {
-                    await ensureApplyFormVisible(opened.tabId);
+                    if (!engineStartedOnOpen) await ensureApplyFormVisible(opened.tabId);
                     await ensureScripts(opened.tabId);
                     fillStats = await runBidderFillOnTab(opened.tabId, item, {
                         ...prefs,
@@ -4317,6 +4496,12 @@ async function processReadyQueue(opts = {}) {
                     // Only retry ephemeral extension disconnects — not AI/CV/logic failures.
                     if (!connRace || attempt >= 1) break;
                     await new Promise((r) => setTimeout(r, 1500));
+                }
+            }
+            if (!fillErr && Number(fillStats?.filled || 0) < 1 && opened?.tabId) {
+                const typedLate = await typeKnownProfileIntoForm(opened.tabId, item).catch(() => ({ filled: 0 }));
+                if (Number(typedLate?.filled || 0) > 0) {
+                    fillStats = { ...(fillStats || {}), filled: Number(typedLate.filled) };
                 }
             }
 
@@ -4363,8 +4548,8 @@ async function processReadyQueue(opts = {}) {
                                 : `Fill failed — tab kept for review: ${errMsg.slice(0, 80)}`))
                 );
                 await playBidderSound(prefs.soundEnabled);
-                // Keep apply tab for CV regen / fill review — never close on regen alone.
-                if (prefs.unattended && isCaptcha && !parkedRegen) {
+                // Hands-free: capture the failure and move to the next job. Keep the tab only while a CV regenerates.
+                if (prefs.unattended && !parkedRegen) {
                     await clearTabMapping({ applicationId: item.id, tabId: opened.tabId }).catch(() => {});
                     try { await chrome.tabs.remove(opened.tabId); } catch (_) { /* ignore */ }
                     openTabs.delete(opened.tabId);
@@ -4807,7 +4992,7 @@ async function processReadyQueue(opts = {}) {
                                     captchaKind: 'email_otp'
                                 });
                                 await notify('Lumi', 'Enter security code via Instruct, then Next when ready');
-                                await waitForBidderNext();
+                                await waitForBidderNext(90 * 1000, queueEpoch);
                             }
                             continue;
                         }
@@ -4843,19 +5028,16 @@ async function processReadyQueue(opts = {}) {
                             eventType: 'marked_applied',
                             missingRequired: []
                         }).catch(() => {});
-                        await watchLearnAfterSuccess(opened.tabId, item.id, {
-                            source: 'auto_watch'
-                        }).catch(() => {});
-                        await uploadSuccessProofScreenshot(item.id, opened.tabId, {
-                            stayInApp: true,
-                            waitMs: 1600
-                        });
-                        await closeBidderTab(opened.tabId);
                         openTabs.delete(opened.tabId);
                         holdEmailOtpTabs.delete(opened.tabId);
                         processed += 1;
                         submitted = true;
-                        await refocusStayInAppHome();
+                        await finishSuccessfulBid({
+                            tabId: opened.tabId,
+                            applicationId: item.id,
+                            via: 'site_confirmation',
+                            endQueue: i >= items.length - 1
+                        });
                     } else {
                         await logCourseEvent(item.id, 'needs_manual', {
                             reason: poll.reason || 'submit_no_thanks',
@@ -4892,7 +5074,7 @@ async function processReadyQueue(opts = {}) {
                 }
             } else if ((await finalizeSubmitSuccessIfDetected(opened.tabId, item.id, 'after_fill_late').catch(() => null))?.ok) {
                 processed += 1;
-            } else if (fillIncomplete) {
+            } else if (fillIncomplete && !(prefs.unattended || prefs.autoNext)) {
                 await ensureApplyFormVisible(opened.tabId);
                 await uploadScreenshot(item.id, 'after_fill_done', opened.tabId, { stayInApp: true });
                 await setQueueState({
@@ -4908,7 +5090,7 @@ async function processReadyQueue(opts = {}) {
                 manualReviewTabs.set(opened.tabId, item);
                 openTabs.delete(opened.tabId);
                 await focusBidderTabForReview(opened.tabId);
-            } else if (!prefs.autoSubmit) {
+            } else if (!prefs.autoSubmit && !(prefs.unattended || prefs.autoNext)) {
                 await logCourseEvent(item.id, 'awaiting_manual_submit', {
                     filled: fillStats?.filled || 0
                 });
@@ -4923,6 +5105,15 @@ async function processReadyQueue(opts = {}) {
                     'Bidder',
                     `Fill done (${fillStats?.filled || 0} fields) — tab kept open. Fix answers in the popup or submit on the form.`
                 );
+            } else if (prefs.unattended || prefs.autoNext) {
+                await logCourseEvent(item.id, 'submit_no_click', {
+                    filled: fillStats?.filled || 0,
+                    reason: 'unattended_continue'
+                }).catch(() => {});
+                await uploadScreenshot(item.id, 'after_fill_done', opened.tabId, { stayInApp: true }).catch(() => {});
+                try { await chrome.tabs.remove(opened.tabId); } catch (_) { /* ignore */ }
+                openTabs.delete(opened.tabId);
+                await notify('Bidder', `Could not submit ${item.company_name || 'job'} — continuing`);
             } else {
                 // autoSubmit on but could not click Submit — keep tab for manual finish.
                 await ensureApplyFormVisible(opened.tabId);
@@ -4950,7 +5141,11 @@ async function processReadyQueue(opts = {}) {
                     missingRequired: [],
                     queueEndedAt: Date.now()
                 }).catch(() => {});
-            } else if (!prefs.autoNext && Number(fillStats?.filled || 0) > 0) {
+            } else if (
+                !prefs.autoNext
+                && Number(fillStats?.filled || 0) > 0
+                && i < items.length - 1
+            ) {
                 await setQueueState({
                     running: true,
                     status: 'awaiting_next',
@@ -4965,7 +5160,7 @@ async function processReadyQueue(opts = {}) {
                     } : {})
                 });
                 await notify('Bidder', 'Click Next in Auto Bidder / Live monitor to continue');
-                await waitForBidderNext();
+                await waitForBidderNext(90 * 1000, queueEpoch);
             }
 
             // Count fill-only jobs once (submit success already counted above)
@@ -5009,6 +5204,10 @@ async function processReadyQueue(opts = {}) {
                     await notify('Bidder', `Skip: ${msg}`).catch(() => {});
                 }
             }
+        }
+
+        if (!(await ownsThisQueue())) {
+            return { ok: true, processed, queued: items.length, skippedAts, superseded: true };
         }
 
         // Close leftover apply tabs — but NEVER close Greenhouse email-OTP tabs
@@ -5135,16 +5334,18 @@ async function processReadyQueue(opts = {}) {
         return { ok: true, processed, queued: items.length, skippedAts, awaitingEmailOtp: otpHoldCount };
     } catch (err) {
         console.warn('[bidder] processReadyQueue failed', err);
-        await setQueueState({
-            running: false,
-            status: 'error',
-            error: err?.message || String(err)
-        }).catch(() => {});
+        if (await ownsThisQueue()) {
+            await setQueueState({
+                running: false,
+                status: 'error',
+                error: err?.message || String(err)
+            }).catch(() => {});
+        }
         throw err;
     } finally {
         clearInterval(keepAlive);
         await releaseAllPageDebuggers().catch(() => {});
-        if (!lockReleasedEarly) {
+        if (!lockReleasedEarly && await ownsThisQueue()) {
             await releaseQueueLock();
         }
     }
@@ -5167,10 +5368,11 @@ async function waitWhileBidderPaused() {
     }
 }
 
-async function waitForBidderNext(timeoutMs = 60 * 60 * 1000) {
+async function waitForBidderNext(timeoutMs = 90 * 1000, epoch = null) {
     const start = Date.now();
     while (Date.now() - start < timeoutMs) {
         const st = await getQueueState();
+        if (epoch != null && Number(st?.queueEpoch) !== epoch) return;
         if (st?.nextClicked) {
             await setQueueState({ nextClicked: false, status: 'running', pauseRequested: false });
             return;
@@ -5960,33 +6162,147 @@ async function tryCreateAtsAccount(tabId, profileEmail) {
  * so fill + Live monitor screenshots show the form, not the job poster.
  * Also follows new tabs and can start ATS account creation.
  */
-/** Type name, email, and phone into the open page without waiting on the fill engine. */
-async function typeKnownProfileIntoForm(tabId, item) {
-    const first = String(item?.first_name || '').trim();
-    const last = String(item?.last_name || '').trim();
-    const email = String(item?.email || item?.profile_email || item?.candidate_email || '').trim();
-    const phone = String(item?.phone || item?.mobile || '').trim();
-    let profile = { first, last, email, phone };
-    try {
-        const packed = await Promise.race([
-            getBidderApplication(item?.id),
-            new Promise((resolve) => setTimeout(() => resolve(null), 4000))
-        ]);
-        const p = packed?.profile || {};
-        profile = {
-            first: String(p.first_name || profile.first).trim(),
-            last: String(p.last_name || profile.last).trim(),
-            email: String(p.email || profile.email).trim(),
-            phone: String(p.phone || p.mobile || p.telephone || profile.phone).trim()
+const engineKickByTab = new Map();
+const engineRanTabs = new Set();
+
+/** Start the fill engine on the open job page. Do not wait for CV, lessons, or AI answers. */
+async function startJobFillEngine(tabId, item) {
+    if (engineKickByTab.has(tabId)) return engineKickByTab.get(tabId);
+    const job = (async () => {
+        const profile = {
+            first_name: String(item?.first_name || '').trim(),
+            last_name: String(item?.last_name || '').trim(),
+            email: String(item?.email || item?.profile_email || item?.candidate_email || '').trim(),
+            phone: String(item?.phone || item?.mobile || '').trim()
         };
-    } catch (_) { /* use the names already on the queue item */ }
-    if (!profile.first && !profile.last && !profile.email && !profile.phone) {
-        return { filled: 0 };
-    }
-    try {
-        const [inj] = await chrome.scripting.executeScript({
+        if (!profile.first_name || !profile.email) {
+            try {
+                const packed = await Promise.race([
+                    getBidderApplication(item?.id),
+                    new Promise((resolve) => setTimeout(() => resolve(null), 2500))
+                ]);
+                const p = packed?.profile || {};
+                profile.first_name = String(p.first_name || profile.first_name).trim();
+                profile.last_name = String(p.last_name || profile.last_name).trim();
+                profile.email = String(p.email || profile.email).trim();
+                profile.phone = String(p.phone || p.mobile || p.telephone || profile.phone).trim();
+            } catch (_) { /* queue item names are enough to start */ }
+        }
+        const deadline = Date.now() + 25000;
+        let lastError = '';
+        while (Date.now() < deadline) {
+            const tab = await chrome.tabs.get(tabId).catch(() => null);
+            if (!tab) return { ok: false, reason: 'tab_closed' };
+            const url = String(tab.url || tab.pendingUrl || '');
+            if (!/^https?:\/\//i.test(url) || tabShowsBrowserErrorPage(tab)) {
+                await new Promise((r) => setTimeout(r, 300));
+                continue;
+            }
+            await typeKnownProfileIntoForm(tabId, { ...item, ...profile }, { attempts: 1 }).catch(() => {});
+            if (tab.status === 'complete') {
+                await chrome.scripting.executeScript({
+                    target: { tabId, frameIds: [0] },
+                    files: [
+                        'content/controlMatch.js',
+                        'content/fillShared.js',
+                        'content/atsPacks.js',
+                        'content/fill.js',
+                        'content/bidderFill.js'
+                    ]
+                }).catch((err) => {
+                    lastError = err?.message || String(err);
+                });
+            }
+            const greenhouse = /greenhouse\.io/i.test(url);
+            const message = greenhouse
+                ? {
+                    type: 'BIDDER_ENGINE_RUN',
+                    payload: {
+                        profile,
+                        answers: [],
+                        autoSubmit: false,
+                        applicationId: item.id,
+                        bidDeadline: Date.now() + 90000
+                    }
+                }
+                : {
+                    type: 'FILL_FORM',
+                    payload: {
+                        profile,
+                        answers: [],
+                        autoSubmit: false,
+                        skipFiles: true,
+                        skipQuestions: true,
+                        profileOnly: true
+                    }
+                };
+            let rejected = false;
+            const pending = chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch((err) => {
+                rejected = true;
+                lastError = err?.message || String(err);
+                return null;
+            });
+            await Promise.race([
+                pending,
+                new Promise((resolve) => setTimeout(resolve, 600))
+            ]);
+            if (rejected) {
+                await new Promise((r) => setTimeout(r, 350));
+                continue;
+            }
+            engineRanTabs.add(tabId);
+            await logCourseEvent(item.id, 'engine_started', {
+                url,
+                greenhouse,
+                engine: greenhouse ? 'bidder-engine-v1' : 'autofill'
+            }).catch(() => {});
+            await setWorkProgress({
+                kind: 'queue',
+                phase: 'filling',
+                label: 'Fill engine running…',
+                company: item?.company_name || '',
+                applicationId: item?.id
+            }).catch(() => {});
+            return { ok: true, started: true };
+        }
+        await logCourseEvent(item.id, 'engine_not_started', { error: lastError || 'no_fill_script' }).catch(() => {});
+        return { ok: false, error: lastError || 'engine_not_started' };
+    })().finally(() => {
+        engineKickByTab.delete(tabId);
+    });
+    engineKickByTab.set(tabId, job);
+    return job;
+}
+
+/** Type name, email, and phone into the open page without waiting on the fill engine. */
+async function typeKnownProfileIntoForm(tabId, item, opts = {}) {
+    const profile = {
+        first: String(item?.first_name || '').trim(),
+        last: String(item?.last_name || '').trim(),
+        email: String(item?.email || item?.profile_email || item?.candidate_email || '').trim(),
+        phone: String(item?.phone || item?.mobile || '').trim()
+    };
+    const enrichProfile = async () => {
+        if (profile.first && profile.last && profile.email) return profile;
+        try {
+            const packed = await Promise.race([
+                getBidderApplication(item?.id),
+                new Promise((resolve) => setTimeout(() => resolve(null), 2500))
+            ]);
+            const p = packed?.profile || {};
+            profile.first = String(p.first_name || profile.first).trim();
+            profile.last = String(p.last_name || profile.last).trim();
+            profile.email = String(p.email || profile.email).trim();
+            profile.phone = String(p.phone || p.mobile || p.telephone || profile.phone).trim();
+        } catch (_) { /* names already on the queue item are enough to start */ }
+        return profile;
+    };
+    const typeOnce = async (who) => {
+        if (!who?.first && !who?.last && !who?.email && !who?.phone) return { filled: 0 };
+        const injected = await Promise.race([
+            chrome.scripting.executeScript({
             target: { tabId },
-            func: (who) => {
+            func: (person) => {
                 const setVal = (el, value) => {
                     const str = String(value || '');
                     if (!el || !str) return false;
@@ -6014,7 +6330,12 @@ async function typeKnownProfileIntoForm(tabId, item) {
                     }
                     const wrap = el.closest('label');
                     if (wrap) bits.push(textOf(wrap));
-                    bits.push(el.getAttribute('aria-label') || '', el.getAttribute('placeholder') || '', el.name || '');
+                    bits.push(
+                        el.getAttribute('aria-label') || '',
+                        el.getAttribute('placeholder') || '',
+                        el.getAttribute('autocomplete') || '',
+                        el.name || ''
+                    );
                     let prev = el.previousElementSibling;
                     for (let i = 0; i < 3 && prev; i += 1, prev = prev.previousElementSibling) {
                         bits.push(textOf(prev));
@@ -6023,17 +6344,29 @@ async function typeKnownProfileIntoForm(tabId, item) {
                     if (parent) bits.push(textOf(parent).slice(0, 180));
                     return bits.join(' ').toLowerCase();
                 };
-                const inputs = [...document.querySelectorAll('input, textarea')].filter((el) => {
+                const collectInputs = (root, depth, out) => {
+                    if (!root || depth > 6) return out;
+                    let nodes = [];
+                    try { nodes = [...root.querySelectorAll('input, textarea')]; } catch (_) { nodes = []; }
+                    out.push(...nodes);
+                    let all = [];
+                    try { all = [...root.querySelectorAll('*')]; } catch (_) { all = []; }
+                    for (const node of all) {
+                        if (node.shadowRoot) collectInputs(node.shadowRoot, depth + 1, out);
+                    }
+                    return out;
+                };
+                const inputs = collectInputs(document, 0, []).filter((el) => {
                     const type = String(el.type || '').toLowerCase();
                     if (['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'password'].includes(type)) return false;
                     const r = el.getBoundingClientRect();
                     return r.width > 8 && r.height > 8;
                 });
                 const rules = [
-                    [/first\s*name|given\s*name/, who.first],
-                    [/last\s*name|family\s*name|surname/, who.last],
-                    [/e-?mail/, who.email],
-                    [/phone|mobile|\btel\b/, who.phone]
+                    [/first[\s_-]*name|given[\s_-]*name/, person.first],
+                    [/last[\s_-]*name|family[\s_-]*name|surname/, person.last],
+                    [/e-?mail/, person.email],
+                    [/phone|mobile|\btel\b/, person.phone]
                 ];
                 let filled = 0;
                 const used = new Set();
@@ -6047,9 +6380,29 @@ async function typeKnownProfileIntoForm(tabId, item) {
                 }
                 return { filled };
             },
-            args: [profile]
-        });
-        return { filled: Number(inj?.result?.filled || 0), profile };
+            args: [who]
+        }),
+            new Promise((resolve) => setTimeout(() => resolve([]), 2500))
+        ]);
+        const filled = (injected || []).reduce((sum, row) => sum + Number(row?.result?.filled || 0), 0);
+        return { filled };
+    };
+    try {
+        let best = await typeOnce(profile).catch(() => ({ filled: 0 }));
+        const enriching = enrichProfile();
+        const attempts = Math.max(1, Number(opts.attempts) || 2);
+        for (let n = 0; n < attempts - 1 && Number(best?.filled || 0) < 1; n += 1) {
+            await new Promise((r) => setTimeout(r, 400));
+            if (n === 3) await enriching.catch(() => {});
+            const again = await typeOnce(profile).catch(() => ({ filled: 0 }));
+            if (Number(again?.filled || 0) > Number(best?.filled || 0)) best = again;
+        }
+        await enriching.catch(() => {});
+        if (Number(best?.filled || 0) < 2) {
+            const again = await typeOnce(profile).catch(() => ({ filled: 0 }));
+            if (Number(again?.filled || 0) >= Number(best?.filled || 0)) best = again;
+        }
+        return { filled: Number(best?.filled || 0), profile };
     } catch (err) {
         console.warn('[bidder] direct profile type', err?.message || err);
         return { filled: 0, profile };
@@ -7444,6 +7797,11 @@ async function finishExpiredJob({ item, tabId, openTabs, probe = null, url = nul
 }
 
 async function runBidderFillOnTabInner(tabId, item, prefs) {
+    if (!engineRanTabs.has(tabId)) {
+        await startJobFillEngine(tabId, item).catch((err) => {
+            console.warn('[bidder] engine start', err?.message || err);
+        });
+    }
     const closedBeforeFill = await probeJobClosed(tabId);
     if (closedBeforeFill?.closed) {
         const err = new Error('job_expired');
@@ -7453,7 +7811,24 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         throw err;
     }
     await ensureScripts(tabId);
-    const payload = await getBidderApplication(item.id);
+    let payload;
+    try {
+        payload = await Promise.race([
+            getBidderApplication(item.id),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('application_slow')), 8000))
+        ]);
+    } catch (err) {
+        if (err?.status === 401 || err?.authExpired) throw err;
+        payload = {
+            application: item,
+            profile: {
+                first_name: item.first_name || '',
+                last_name: item.last_name || '',
+                email: item.email || item.profile_email || item.candidate_email || '',
+                phone: item.phone || item.mobile || ''
+            }
+        };
+    }
     const app = payload.application || {};
     const profile = payload.profile || {};
     const applyUrl = app.job_url || item.open_url || item.job_url || '';
@@ -7525,7 +7900,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
 
     // Fill name/email/phone ASAP — gate already found a form; only a short re-check.
     await setAutofillPanelStatus(tabId, 'Filling profile (name, email, phone)…', 12);
-    await ensureApplyFormVisible(tabId).catch(() => {});
+    if (!engineRanTabs.has(tabId)) await ensureApplyFormVisible(tabId).catch(() => {});
     const earlyReady = await waitForFormReady(tabId, {
         minFields: 2,
         requireIdentity: false,
@@ -8931,6 +9306,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                 const summary = await processReadyQueue({
                     jobLinkIds,
                     applicationIds,
+                    profileId: msg.selectedProfileId,
                     remembered: Array.isArray(msg.remembered) ? msg.remembered : null,
                     uploadCoverLetter: msg.uploadCoverLetter,
                     stayInApp: msg.stayInApp,

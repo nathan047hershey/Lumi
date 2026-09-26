@@ -29,13 +29,13 @@ export const DEFAULT_LUMI_BIDDER_PREFS = {
     stayInApp: true,
     unattended: true,
     captchaHelper: true,
-    /** Off by default — fill + park for review; enable explicitly for hands-free. */
-    autoSubmit: false,
-    autoNext: false,
+    /** Start fills, submits, and continues. No review click between jobs. */
+    autoSubmit: true,
+    autoNext: true,
     captchaFocus: false,
     uploadCoverLetter: false,
     soundEnabled: true,
-    requirePacketBeforeProcess: true,
+    requirePacketBeforeProcess: false,
     reviewOnlyMode: false,
     /** Notify → wait this long for Resume / CAPTCHA solve → then skip job. */
     humanAssistWaitSec: 90,

@@ -3840,6 +3840,13 @@
             } catch (_) { /* top-up optional */ }
         }
 
+        try {
+            if (typeof window.__lumiQuestionReq?.repair === 'function') {
+                const repaired = await window.__lumiQuestionReq.repair();
+                if (repaired > 0) filled += repaired;
+            }
+        } catch (_) { /* ignore */ }
+
         const ready = requiredComplete && !!findSubmit();
 
         submitClicked = false;

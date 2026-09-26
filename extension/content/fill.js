@@ -917,7 +917,80 @@
         return !!canonicalChoice(req);
     }
 
+    function choiceReqForControl(el) {
+        if (!el) return { req: '', label: '' };
+        const texts = [];
+        const push = (raw) => {
+            const s = cleanLabelText(raw);
+            if (!s || s.length < 6 || s.length > 220) return;
+            if (!texts.includes(s)) texts.push(s);
+        };
+        try {
+            if (el.id) {
+                const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                push(lab?.innerText || lab?.textContent || '');
+            }
+        } catch (_) { /* ignore */ }
+        const labelled = el.getAttribute?.('aria-labelledby') || '';
+        if (labelled) {
+            push(labelled.split(/\s+/).map((id) => document.getElementById(id)?.innerText || '').join(' '));
+        }
+        const control = el.closest?.(
+            '.select__control, [class*="select__control"], [class*="select-shell"]'
+        ) || el;
+        let node = control;
+        for (let depth = 0; depth < 6 && node; depth += 1) {
+            const parent = node.parentElement;
+            if (!parent || parent === document.body) break;
+            const controls = parent.querySelectorAll('input, textarea, select, [role="combobox"]').length;
+            if (controls > 4) break;
+            for (const child of parent.children) {
+                if (child === node || child.contains?.(el)) continue;
+                if (child.querySelector?.('input, textarea, select, [role="combobox"]')) continue;
+                const lines = String(child.innerText || child.textContent || '').split(/\n/);
+                for (const line of lines) push(line);
+            }
+            node = parent;
+        }
+        for (const text of texts) {
+            const req = choiceRequirementFromWords(text);
+            if (req) return { req, label: text };
+        }
+        return { req: '', label: '' };
+    }
+
+    async function repairChoiceFieldsTypedAsLocation() {
+        let fixed = 0;
+        const inputs = [...document.querySelectorAll('input, [role="combobox"]')];
+        for (const el of inputs) {
+            const type = String(el.type || '').toLowerCase();
+            if (['hidden', 'submit', 'button', 'checkbox', 'radio', 'file', 'password'].includes(type)) continue;
+            const shown = String(
+                el.value || el.closest?.('.select__control')?.innerText || ''
+            ).replace(/\s+/g, ' ').trim();
+            if (!looksLikeLocationAnswer(shown)) continue;
+            const choice = choiceReqForControl(el);
+            if (!choice.req) continue;
+            const canonical = canonicalChoice(choice.req);
+            if (!canonical) continue;
+            try { setNativeValue(el, '', { blur: false }); } catch (_) { /* ignore */ }
+            const ok = await fillComboboxSimplify(el, canonical, {
+                kind: choice.req,
+                aliases: [canonical],
+                maxAttempts: 2,
+                minScore: 55
+            });
+            if (ok) {
+                rememberQuestionRequirement(choice.label, choice.req);
+                fixed += 1;
+            }
+        }
+        return fixed;
+    }
+
     function questionBesideControl(el) {
+        const choice = choiceReqForControl(el);
+        if (choice.req && choice.label) return choice.label;
         if (!el) return '';
         try {
             if (el.id) {
@@ -1001,7 +1074,8 @@
         canonical: canonicalChoice,
         looksLikeLocation: looksLikeLocationAnswer,
         remember: rememberQuestionRequirement,
-        guard: guardChoiceValue
+        guard: guardChoiceValue,
+        repair: repairChoiceFieldsTypedAsLocation
     };
 
     function findNearbyQuestionText(el) {
@@ -4531,7 +4605,10 @@
                 skippedWritten += 1;
             } else if (kind === 'salary') {
                 skippedSalary += 1;
-            } else if (kind === 'city' || kind === 'city_state' || /\blocation\s*\(?\s*city/i.test(String(field.label || ''))) {
+            } else if (
+                !choiceReqForControl(comboEl).req
+                && (kind === 'city' || kind === 'city_state' || /\blocation\s*\(?\s*city/i.test(String(field.label || '')))
+            ) {
                 const free = personalValue('city_state', profile) || personalValue('city', profile);
                 if (free) {
                     try {
@@ -4717,6 +4794,7 @@
                     const type = String(el.type || '').toLowerCase();
                     if (['hidden', 'tel', 'email', 'checkbox', 'radio', 'file'].includes(type)) return false;
                     const lab = labelFor(el);
+                    if (choiceReqForControl(el).req) return false;
                     return /location\s*\(?\s*city|\bcity\s*\*|^\s*city\b/i.test(lab);
                 });
                 const shown = String(cityEl?.value || cityEl?.closest?.('.select__control')?.innerText || '')
@@ -4824,6 +4902,11 @@
 
         // Required-field truth (Lever/Ashby/Workday/etc.) — same gate as bidderFill.
         const requiredFields = (fields || []).filter((f) => f.required);
+        try {
+            const repaired = await repairChoiceFieldsTypedAsLocation();
+            if (repaired > 0) filled += repaired;
+        } catch (_) { /* ignore */ }
+
         let requiredOk = 0;
         const missingRequired = [];
         for (const f of requiredFields) {
@@ -6678,8 +6761,24 @@
                     }
 
                     // Dropdown miss — site often asks for city, state, zip manually.
+                    const choiceHere = choiceReqForControl(el);
+                    if (choiceHere.req) {
+                        const canonical = canonicalChoice(choiceHere.req);
+                        closeReactSelect(el);
+                        const picked = await fillComboboxSimplify(el, canonical, {
+                            kind: choiceHere.req,
+                            aliases: [canonical],
+                            maxAttempts: 2,
+                            minScore: 55
+                        });
+                        if (picked) rememberQuestionRequirement(choiceHere.label, choiceHere.req);
+                        done(!!picked);
+                        return;
+                    }
                     const freeText = formatLocationFreeText(profile, wantRaw);
-                    const wantManual = !/\b(race|ethnicity|veteran|disabilit|hispanic|latino|gender)\b/i.test(liveLabel)
+                    const wantManual = !/\b(race|ethnicity|veteran|disabilit|hispanic|latino|gender|identify)\b/i.test(
+                        `${liveLabel} ${choiceHere.label || ''}`
+                    )
                         && (
                             isLocationManualEntryHint(el, '')
                             || kind === 'city'
@@ -8140,9 +8239,9 @@
                     // React/SPA may still be mounting — poll until a usable form exists.
                     // Profile fills need more than name+email (otherwise we leave phone/city empty).
                     const profilePass = !!(msg.payload?.profileOnly || msg.payload?.profileGapFill);
-                    const minReady = profilePass ? 6 : 2;
+                    const minReady = 2;
                     if (fieldCount < minReady && !msg.payload?.uploadOnly) {
-                        const deadline = Date.now() + (profilePass ? 12000 : 8000);
+                        const deadline = Date.now() + (profilePass ? 2500 : 8000);
                         let lastCount = fieldCount;
                         let stable = 0;
                         while (Date.now() < deadline) {

@@ -45,7 +45,8 @@ import {
 import { sendBidderExtensionCommand, getLumiBridgeVersion, listenForLumiBridgeReady, listenForBidderQueuePush, reinjectLumiBridge } from '@/lib/bidderExtensionBridge';
 import {
     loadLumiBidderPrefs,
-    processQueuePrefsPayload
+    processQueuePrefsPayload,
+    saveLumiBidderPrefs
 } from '@/lib/lumiBidderPrefs';
 import LumiBidderSettings from '@/components/LumiBidderSettings';
 import TeachAndCheckPanel from '@/components/TeachAndCheckPanel';
@@ -449,7 +450,7 @@ function primaryJobUrl(row) {
     return row?.job_apply_url || row?.source_url || row?.job_url || '';
 }
 
-function rememberedBidLinks(links) {
+function rememberedBidLinks(links, profileId) {
     return (links || []).map((link) => ({
         id: link.id,
         techstack: link.techstack,
@@ -467,7 +468,16 @@ function rememberedBidLinks(links) {
                 draft_html: p.draft_html || lookupCvDraft(p.resume_filename)?.html || null,
                 application_id: p.application_id || null
             }))
-    })).filter((row) => row.job_apply_url && row.available_profiles.length);
+    })).map((row) => (
+        profileId
+            ? {
+                ...row,
+                available_profiles: row.available_profiles.filter(
+                    (p) => String(p.profile_id) === String(profileId)
+                )
+            }
+            : row
+    )).filter((row) => row.job_apply_url && row.available_profiles.length);
 }
 
 function readyItemsFromLinks(links, profileId) {
@@ -1256,7 +1266,7 @@ export default function AutoBidderDialog({
                 job_link_ids: jobLinkIds.join(',')
             };
             if (profileId) params.profile_id = profileId;
-            const remembered = rememberedBidLinks(selectedLinks);
+            const remembered = rememberedBidLinks(selectedLinks, profileId);
             if (remembered.length) params.remembered = remembered;
             const { data } = await userAPI.listBidderReady(params);
             const skipped = data?.filter?.skipped_eligibility || [];
@@ -2532,15 +2542,26 @@ export default function AutoBidderDialog({
             await new Promise((r) => setTimeout(r, 500));
         }
 
-        // Dialog closes + monitor opens only after Lumi confirms the queue started (see runExt).
+        // One Start runs every selected job: fill, submit, and continue. No review click.
+        const handsFree = {
+            ...lumiPrefs,
+            unattended: true,
+            autoSubmit: true,
+            autoNext: true,
+            reviewOnlyMode: false,
+            requirePacketBeforeProcess: false,
+            captchaFocus: false
+        };
+        setLumiPrefs((prev) => ({ ...prev, ...handsFree }));
+        void saveLumiBidderPrefs(handsFree).catch(() => {});
         return runExt('JOB_APPLY_BIDDER_PROCESS_QUEUE', 'Starting selected bids', {
             jobLinkIds,
             applicationIds,
-            remembered: rememberedBidLinks(selectedLinks),
+            remembered: rememberedBidLinks(selectedLinks, profileId),
             token,
             user,
             selectedProfileId: Number(profileId),
-            ...processQueuePrefsPayload(lumiPrefs)
+            ...processQueuePrefsPayload(handsFree)
         });
     };
 

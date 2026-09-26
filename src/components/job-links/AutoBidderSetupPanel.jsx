@@ -104,6 +104,7 @@ export default function AutoBidderSetupPanel({
     const modeLabel = unattended ? 'Hands-free' : 'Attended';
     const prefsHint = [
         modeLabel,
+        lumiPrefs?.autoSubmit ? 'auto-submit' : null,
         lumiPrefsAutoNext ? 'auto-next' : null,
         captchaHelper ? 'CAPTCHA' : null,
         uploadCoverLetter ? 'cover' : null,
