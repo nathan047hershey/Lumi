@@ -1594,12 +1594,14 @@ function JobLinks({ embedded = false }) {
     const [bulkCopied, setBulkCopied] = useState(false);
     const [autoBidderOpen, setAutoBidderOpen] = useState(false);
     const [autoBidderMounted, setAutoBidderMounted] = useState(() => readBidMonitorActive());
+    const [lumiPanelToken, setLumiPanelToken] = useState(0);
     const [biddingBanner, setBiddingBanner] = useState('');
     const isAdminPath = location.pathname.startsWith('/admin');
 
     const openAutoBidder = useCallback(() => {
         setAutoBidderMounted(true);
-        setAutoBidderOpen(true);
+        setAutoBidderOpen(false);
+        setLumiPanelToken((n) => n + 1);
     }, []);
 
     useEffect(() => {
@@ -2454,6 +2456,7 @@ function JobLinks({ embedded = false }) {
                     <AutoBidderDialog
                         open={autoBidderOpen}
                         onOpenChange={setAutoBidderOpen}
+                        panelToken={lumiPanelToken}
                         isAdmin={isAdminPath}
                         selectedLinks={rows
                             .filter((r) => selectedIds.has(r.id))

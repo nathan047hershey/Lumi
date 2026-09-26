@@ -586,7 +586,7 @@ function profileStatusSuffix(p, bidOutcome) {
  * Job Links Auto Bidder — bid selected links only, manage Bid Courses in-popup.
  * @param {object[]} selectedLinks — [{ id, company_name, position_title, job_url, available_profiles? }]
  */
-export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selectedLinks = [] }) {
+export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selectedLinks = [], panelToken = 0 }) {
     const coursesApi = isAdmin ? adminAPI : userAPI;
     const [courses, setCourses] = useState([]);
     const [outcomeFilter, setOutcomeFilter] = useState('all'); // all|success|failed|filled|attention|running
@@ -683,6 +683,7 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
     const [lightboxShot, setLightboxShot] = useState(null);
     const [queueState, setQueueState] = useState(null);
     const [dockOpen, setDockOpen] = useState(false);
+    const seenPanelTokenRef = useRef(0);
     const [dockMinimized, setDockMinimized] = useState(() => readMonitorStorage().minimized);
     const [monitorFrameFollowLive, setMonitorFrameFollowLive] = useState(true);
     const [monitorFrameIndex, setMonitorFrameIndex] = useState(0);
@@ -698,6 +699,14 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             writeMonitorStorage({ active: false });
         }
     }, [monitorActive, dockMinimized]);
+
+    useEffect(() => {
+        if (!panelToken || panelToken === seenPanelTokenRef.current) return;
+        seenPanelTokenRef.current = panelToken;
+        setDockOpen(true);
+        setDockMinimized(false);
+        onOpenChange?.(false);
+    }, [panelToken, onOpenChange]);
 
     useEffect(() => {
         if (selectedId) writeMonitorStorage({ courseId: Number(selectedId) });
@@ -3543,7 +3552,10 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
                 setDockMinimized(v);
                 writeMonitorStorage({ minimized: !!v });
             }}
-            onExpandDialog={() => onOpenChange?.(true)}
+            onExpandDialog={() => {
+                setWorkspaceTab(selectedId ? 'log' : 'courses');
+                onOpenChange?.(true);
+            }}
             onFullscreen={() => activeMonitorShot && openLightbox(activeMonitorShot)}
             title={dockTitle}
             statusLine={dockStatus}

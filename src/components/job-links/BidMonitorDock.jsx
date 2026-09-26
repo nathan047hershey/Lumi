@@ -803,8 +803,8 @@ export default function BidMonitorDock({
                 <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 text-white/45 hover:bg-white/10 hover:text-white" title={minimized ? 'Expand' : 'Minimize'} onClick={() => onMinimizedChange?.(!minimized)}>
                     {minimized ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
                 </Button>
-                <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 text-white/45 hover:bg-white/10 hover:text-white" title="Open setup" onClick={onExpandDialog}>
-                    <ExternalLink className="h-3.5 w-3.5" />
+                <Button type="button" size="sm" variant="ghost" className="h-7 gap-1 px-2 text-[11px] text-white/70 hover:bg-white/10 hover:text-white" title="Open the bid log" onClick={onExpandDialog}>
+                    More view
                 </Button>
                 <Button type="button" size="sm" variant="ghost" className="h-7 w-7 p-0 text-white/45 hover:bg-white/10 hover:text-white" title="Close" onClick={onClose}>
                     <X className="h-3.5 w-3.5" />
