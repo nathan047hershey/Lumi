@@ -408,7 +408,7 @@ function AdminResumeTemplates() {
 
                 <section
                     className={cn(
-                        'overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
+                        'overflow-hidden lumi-panel p-4 sm:p-5',
                         'shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]'
                     )}
                 >
@@ -560,7 +560,7 @@ function AdminResumeTemplates() {
                             <Fragment key={t.id}>
                                 <article
                                     className={cn(
-                                        'overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
+                                        'overflow-hidden lumi-panel p-4',
                                         'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]'
                                     )}
                                 >

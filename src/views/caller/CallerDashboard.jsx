@@ -153,7 +153,7 @@ function CallerDashboard() {
                         {applications.map((app) => (
                             <div
                                 key={app.id}
-                                className="group relative overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]"
+                                className="group relative overflow-hidden lumi-panel transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]"
                             >
                                 <div className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
                                     <div className="min-w-0 flex-1 space-y-2">

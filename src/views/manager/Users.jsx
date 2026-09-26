@@ -203,7 +203,7 @@ function ManagerUsers() {
                         {users.map((user) => (
                             <div
                                 key={user.id}
-                                className="flex flex-col gap-3 rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] px-4 py-3 transition-all hover:border-primary/30 sm:flex-row sm:items-center sm:justify-between"
+                                className="flex flex-col gap-3 lumi-panel px-4 py-3 transition-all hover:border-primary/30 sm:flex-row sm:items-center sm:justify-between"
                             >
                                 <div className="min-w-0">
                                     <div className="flex flex-wrap items-center gap-2">

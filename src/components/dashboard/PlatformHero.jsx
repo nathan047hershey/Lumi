@@ -33,7 +33,7 @@ function MetricCell({ icon: Icon, value, label, accent }) {
 export default function PlatformHero({ users, profiles, assignments, loading }) {
     if (loading) {
         return (
-            <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.88)] shadow-[0_16px_48px_-28px_rgba(0,0,0,0.7)]">
+            <div className="overflow-hidden lumi-panel shadow-[0_16px_48px_-28px_rgba(0,0,0,0.7)]">
                 <div className="grid grid-cols-1 divide-y divide-white/[0.06] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                     {[...Array(3)].map((_, i) => (
                         <div key={i} className="flex items-center gap-3 px-5 py-4">
@@ -53,7 +53,7 @@ export default function PlatformHero({ users, profiles, assignments, loading }) 
     }
 
     return (
-        <div className="overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.88)] shadow-[0_16px_48px_-28px_rgba(0,0,0,0.7)]">
+        <div className="overflow-hidden lumi-panel shadow-[0_16px_48px_-28px_rgba(0,0,0,0.7)]">
             <div className="grid grid-cols-1 divide-y divide-white/[0.06] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
                 <MetricCell icon={Users} value={users} label="Team members" accent="primary" />
                 <MetricCell icon={ClipboardList} value={profiles} label="Candidate profiles" accent="success" />

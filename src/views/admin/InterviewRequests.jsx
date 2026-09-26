@@ -1609,7 +1609,7 @@ function InterviewRequestsPage({ embedded = false }) {
                                 'group flex items-center gap-3 rounded-2xl border p-3 text-left backdrop-blur-sm transition-all',
                                 isActive
                                     ? 'border-primary/40 bg-primary/10 ring-1 ring-primary/30'
-                                    : 'border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] hover:border-primary/30'
+                                    : 'lumi-panel hover:border-primary/30'
                             )}
                         >
                             <div
@@ -1701,7 +1701,7 @@ function InterviewRequestsPage({ embedded = false }) {
                                     }
                                 }}
                                 className={cn(
-                                    'group relative flex cursor-pointer overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] transition-all duration-200',
+                                    'group relative flex cursor-pointer overflow-hidden lumi-panel transition-all duration-200',
                                     'hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] hover:shadow-lg hover:shadow-primary/10'
                                 )}
                             >

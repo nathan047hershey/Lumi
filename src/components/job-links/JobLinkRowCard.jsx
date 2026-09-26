@@ -249,8 +249,7 @@ export default function JobLinkRowCard({
     return (
         <article
             className={cn(
-                'rounded-2xl border border-white/[0.08] bg-[hsl(222_22%_11%)] shadow-[0_10px_30px_-24px_rgba(0,0,0,0.8)] transition',
-                'hover:border-primary/35 hover:bg-[hsl(222_22%_13%)]',
+                'lumi-row transition',
                 selected && 'border-primary/50 bg-primary/[0.08]',
                 busy && 'border-sky-500/30'
             )}

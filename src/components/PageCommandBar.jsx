@@ -41,7 +41,7 @@ export default function PageCommandBar({
     return (
         <div
             className={cn(
-                'rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.85)] p-3 shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)] backdrop-blur-sm sm:p-4',
+                'lumi-panel p-3 sm:p-4',
                 className
             )}
         >

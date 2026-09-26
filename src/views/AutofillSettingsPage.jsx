@@ -185,7 +185,7 @@ export default function AutofillSettingsPage() {
                 <section
                     id="lumi-bidder-settings"
                     className={cn(
-                        'scroll-mt-6 overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
+                        'scroll-mt-6 overflow-hidden lumi-panel p-4 sm:p-5',
                         'shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]'
                     )}
                 >
@@ -221,7 +221,7 @@ export default function AutofillSettingsPage() {
                 <section
                     id="bidder-autofill-settings"
                     className={cn(
-                        'scroll-mt-6 overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4 sm:p-5',
+                        'scroll-mt-6 overflow-hidden lumi-panel p-4 sm:p-5',
                         'shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]'
                     )}
                 >

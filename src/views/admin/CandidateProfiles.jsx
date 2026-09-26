@@ -161,7 +161,7 @@ function CandidateProfiles() {
                                 <article
                                     key={profile.id}
                                     className={cn(
-                                        'group flex flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
+                                        'group flex flex-col overflow-hidden lumi-panel p-4',
                                         'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] hover:shadow-lg hover:shadow-primary/10'
                                     )}
                                 >

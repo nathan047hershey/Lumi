@@ -23,9 +23,9 @@ export default function AppPage({
     const showTitleHeader = !!(title || icon || description || meta || actions);
 
     return (
-        <div className={cn('flex min-h-full w-full flex-col', className)}>
+        <div className={cn(flush ? 'flex min-h-full w-full flex-col' : 'lumi-page', className)}>
             {showTitleHeader && (
-                <div className="sticky top-0 z-20 shrink-0 border-b border-white/[0.06] bg-[hsl(222_28%_6%/0.92)] px-3 py-3 backdrop-blur-xl sm:px-4 lg:px-5">
+                <header className="lumi-page-head">
                     <PageHeader
                         icon={icon}
                         title={title}
@@ -33,22 +33,20 @@ export default function AppPage({
                         meta={meta}
                         actions={actions}
                     />
-                </div>
+                </header>
             )}
 
-            {/* Legacy filters slot — prefer PageCommandBar inside children */}
             {filters && !embedded && (
-                <div className="shrink-0 border-b border-white/[0.06] bg-black/15 px-4 py-3 sm:px-6 lg:px-8">
+                <div className="lumi-panel px-4 py-3">
                     {filters}
                 </div>
             )}
 
-            <div className={cn('min-h-0 flex-1', flush ? 'flex flex-col' : 'px-3 py-3 sm:px-4 sm:py-4 lg:px-5')}>
-                {/* When embedded + legacy filters/actions were passed, fold into content top */}
+            <div className={cn('lumi-page-body min-h-0', flush && 'flex flex-1 flex-col')}>
                 {embedded && (actions || filters) ? (
                     <div className="mb-4 space-y-3">
                         {actions || filters ? (
-                            <div className="rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.85)] p-3 sm:p-4">
+                            <div className="lumi-panel p-3 sm:p-4">
                                 {actions ? (
                                     <div className="mb-3 flex flex-wrap items-center justify-end gap-2">
                                         {actions}
@@ -65,9 +63,9 @@ export default function AppPage({
             </div>
 
             {footer && (
-                <div className="shrink-0 border-t border-white/[0.06] px-4 py-3 font-mono text-xs text-white/35 sm:px-6 lg:px-8">
+                <footer className="lumi-page-foot">
                     {footer}
-                </div>
+                </footer>
             )}
         </div>
     );

@@ -883,7 +883,7 @@ function KpiTile({ label, value, Icon, accent, subtitle }) {
     };
     const cls = accent ? accentMap[accent] : 'border-white/[0.07]';
     return (
-        <div className={cn('rounded-2xl border bg-[hsl(222_24%_9%/0.75)] p-3 shadow-[0_16px_48px_-28px_rgba(0,0,0,0.65)]', cls)}>
+        <div className={cn('lumi-panel p-3', cls)}>
             <div className="flex items-center justify-between">
                 <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{label}</span>
                 {Icon && <Icon className="h-4 w-4 opacity-70" />}

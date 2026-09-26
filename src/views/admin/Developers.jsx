@@ -319,7 +319,7 @@ function DeveloperCard({ row, onEdit }) {
     return (
         <article
             className={cn(
-                'flex flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
+                'flex flex-col overflow-hidden lumi-panel p-4',
                 'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)] hover:shadow-lg hover:shadow-primary/10'
             )}
         >
@@ -738,7 +738,7 @@ function KpiTile({ label, value, Icon, accent }) {
     };
     const cls = accent ? accentMap[accent] : 'border-white/[0.07] text-white';
     return (
-        <div className={cn('rounded-2xl border bg-[hsl(222_24%_9%/0.75)] p-3 backdrop-blur-sm', cls)}>
+        <div className={cn('lumi-panel p-3', cls)}>
             <div className="flex items-center justify-between">
                 <span className="text-[11px] font-medium text-white/45">{label}</span>
                 {Icon && <Icon className="h-4 w-4 opacity-70" />}

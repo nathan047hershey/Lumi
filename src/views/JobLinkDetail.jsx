@@ -851,7 +851,7 @@ export default function JobLinkDetail() {
 
     return (
         <AppPage flush>
-        <div className="space-y-4 px-6 py-4 lg:px-8">
+        <div className="lumi-page">
             {/* Sticky toolbar — back, filters, prev/next */}
             <Card className="sticky top-0 z-20 border-border/80 bg-background/95 shadow-sm backdrop-blur supports-[backdrop-filter]:bg-background/90">
                 <CardContent className="space-y-3 p-4">

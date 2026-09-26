@@ -30,7 +30,7 @@ export default function PageHeader({
                         </span>
                     ) : null}
                     {title ? (
-                        <h1 className="font-display text-xl font-semibold tracking-tight text-white sm:text-2xl">
+                        <h1 className="font-display text-[1.65rem] font-semibold leading-none tracking-tight text-white">
                             {title}
                         </h1>
                     ) : null}

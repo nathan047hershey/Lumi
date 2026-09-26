@@ -97,8 +97,7 @@ export default function ApplicationRowCard({
     return (
         <article
             className={cn(
-                'group relative flex overflow-hidden rounded-xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] transition-colors',
-                'hover:border-primary/30 hover:bg-[hsl(222_24%_11%/0.9)]',
+                'lumi-row group relative flex overflow-hidden transition-colors',
                 selected && 'border-primary/40 bg-primary/5 ring-1 ring-primary/20'
             )}
         >

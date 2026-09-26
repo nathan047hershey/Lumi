@@ -195,7 +195,7 @@ function UserManagement() {
                                 <article
                                     key={user.id}
                                     className={cn(
-                                        'overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.75)] p-4',
+                                        'overflow-hidden lumi-panel p-4',
                                         'transition-all hover:border-primary/35 hover:bg-[hsl(222_24%_11%/0.9)]'
                                     )}
                                 >

@@ -403,7 +403,7 @@ function BidCourses({ embedded = false }) {
                     <aside
                         data-testid="bid-course-list"
                         className={cn(
-                        'flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.72)]',
+                        'flex min-h-0 flex-col overflow-hidden lumi-panel',
                         id ? 'hidden lg:flex' : 'flex'
                     )}
                     >
@@ -496,7 +496,7 @@ function BidCourses({ embedded = false }) {
                     <section
                         data-testid="bid-course-detail"
                         className={cn(
-                        'flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/[0.07] bg-[hsl(222_24%_9%/0.55)]',
+                        'flex min-h-0 flex-col overflow-hidden lumi-panel',
                         !id ? 'hidden min-h-[16rem] lg:flex' : 'flex'
                     )}
                     >
