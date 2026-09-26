@@ -50,7 +50,6 @@ import LumiBidderSettings from '@/components/LumiBidderSettings';
 import TeachAndCheckPanel from '@/components/TeachAndCheckPanel';
 import BidMonitorDock from '@/components/job-links/BidMonitorDock';
 import AutoBidderSetupPanel from '@/components/job-links/AutoBidderSetupPanel';
-import { ensurePacketsReady } from '@/components/job-links/ApplicationPacketPanel';
 import BidProgressBar from '@/components/job-links/BidProgressBar';
 import {
     detectAtsFromUrl,
@@ -2438,39 +2437,10 @@ export default function AutoBidderDialog({ open, onOpenChange, isAdmin, selected
             return;
         }
 
-        if (requirePacketBeforeProcess) {
-            setBusy(true);
-            setError('');
-            setStatus('Preparing application packets…');
-            try {
-                const appIds = bidReady.map((r) => r.id).filter(Boolean);
-                const packetResult = await ensurePacketsReady({
-                    profileId,
-                    applicationIds: appIds
-                });
-                if (!packetResult.ok) {
-                    setError(packetResult.error || 'Application packet is not ready — review policy answers in Setup.');
-                    setStatus('');
-                    setBusy(false);
-                    return;
-                }
-                setPacketStatus({
-                    ready: true,
-                    total: packetResult.items?.length || appIds.length,
-                    items: packetResult.items || []
-                });
-                if (packetResult.prepared) {
-                    setStatus('Packets prepared — starting bids…');
-                }
-            } catch (err) {
-                setError(err?.response?.data?.error || err?.message || 'Packet preparation failed');
-                setStatus('');
-                setBusy(false);
-                return;
-            } finally {
-                setBusy(false);
-            }
-        }
+        // Start the apply tab immediately. Packet AI used to run here first and
+        // held this click for 1–5 minutes. The extension fills the profile while
+        // answers generate, and it reuses any packet already saved.
+        setStatus('Starting bids…');
 
         // Follow the active queue course in Live monitor (clear prior manual pick).
         selectedIdTouchedRef.current = false;
