@@ -2942,6 +2942,34 @@ function urlsSameApplyJob(a, b) {
     }
 }
 
+/** Open the apply page as a normal visible tab. Do not hide it in a background window. */
+async function openVisibleApplyTab(url) {
+    const applyUrl = isAshbyJobDescriptionUrl(url) ? ashbyApplicationUrl(url) : String(url || '').trim();
+    if (!/^https?:\/\//i.test(applyUrl)) return null;
+    const existing = await findLiveApplyTabForUrl(applyUrl);
+    if (existing?.id) {
+        await chrome.tabs.update(existing.id, { active: true }).catch(() => {});
+        if (existing.windowId != null) {
+            await chrome.windows.update(existing.windowId, { focused: true }).catch(() => {});
+        }
+        return { tabId: existing.id, url: applyUrl, windowId: existing.windowId, reused: true };
+    }
+    let windowId;
+    try {
+        const win = await chrome.windows.getLastFocused({ windowTypes: ['normal'] });
+        windowId = win?.id;
+    } catch (_) { /* create in the default window */ }
+    const tab = await chrome.tabs.create({
+        url: applyUrl,
+        active: true,
+        ...(windowId ? { windowId } : {})
+    });
+    if (tab?.windowId != null) {
+        await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+    }
+    return tab?.id ? { tabId: tab.id, url: applyUrl, windowId: tab.windowId, reused: false } : null;
+}
+
 /** Find an open Chrome tab for this job URL (any window) — recovers after false Tab closed. */
 async function findLiveApplyTabForUrl(wantedUrl) {
     const wanted = String(wantedUrl || '').trim();
@@ -3333,11 +3361,6 @@ async function openReadyApplication(item, { fromQueue = false } = {}) {
     const settings = await getSettings();
     const prefs = await getBidderPrefs();
 
-    // Wait for CV if somehow not ready
-    if (!item.resume_filename) {
-        throw new Error('CV not ready yet — wait for generation');
-    }
-
     // Save a local CV copy without blocking the apply tab. The fill downloads
     // the file again when it uploads; waiting here left Start sitting before the page opened.
     void (async () => {
@@ -3372,6 +3395,9 @@ async function openReadyApplication(item, { fromQueue = false } = {}) {
     const applyUrl = isAshbyJobDescriptionUrl(item.open_url)
         ? ashbyApplicationUrl(item.open_url)
         : item.open_url;
+
+    const openedTab = await openVisibleApplyTab(applyUrl);
+    if (!openedTab?.tabId) throw new Error('Could not open the job tab');
 
     await rememberCvForJob({
         jobUrl: applyUrl,
@@ -3416,45 +3442,13 @@ async function openReadyApplication(item, { fromQueue = false } = {}) {
     await logCourseEvent(item.id, 'opened', {
         url: applyUrl,
         fromQueue,
-        stayInApp: true,
+        stayInApp: false,
         ashbyApplication: applyUrl !== item.open_url,
-        bgWindow: true
-    });
+        tabId: openedTab.tabId
+    }).catch(() => {});
 
-    // Always open apply pages in a separate unfocused window so the Job Links
-    // tab never redirects. Live monitor stays visible in the app window.
-    let bgWin = await getOrCreateBidderBgWindow();
-    let tab;
-    if (bgWin?.id) {
-        tab = await chrome.tabs.create({
-            windowId: bgWin.id,
-            url: applyUrl,
-            active: false
-        });
-        try { await chrome.windows.update(bgWin.id, { focused: false }); } catch (_) { /* ignore */ }
-    } else {
-        bgWin = await chrome.windows.create({
-            url: applyUrl,
-            focused: false,
-            type: 'normal',
-            width: 1100,
-            height: 800,
-            left: 80,
-            top: 80
-        });
-        tab = bgWin.tabs?.[0];
-        try {
-            await chrome.storage.session.set({ bidderBgWindowId: bgWin.id });
-        } catch (_) { /* ignore */ }
-    }
-    // Do not yank Job Links (or any other window) to the front — user may be in Gmail/etc.
-    try { await chrome.windows.update(bgWin.id, { focused: false }); } catch (_) { /* ignore */ }
-
-    await notify(
-        'Apply page opened',
-        'Bidder — background window. You can keep using other tabs; watch Live monitor.'
-    );
-    return { ok: true, tabId: tab.id, url: applyUrl, windowId: bgWin.id };
+    await notify('Apply page opened', item.company_name || 'Job site').catch(() => {});
+    return { ok: true, tabId: openedTab.tabId, url: applyUrl, windowId: openedTab.windowId };
 }
 
 /**
@@ -3655,7 +3649,17 @@ async function processReadyQueue(opts = {}) {
                 await setQueueState({ running: false, status: 'auth', error: 'login_required' });
                 throw new Error('Session expired — pause and log in on Job Links, then Process again');
             }
-            throw err;
+            console.warn('[bidder] ready list', err?.message || err);
+        }
+        if (!items.length && Array.isArray(opts.readyItems)) {
+            items = opts.readyItems.filter((it) => (
+                it?.id
+                && (it.open_url || it.job_url)
+                && (!selectedProfileId || Number(it.profile_id) === selectedProfileId)
+            )).map((it) => ({
+                ...it,
+                open_url: it.open_url || it.job_url
+            }));
         }
 
         if (!items.length) {
@@ -6169,6 +6173,27 @@ async function tryCreateAtsAccount(tabId, profileEmail) {
 const engineKickByTab = new Map();
 const engineRanTabs = new Set();
 
+/** The apply form is often inside a Greenhouse iframe, not the top job-site page. */
+async function findApplyEngineFrame(tabId) {
+    const probes = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: () => ({
+            engine: !!window.__lumiBidderEngineV1,
+            ats: window.__lumiFillShared?.detectAts?.() || '',
+            href: String(location.href || ''),
+            fields: document.querySelectorAll('input, textarea, select').length
+        })
+    }).catch(() => []);
+    const rows = (probes || []).map((p) => ({
+        frameId: p.frameId,
+        ...(p.result || {})
+    }));
+    const greenhouse = rows.find((r) => r.ats === 'greenhouse' || /greenhouse\.io/i.test(r.href || ''));
+    if (greenhouse) return greenhouse;
+    rows.sort((a, b) => (b.fields || 0) - (a.fields || 0));
+    return rows[0] || { frameId: 0, ats: '', fields: 0, engine: false, href: '' };
+}
+
 /** Start the fill engine on the open job page. Do not wait for CV, lessons, or AI answers. */
 async function startJobFillEngine(tabId, item) {
     if (engineKickByTab.has(tabId)) return engineKickByTab.get(tabId);
@@ -6202,10 +6227,12 @@ async function startJobFillEngine(tabId, item) {
                 await new Promise((r) => setTimeout(r, 300));
                 continue;
             }
-            await typeKnownProfileIntoForm(tabId, { ...item, ...profile }, { attempts: 1 }).catch(() => {});
-            if (tab.status === 'complete') {
+            const frame = await findApplyEngineFrame(tabId).catch(() => ({ frameId: 0, ats: '', fields: 0 }));
+            const frameId = Number.isInteger(frame?.frameId) ? frame.frameId : 0;
+            await typeKnownProfileIntoForm(tabId, { ...item, ...profile }, { attempts: 1, frameId }).catch(() => {});
+            if (tab.status === 'complete' && !frame?.engine) {
                 await chrome.scripting.executeScript({
-                    target: { tabId, frameIds: [0] },
+                    target: { tabId, frameIds: [frameId] },
                     files: [
                         'content/controlMatch.js',
                         'content/fillShared.js',
@@ -6217,14 +6244,32 @@ async function startJobFillEngine(tabId, item) {
                     lastError = err?.message || String(err);
                 });
             }
-            const greenhouse = /greenhouse\.io/i.test(url);
-            const message = greenhouse
+            const greenhouse = /greenhouse\.io/i.test(url) || /greenhouse\.io/i.test(frame?.href || '') || frame?.ats === 'greenhouse';
+            let info = null;
+            try {
+                info = await Promise.race([
+                    chrome.tabs.sendMessage(tabId, { type: 'BIDDER_ENGINE_INFO' }, { frameId }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('engine_info_timeout')), 1500))
+                ]);
+            } catch (err) {
+                lastError = err?.message || String(err);
+                await new Promise((r) => setTimeout(r, 400));
+                continue;
+            }
+            if (!info?.ok) {
+                lastError = 'engine_not_listening';
+                await new Promise((r) => setTimeout(r, 400));
+                continue;
+            }
+            const useGreenhouse = greenhouse || info.ats === 'greenhouse';
+            const message = useGreenhouse
                 ? {
                     type: 'BIDDER_ENGINE_RUN',
                     payload: {
                         profile,
                         answers: [],
                         autoSubmit: false,
+                        kick: true,
                         applicationId: item.id,
                         bidDeadline: Date.now() + 90000
                     }
@@ -6237,28 +6282,38 @@ async function startJobFillEngine(tabId, item) {
                         autoSubmit: false,
                         skipFiles: true,
                         skipQuestions: true,
-                        profileOnly: true
+                        profileOnly: true,
+                        kick: true
                     }
                 };
-            let rejected = false;
-            const pending = chrome.tabs.sendMessage(tabId, message, { frameId: 0 }).catch((err) => {
-                rejected = true;
+            let ack = null;
+            try {
+                ack = await Promise.race([
+                    chrome.tabs.sendMessage(tabId, message, { frameId }),
+                    new Promise((_, reject) => setTimeout(() => reject(new Error('engine_ack_timeout')), 2000))
+                ]);
+            } catch (err) {
                 lastError = err?.message || String(err);
-                return null;
-            });
-            await Promise.race([
-                pending,
-                new Promise((resolve) => setTimeout(resolve, 600))
-            ]);
-            if (rejected) {
-                await new Promise((r) => setTimeout(r, 350));
+                await new Promise((r) => setTimeout(r, 400));
+                continue;
+            }
+            if (useGreenhouse && ack?.useAutofill) {
+                lastError = 'use_autofill';
+                await new Promise((r) => setTimeout(r, 400));
+                continue;
+            }
+            if (!ack?.ok || ack.started === false) {
+                lastError = ack?.error || 'engine_did_not_ack';
+                await new Promise((r) => setTimeout(r, 400));
                 continue;
             }
             engineRanTabs.add(tabId);
             await logCourseEvent(item.id, 'engine_started', {
                 url,
-                greenhouse,
-                engine: greenhouse ? 'bidder-engine-v1' : 'autofill'
+                frameId,
+                frameUrl: frame?.href || '',
+                greenhouse: useGreenhouse,
+                engine: useGreenhouse ? 'bidder-engine-v1' : 'autofill'
             }).catch(() => {});
             await setWorkProgress({
                 kind: 'queue',
@@ -6303,9 +6358,10 @@ async function typeKnownProfileIntoForm(tabId, item, opts = {}) {
     };
     const typeOnce = async (who) => {
         if (!who?.first && !who?.last && !who?.email && !who?.phone) return { filled: 0 };
+        const frameId = Number.isInteger(opts.frameId) ? opts.frameId : 0;
         const injected = await Promise.race([
             chrome.scripting.executeScript({
-            target: { tabId },
+            target: frameId ? { tabId, frameIds: [frameId] } : { tabId },
             func: (person) => {
                 const setVal = (el, value) => {
                     const str = String(value || '');
@@ -8114,11 +8170,11 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         && !collectedPack.softHandoff
         && !questions.length
     ) {
-        throw new Error(
-            collectedPack.collected?.reason
-            || collectedPack.collected?.error
-            || 'Bidder collect failed'
-        );
+        await logCourseEvent(item.id, 'engine_collect_empty', {
+            reason: collectedPack.collected?.reason
+                || collectedPack.collected?.error
+                || 'collect_empty'
+        }).catch(() => {});
     }
     if (!useGreenhouseEngine && !questions.length) {
         if (!formSnap) formSnap = await collectForm(tabId).catch(() => null);
@@ -8917,7 +8973,7 @@ chrome.commands.onCommand.addListener((command) => {
     }
 });
 
-chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+function handleExtensionMessage(msg, _sender, sendResponse) {
     if (msg?.type === 'GET_CAPTURED_QUESTIONS') {
         getLatestCapturedPack()
             .then((pack) => sendResponse({ ok: true, pack }))
@@ -9262,6 +9318,18 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
             let acked = false;
             try {
                 // Sync web-app session into the extension before listing ready apps.
+                const openUrls = [
+                    ...(Array.isArray(msg.openUrls) ? msg.openUrls : []),
+                    ...(Array.isArray(msg.remembered)
+                        ? msg.remembered.map((row) => row?.job_apply_url || row?.source_url || '')
+                        : [])
+                ].map((u) => String(u || '').trim()).filter((u) => /^https?:\/\//i.test(u));
+                if (openUrls[0]) {
+                    await openVisibleApplyTab(openUrls[0]).catch((err) => {
+                        console.warn('[bidder] open tab on start', err?.message || err);
+                    });
+                }
+
                 if (msg.token) {
                     const patch = { token: String(msg.token) };
                     if (msg.user && typeof msg.user === 'object') patch.user = msg.user;
@@ -9312,6 +9380,7 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
                     applicationIds,
                     profileId: msg.selectedProfileId,
                     remembered: Array.isArray(msg.remembered) ? msg.remembered : null,
+                    readyItems: Array.isArray(msg.readyItems) ? msg.readyItems : null,
                     uploadCoverLetter: msg.uploadCoverLetter,
                     stayInApp: msg.stayInApp,
                     unattended: msg.unattended,
@@ -10933,7 +11002,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return true;
     }
     return false;
-});
+}
+
+chrome.runtime.onMessage.addListener(handleExtensionMessage);
 
 async function reinjectAppBridgeIntoAppTabs() {
     const patterns = APP_TAB_QUERY_PATTERNS;
@@ -11022,8 +11093,8 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
     }
-    sendResponse({ ok: false, error: 'unsupported_external_type' });
-    return false;
+    const keep = handleExtensionMessage(msg, sender, sendResponse);
+    return keep === true;
 });
 
 // When the service worker wakes after an update/reload, try once.

@@ -99,6 +99,43 @@ function getAccessibleApplication(applicationId, req) {
     `, [id, req.user.id]);
 }
 
+function restoreBidderRemembered(remembered, userId) {
+    if (!Array.isArray(remembered) || !remembered.length) return;
+    try {
+        const {
+            restoreRememberedJobLinks,
+            restoreRememberedApplications
+        } = require('../services/jobLinkRestore');
+        restoreRememberedJobLinks(remembered, userId);
+        restoreRememberedApplications(remembered);
+    } catch (err) {
+        console.warn('[bidder] remembered restore skipped:', err.message);
+    }
+}
+
+/**
+ * The page can still hold an application id from an older database.
+ * Recreate the CV from the job the user selected, then use that row.
+ */
+function resolveAccessibleApplication(rawId, profileId, remembered, req) {
+    const direct = getAccessibleApplication(rawId, req);
+    if (direct) return direct;
+    const pid = parseInt(profileId, 10);
+    const linkIds = (Array.isArray(remembered) ? remembered : [])
+        .map((row) => parseInt(row?.id, 10))
+        .filter((n) => Number.isInteger(n) && n > 0);
+    if (!Number.isInteger(pid) || pid <= 0 || !linkIds.length) return null;
+    const row = getOne(
+        `SELECT id FROM job_applications
+          WHERE profile_id = ? AND job_link_id IN (${linkIds.map(() => '?').join(',')})
+          ORDER BY CASE generation_status WHEN 'ready' THEN 0 ELSE 1 END, id DESC
+          LIMIT 1`,
+        [pid, ...linkIds]
+    );
+    if (!row) return null;
+    return getAccessibleApplication(row.id, req);
+}
+
 // ==================== ASSIGNED PROFILES ====================
 
 // GET /api/user/profiles - Get user's assigned profiles (default first)
@@ -3001,11 +3038,20 @@ router.post('/bidder/prepare-packet', async (req, res) => {
         if (!ids.length) {
             return res.status(400).json({ error: 'application_ids array is required' });
         }
+        const remembered = req.body?.remembered;
+        restoreBidderRemembered(remembered, req.user?.id);
+        const resolvedIds = [];
+        const seen = new Set();
         for (const id of ids) {
-            const app = getAccessibleApplication(parseInt(id, 10), req);
-            if (!app) {
-                return res.status(404).json({ error: `Application ${id} not found or not accessible` });
-            }
+            const app = resolveAccessibleApplication(id, profileId, remembered, req);
+            if (!app || seen.has(app.id)) continue;
+            seen.add(app.id);
+            resolvedIds.push(app.id);
+        }
+        if (!resolvedIds.length) {
+            return res.status(404).json({
+                error: `Application ${ids[0]} not found or not accessible`
+            });
         }
 
         const packet = require('../services/bidderPacketService');
@@ -3016,7 +3062,7 @@ router.post('/bidder/prepare-packet', async (req, res) => {
         const result = await withUsageContext(
             { userId: req.user.id, profileId: profile.id, kind: 'bidder_packet' },
             () => packet.preparePacketsForApplications({
-                applicationIds: ids,
+                applicationIds: resolvedIds,
                 profile,
                 userId: req.user.id,
                 forceRegenerate,
@@ -3033,14 +3079,16 @@ router.post('/bidder/prepare-packet', async (req, res) => {
 router.post('/bidder/packet-status', (req, res) => {
     try {
         const ids = Array.isArray(req.body?.application_ids) ? req.body.application_ids : [];
+        const remembered = req.body?.remembered;
+        restoreBidderRemembered(remembered, req.user?.id);
         const packet = require('../services/bidderPacketService');
         const items = [];
+        const seen = new Set();
         for (const raw of ids) {
-            const appId = parseInt(raw, 10);
-            if (!Number.isInteger(appId) || appId <= 0) continue;
-            const app = getAccessibleApplication(appId, req);
-            if (!app) continue;
-            items.push(packet.getPacketStatus(appId));
+            const app = resolveAccessibleApplication(raw, req.body?.profile_id, remembered, req);
+            if (!app || seen.has(app.id)) continue;
+            seen.add(app.id);
+            items.push(packet.getPacketStatus(app.id));
         }
         const ready = items.filter((i) => i.ready).length;
         res.json({
@@ -4165,19 +4213,22 @@ function listBidderReadyHandler(req, res) {
         ${linkClause}
         AND a.generation_status = 'ready'
         AND (
-          COALESCE(a.status, 'pending') = 'pending'
-          OR (${rawIds ? "COALESCE(a.status, '') = 'applied'" : '0'})
+          ${rawIds ? '1' : "COALESCE(a.status, 'pending') = 'pending'"}
         )
         AND (
+          ${rawIds ? '1' : `(
           (a.resume_filename IS NOT NULL AND TRIM(a.resume_filename) <> '')
           OR (a.draft_html IS NOT NULL AND TRIM(a.draft_html) <> '')
+          )`}
         )
         AND (
           (a.job_url IS NOT NULL AND TRIM(a.job_url) <> '')
           OR (jl.job_apply_url IS NOT NULL AND TRIM(jl.job_apply_url) <> '')
           OR (jl.source_url IS NOT NULL AND TRIM(jl.source_url) <> '')
         )
-        AND (a.job_link_id IS NULL OR COALESCE(jl.is_available, 1) = 1)
+        AND (
+          ${rawIds ? '1' : '(a.job_link_id IS NULL OR COALESCE(jl.is_available, 1) = 1)'}
+        )
       ORDER BY a.created_at ASC, a.id ASC
       LIMIT ?
     `, params);

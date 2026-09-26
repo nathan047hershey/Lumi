@@ -3408,6 +3408,11 @@
             };
         }
 
+        const formWaitUntil = Math.min(deadline, started + 20000);
+        while (collectFields().length < 2 && Date.now() < formWaitUntil) {
+            await sleep(400);
+        }
+
         const profile = payload.profile || {};
         const answers = Array.isArray(payload.answers) ? payload.answers : [];
         const answersById = new Map(answers.map((a) => [String(a.id), a.answer || a.value || '']));
@@ -3959,7 +3964,24 @@
             return false;
         }
         if (msg?.type === 'BIDDER_ENGINE_RUN') {
-            runEngine(msg.payload || {})
+            const payload = msg.payload || {};
+            if (payload.kick) {
+                const pageAts = detectAts();
+                if (pageAts !== 'greenhouse') {
+                    sendResponse({
+                        ok: true,
+                        started: false,
+                        useAutofill: true,
+                        ats: pageAts,
+                        engine: ENGINE
+                    });
+                    return false;
+                }
+                sendResponse({ ok: true, started: true, engine: ENGINE, ats: pageAts });
+                runEngine(payload).catch(() => {});
+                return false;
+            }
+            runEngine(payload)
                 .then((result) => sendResponse({ ok: true, result }))
                 .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
             return true;

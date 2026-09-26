@@ -185,8 +185,43 @@
                 if (Array.isArray(event.data?.applicationIds)) {
                     payload.applicationIds = event.data.applicationIds;
                 }
+                if (Array.isArray(event.data?.openUrls)) {
+                    payload.openUrls = event.data.openUrls
+                        .map((u) => String(u || '').trim())
+                        .filter((u) => /^https?:\/\//i.test(u))
+                        .slice(0, 20);
+                }
+                if (Array.isArray(event.data?.readyItems)) {
+                    payload.readyItems = event.data.readyItems.slice(0, 20).map((it) => ({
+                        id: it?.id,
+                        profile_id: it?.profile_id,
+                        company_name: it?.company_name || '',
+                        job_role: it?.job_role || '',
+                        job_url: it?.job_url || it?.open_url || '',
+                        open_url: it?.open_url || it?.job_url || '',
+                        job_link_id: it?.job_link_id || null,
+                        resume_filename: it?.resume_filename || null,
+                        generation_status: it?.generation_status || 'ready',
+                        status: it?.status || 'pending',
+                        first_name: it?.first_name || '',
+                        last_name: it?.last_name || ''
+                    }));
+                }
                 if (Array.isArray(event.data?.remembered)) {
-                    payload.remembered = event.data.remembered;
+                    payload.remembered = event.data.remembered.map((row) => ({
+                        id: row?.id,
+                        techstack: row?.techstack || null,
+                        job_apply_url: row?.job_apply_url || row?.source_url || '',
+                        source_url: row?.source_url || null,
+                        company_name: row?.company_name || null,
+                        position_title: row?.position_title || null,
+                        available_profiles: (row?.available_profiles || []).map((p) => ({
+                            profile_id: p?.profile_id,
+                            generation_status: p?.generation_status,
+                            resume_filename: p?.resume_filename || null,
+                            application_id: p?.application_id || null
+                        }))
+                    }));
                 }
                 if (event.data?.token) payload.token = event.data.token;
                 if (event.data?.user) payload.user = event.data.user;

@@ -487,7 +487,6 @@ function readyItemsFromLinks(links, profileId) {
             String(p.profile_id || p.id) === String(profileId)
             && p.generation_status === 'ready'
             && p.application_id
-            && ['pending', 'applied'].includes(String(p.status || 'pending').toLowerCase())
         ));
         if (!profile) continue;
         const url = primaryJobUrl(link);
@@ -504,6 +503,67 @@ function readyItemsFromLinks(links, profileId) {
             generation_status: 'ready',
             status: 'pending'
         });
+    }
+    return items;
+}
+
+/** One CV per selected job and profile. The first row wins — the server list is queried before the page fallback. */
+function dedupeReadyItems(items) {
+    const byKey = new Map();
+    for (const item of items || []) {
+        if (!item?.id) continue;
+        const linkId = Number(item.job_link_id) || 0;
+        const profile = Number(item.profile_id) || 0;
+        const key = linkId
+            ? `${linkId}:${profile}`
+            : `${profile}:${item.open_url || item.job_url || item.id}`;
+        if (!byKey.has(key)) byKey.set(key, item);
+    }
+    return [...byKey.values()];
+}
+
+function readyItemFromApplication(link, application) {
+    const url = primaryJobUrl(link) || application?.job_url || '';
+    if (!url || !application?.id) return null;
+    const profile = application.profile || {};
+    return {
+        id: application.id,
+        profile_id: Number(application.profile_id || profile.id),
+        first_name: profile.first_name || application.first_name || '',
+        last_name: profile.last_name || application.last_name || '',
+        company_name: application.company_name || link.company_name,
+        job_role: application.job_role || link.position_title,
+        job_url: url,
+        open_url: url,
+        job_link_id: link.id,
+        resume_filename: application.resume_filename || null,
+        draft_html: application.draft_html || null,
+        generation_status: 'ready',
+        status: application.status || 'pending'
+    };
+}
+
+/** Same Ready rows the job page shows, when the bidder list has not caught up. */
+async function readyItemsFromJobApplications(links, profileId) {
+    const items = [];
+    for (const link of links || []) {
+        if (!link?.id || !profileId) continue;
+        let remembered = [link];
+        try {
+            const parsed = JSON.parse(localStorage.getItem('lumi.jobLinks.visible.v1') || 'null');
+            const row = (parsed?.rows || []).find((r) => Number(r.id) === Number(link.id));
+            if (row) remembered = [row];
+        } catch (_) { /* ignore */ }
+        try {
+            const res = await adminAPI.getJobLinkApplications(link.id, { remembered });
+            const apps = res.data?.data?.applications || [];
+            const match = apps.find((app) => (
+                String(app.profile_id || app.profile?.id) === String(profileId)
+                && app.generation_status === 'ready'
+            ));
+            const item = match ? readyItemFromApplication(link, match) : null;
+            if (item) items.push(item);
+        } catch (_) { /* this link stays unresolved */ }
     }
     return items;
 }
@@ -632,6 +692,7 @@ export default function AutoBidderDialog({
     const [detail, setDetail] = useState(null);
     const [readyPreview, setReadyPreview] = useState([]);
     const [readyBlockReason, setReadyBlockReason] = useState('');
+    const readyBlockReasonRef = useRef('');
     const [profiles, setProfiles] = useState([]);
     const [profileId, setProfileId] = useState('');
     const [showAllProfiles, setShowAllProfiles] = useState(false);
@@ -1272,20 +1333,41 @@ export default function AutoBidderDialog({
             const skipped = data?.filter?.skipped_eligibility || [];
             const skippedIds = new Set(skipped.map((s) => Number(s.id)));
             let items = data?.items || [];
-            if (!items.length && profileId) {
-                items = readyItemsFromLinks(selectedLinks, profileId)
-                    .filter((item) => !skippedIds.has(Number(item.id)));
+            if (profileId) {
+                const covered = new Set(items.map((row) => Number(row.job_link_id)));
+                const missing = (selectedLinks || []).filter((link) => (
+                    link?.id && !covered.has(Number(link.id))
+                ));
+                if (missing.length) {
+                    const extra = (await readyItemsFromJobApplications(missing, profileId))
+                        .filter((item) => !skippedIds.has(Number(item.id)));
+                    if (extra.length) items = items.concat(extra);
+                }
             }
+            if (!items.length && profileId) {
+                const fromLinks = readyItemsFromLinks(selectedLinks, profileId)
+                    .filter((item) => !skippedIds.has(Number(item.id)));
+                if (fromLinks.length) items = fromLinks;
+            }
+            items = dedupeReadyItems(items);
+            const reason = items.length
+                ? ''
+                : skipped.map((s) => s.message).filter(Boolean).slice(0, 3).join(' ');
+            readyBlockReasonRef.current = reason;
             setReadyPreview(items);
-            setReadyBlockReason(
-                items.length
-                    ? ''
-                    : skipped.map((s) => s.message).filter(Boolean).slice(0, 3).join(' ')
-            );
+            setReadyBlockReason(reason);
+            return items;
         } catch {
-            const fallback = profileId ? readyItemsFromLinks(selectedLinks, profileId) : [];
+            const fromJobs = profileId
+                ? await readyItemsFromJobApplications(selectedLinks, profileId)
+                : [];
+            const fallback = dedupeReadyItems(fromJobs.length
+                ? fromJobs
+                : (profileId ? readyItemsFromLinks(selectedLinks, profileId) : []));
+            readyBlockReasonRef.current = '';
             setReadyPreview(fallback);
             setReadyBlockReason('');
+            return fallback;
         }
     }, [jobLinkIds, profileId, selectedLinks]);
 
@@ -2436,14 +2518,19 @@ export default function AutoBidderDialog({
             setError('Choose a bid profile first.');
             return;
         }
-        if (!readyPreview.length) {
+        const openUrls = (selectedLinks || []).map((link) => primaryJobUrl(link)).filter(Boolean);
+        if (openUrls[0]) window.open(openUrls[0], '_blank');
+        const freshReady = await loadReadyPreview();
+        const preview = Array.isArray(freshReady) ? freshReady : readyPreview;
+        const startReady = preview.filter((r) => !isUnsupportedAtsLink(r.open_url || r.job_url));
+        if (!preview.length && !openUrls.length) {
             setError(
-                readyBlockReason
+                readyBlockReasonRef.current
                     || 'This profile has no ready CV for the selected link(s). Generate CV until Ready, or pick another profile.'
             );
             return;
         }
-        if (!bidReady.length) {
+        if (!startReady.length && !openUrls.length) {
             const lines = blockedAtsReady.map((item) => {
                 const ats = detectAtsFromUrl(item.open_url || item.job_url);
                 const link = jobLinkById.get(Number(item.job_link_id));
@@ -2491,7 +2578,7 @@ export default function AutoBidderDialog({
         // Create bid courses immediately so the left list shows this job even if fill fails.
         try {
             await Promise.all(
-                bidReady.map((item) => {
+                startReady.map((item) => {
                     const link = jobLinkById.get(Number(item.job_link_id));
                     const company =
                         (item.company_name && !/^unknown$/i.test(item.company_name)
@@ -2518,7 +2605,7 @@ export default function AutoBidderDialog({
             console.warn('[auto-bidder] queue_enqueued log failed', err);
         }
 
-        const applicationIds = bidReady.map((r) => r.id).filter(Boolean);
+        const applicationIds = startReady.map((r) => r.id).filter(Boolean);
         if (blockedAtsReady.length) {
             setStatus(
                 `Processing ${applicationIds.length} job(s). Skipping ${blockedAtsReady.length} unsupported link(s) (e.g. LinkedIn) — see Bid courses for details.`
@@ -2557,7 +2644,29 @@ export default function AutoBidderDialog({
         return runExt('JOB_APPLY_BIDDER_PROCESS_QUEUE', 'Starting selected bids', {
             jobLinkIds,
             applicationIds,
-            remembered: rememberedBidLinks(selectedLinks, profileId),
+            openUrls,
+            readyItems: startReady,
+            remembered: rememberedBidLinks(selectedLinks, profileId).length
+                ? rememberedBidLinks(selectedLinks, profileId)
+                : selectedLinks.map((link) => {
+                    const mine = startReady.filter((item) => Number(item.job_link_id) === Number(link.id));
+                    return {
+                        id: link.id,
+                        techstack: link.techstack,
+                        job_apply_url: primaryJobUrl(link),
+                        source_url: link.source_url || null,
+                        company_name: link.company_name || null,
+                        position_title: link.position_title || null,
+                        job_description: link.job_description || null,
+                        available_profiles: mine.map((item) => ({
+                            profile_id: item.profile_id,
+                            generation_status: 'ready',
+                            resume_filename: item.resume_filename || null,
+                            draft_html: item.draft_html || null,
+                            application_id: item.id
+                        }))
+                    };
+                }).filter((row) => row.job_apply_url && row.available_profiles.length),
             token,
             user,
             selectedProfileId: Number(profileId),

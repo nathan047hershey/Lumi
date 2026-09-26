@@ -8232,6 +8232,21 @@
             return true;
         }
         if (msg?.type === 'FILL_FORM') {
+            const kick = !!msg.payload?.kick;
+            if (kick) {
+                const readyFields = document.querySelectorAll('input, textarea, select').length;
+                const hasIdentity = !!document.querySelector(
+                    '#first_name, input[name="first_name"], input[autocomplete="given-name"], input[type="email"], input[name="email"]'
+                );
+                if (!hasIdentity) {
+                    try {
+                        sendResponse({ ok: true, started: false, reason: 'no_form', fields: readyFields });
+                    } catch (_) { /* port closed */ }
+                    return false;
+                }
+                try { sendResponse({ ok: true, started: true, fields: readyFields }); } catch (_) { /* port closed */ }
+                sendResponse = () => {};
+            }
             (async () => {
                 try {
                     let form = collectForm();
@@ -8471,7 +8486,7 @@
                     sendResponse({ ok: false, error: err?.message || String(err) });
                 }
             })();
-            return true;
+            return !kick;
         }
         if (msg?.type === 'CLICK_SUBMIT') {
             (async () => {

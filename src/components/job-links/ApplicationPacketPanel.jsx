@@ -132,6 +132,19 @@ export default function ApplicationPacketPanel({
         [bidReadyItems]
     );
 
+    const remembered = useMemo(() => bidReadyItems.map((item) => ({
+        id: item.job_link_id,
+        job_apply_url: item.open_url || item.job_url || '',
+        company_name: item.company_name || null,
+        position_title: item.job_role || null,
+        available_profiles: [{
+            profile_id: item.profile_id || profileId,
+            generation_status: 'ready',
+            resume_filename: item.resume_filename || null,
+            application_id: item.id
+        }]
+    })).filter((row) => row.id && row.job_apply_url), [bidReadyItems, profileId]);
+
     const refreshStatus = useCallback(async () => {
         if (!applicationIds.length) {
             setItems([]);
@@ -139,7 +152,11 @@ export default function ApplicationPacketPanel({
             return;
         }
         try {
-            const { data } = await userAPI.getBidderPacketStatus({ application_ids: applicationIds });
+            const { data } = await userAPI.getBidderPacketStatus({
+                application_ids: applicationIds,
+                profile_id: profileId ? Number(profileId) : undefined,
+                remembered
+            });
             const list = data?.items || [];
             setItems(list);
             onStatusChange?.({
@@ -150,7 +167,7 @@ export default function ApplicationPacketPanel({
         } catch (e) {
             setErr(e?.response?.data?.error || e?.message || 'Could not load packet status');
         }
-    }, [applicationIds, onStatusChange]);
+    }, [applicationIds, onStatusChange, profileId, remembered]);
 
     useEffect(() => {
         refreshStatus();
@@ -164,7 +181,8 @@ export default function ApplicationPacketPanel({
             const { data } = await userAPI.prepareBidderPacket({
                 profile_id: Number(profileId),
                 application_ids: applicationIds,
-                force_regenerate: force
+                force_regenerate: force,
+                remembered
             });
             setItems(data?.items || []);
             onStatusChange?.({

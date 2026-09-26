@@ -182,9 +182,9 @@ export function sendBidderExtensionCommand(type, timeoutMs = 8000, extra = {}) {
             try {
                 return await sendViaPostMessage(type, Math.min(timeoutMs, 5000), extra);
             } catch (secondErr) {
-                // Ping/reinject can go external; other commands need a live bridge.
+                // Content bridge is dead after Reload Lumi. Talk to the extension directly.
                 const mapped = PAGE_TO_EXT[type];
-                if (mapped === 'BIDDER_PING' || mapped === 'REINJECT_APP_BRIDGE' || mapped === 'BIDDER_PROBE_CAPTCHA_HELPERS') {
+                if (mapped) {
                     try {
                         return await sendViaExternal(mapped, extra, timeoutMs);
                     } catch (_) { /* fall through */ }
