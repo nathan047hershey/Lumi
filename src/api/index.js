@@ -280,8 +280,8 @@ export const adminAPI = {
         }
         return api.get(`/job-links/${id}/applications`, { params: rest });
     },
-    regenerateApplication: (jobLinkId, appId) =>
-        api.post(`/job-links/${jobLinkId}/applications/${appId}/regenerate`),
+    regenerateApplication: (jobLinkId, appId, body) =>
+        api.post(`/job-links/${jobLinkId}/applications/${appId}/regenerate`, body || {}),
     // Manually enqueue a resume-generation message for a single
     // (profile, job_link) pair. Idempotent server-side: if an
     // application row already exists, the existing id is
@@ -289,8 +289,8 @@ export const adminAPI = {
     // "Matched profiles" panel on the detail page.
     generateForProfile: (jobLinkId, profileId) =>
         api.post(`/admin/job-links/${jobLinkId}/generate/${profileId}`),
-    markApplicationApplied: (jobLinkId, appId) =>
-        api.post(`/job-links/${jobLinkId}/applications/${appId}/apply`),
+    markApplicationApplied: (jobLinkId, appId, body) =>
+        api.post(`/job-links/${jobLinkId}/applications/${appId}/apply`, body || {}),
     // Bulk "Apply to this whole job" — flips every still-pending
     // application under the job_link to 'applied' AND closes the
     // job_link itself (is_available=0). Open to any auth user.

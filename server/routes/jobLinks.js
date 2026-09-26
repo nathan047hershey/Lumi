@@ -1149,33 +1149,121 @@ function applicationsListHandler(req, res) {
 // current admin settings. Used by the detail-page "Regenerate"
 // button.
 // -----------------------------------------------------------------------------
-async function applicationRegenerateHandler(req, res) {
-    try {
-        const jobLinkId = parseInt(req.params.id);
-        const appId = parseInt(req.params.appId);
-        if (!jobLinkId || !appId) return res.status(400).json({ error: 'Invalid id' });
-
-        const application = getOne(
+function findApplicationForJobLink(jobLinkId, appId, profileId) {
+    if (appId && jobLinkId) {
+        const exact = getOne(
             'SELECT * FROM job_applications WHERE id = ? AND job_link_id = ?',
             [appId, jobLinkId]
         );
-        if (!application) return res.status(404).json({ error: 'Application not found' });
+        if (exact) return exact;
+    }
+    if (profileId && jobLinkId) {
+        const byPair = getOne(
+            `SELECT * FROM job_applications
+              WHERE profile_id = ? AND job_link_id = ?
+              ORDER BY id DESC LIMIT 1`,
+            [profileId, jobLinkId]
+        );
+        if (byPair) return byPair;
+    }
+    if (appId) {
+        return getOne('SELECT * FROM job_applications WHERE id = ?', [appId]) || null;
+    }
+    return null;
+}
 
+function ensureApplicationForRegenerate(jobLink, profile, extras = {}) {
+    const intended = jobMatchService.intendedTemplateForProfile(profile);
+    const score = Number.isFinite(Number(extras.match_score)) ? Number(extras.match_score) : null;
+    const ins = runQuery(
+        `INSERT INTO job_applications
+            (profile_id, company_name, job_role, core_skills,
+             job_description, job_url, resume_filename, draft_html, applier_id,
+             status, state, source, job_link_id, match_score,
+             generation_status, template_id, font_family)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending', 'in_progress',
+                 'auto', ?, ?, 'pending', ?, ?)`,
+        [
+            profile.id,
+            jobLink.company_name || 'Unknown',
+            jobLink.position_title || '',
+            jobLink.techstack || '',
+            jobLink.job_description || '',
+            jobLink.job_apply_url || '',
+            extras.resume_filename || null,
+            extras.draft_html || null,
+            jobLink.id,
+            score,
+            intended.templateId || null,
+            intended.font || 'Arial'
+        ]
+    );
+    saveDatabase();
+    return getOne('SELECT * FROM job_applications WHERE id = ?', [ins.lastInsertRowid]);
+}
+
+async function applicationRegenerateHandler(req, res) {
+    try {
+        const jobLinkId = parseInt(req.params.id, 10);
+        const appId = parseInt(req.params.appId, 10);
+        const profileId = parseInt(req.body?.profile_id, 10);
+        if (!jobLinkId || (!appId && !profileId)) {
+            return res.status(400).json({ error: 'Invalid id' });
+        }
+
+        const remembered = req.body?.job_link;
+        if (remembered && typeof remembered === 'object') {
+            try {
+                restoreRememberedJobLinks(
+                    [{ ...remembered, id: jobLinkId }],
+                    req.user && req.user.id
+                );
+            } catch (err) {
+                console.warn('[job-links] regenerate restore skipped:', err.message);
+            }
+        }
+
+        let application = findApplicationForJobLink(
+            jobLinkId,
+            Number.isInteger(appId) ? appId : 0,
+            Number.isInteger(profileId) ? profileId : 0
+        );
         const jobLink = getOne('SELECT * FROM job_links WHERE id = ?', [jobLinkId]);
         if (!jobLink) return res.status(404).json({ error: 'Job link not found' });
 
-        const profile = getOne('SELECT * FROM candidate_profiles WHERE id = ?', [application.profile_id]);
+        const resolvedProfileId = application?.profile_id || profileId;
+        const profile = resolvedProfileId
+            ? getOne('SELECT * FROM candidate_profiles WHERE id = ?', [resolvedProfileId])
+            : null;
         if (!profile) return res.status(404).json({ error: 'Profile not found' });
+
+        if (!application) {
+            application = ensureApplicationForRegenerate(jobLink, profile, {
+                resume_filename: req.body?.resume_filename,
+                draft_html: req.body?.draft_html,
+                match_score: req.body?.match_score
+            });
+        } else if (Number(application.job_link_id) !== jobLinkId) {
+            runQuery(
+                `UPDATE job_applications
+                    SET job_link_id = ?, updated_at = CURRENT_TIMESTAMP
+                  WHERE id = ?`,
+                [jobLinkId, application.id]
+            );
+            saveDatabase();
+            application.job_link_id = jobLinkId;
+        }
+        if (!application?.id) return res.status(404).json({ error: 'Application not found' });
 
         // Stay `pending` until the serial worker actually starts so a
         // second Regenerate does not show a live Generating clock.
         // Re-stamp template/font from the live profile (assigned after
         // the first attempt still applies on this run).
-        jobMatchService.markApplicationQueuedForGeneration(appId, profile);
+        jobMatchService.markApplicationQueuedForGeneration(application.id, profile);
 
         const resumeQueue = require('../services/resumeQueueService');
         await resumeQueue.enqueueGeneration(profile.id, jobLinkId, {
-            correlationId: `regen-app-${appId}`,
+            correlationId: `regen-app-${application.id}`,
             force: true
         });
         res.json({
@@ -1200,13 +1288,17 @@ async function applicationRegenerateHandler(req, res) {
 // -----------------------------------------------------------------------------
 function applicationMarkAppliedHandler(req, res) {
     try {
-        const jobLinkId = parseInt(req.params.id);
-        const appId = parseInt(req.params.appId);
-        if (!jobLinkId || !appId) return res.status(400).json({ error: 'Invalid id' });
+        const jobLinkId = parseInt(req.params.id, 10);
+        const appId = parseInt(req.params.appId, 10);
+        const profileId = parseInt(req.body?.profile_id, 10);
+        if (!jobLinkId || (!appId && !profileId)) {
+            return res.status(400).json({ error: 'Invalid id' });
+        }
 
-        const application = getOne(
-            'SELECT * FROM job_applications WHERE id = ? AND job_link_id = ?',
-            [appId, jobLinkId]
+        const application = findApplicationForJobLink(
+            jobLinkId,
+            Number.isInteger(appId) ? appId : 0,
+            Number.isInteger(profileId) ? profileId : 0
         );
         if (!application) return res.status(404).json({ error: 'Application not found' });
 
@@ -1214,7 +1306,7 @@ function applicationMarkAppliedHandler(req, res) {
             `UPDATE job_applications
              SET status = 'applied', updated_at = CURRENT_TIMESTAMP
              WHERE id = ?`,
-            [appId]
+            [application.id]
         );
         saveDatabase();
         res.json({ ok: true, status: 'applied' });

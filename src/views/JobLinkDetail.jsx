@@ -200,7 +200,7 @@ function Field({ label, value, multiline = false }) {
 // the four actions the user spec calls for: info modal, download
 // resume, regenerate, mark applied.
 // ---------------------------------------------------------------------
-function ApplicationCard({ application, onChanged }) {
+function ApplicationCard({ application, jobLink, onChanged }) {
     const [profileOpen, setProfileOpen] = useState(false);
     const [regenerating, setRegenerating] = useState(false);
     const [markingApplied, setMarkingApplied] = useState(false);
@@ -223,7 +223,28 @@ function ApplicationCard({ application, onChanged }) {
         setRegenerating(true);
         setLocalError(null);
         try {
-            await adminAPI.regenerateApplication(application.job_link_id, application.id);
+            const linkId = jobLink?.id || application.job_link_id;
+            await adminAPI.regenerateApplication(linkId, application.id, {
+                profile_id: application.profile_id || profile?.id || null,
+                resume_filename: application.resume_filename || null,
+                draft_html: application.draft_html || null,
+                match_score: application.match_score,
+                job_link: jobLink ? {
+                    id: jobLink.id,
+                    techstack: jobLink.techstack,
+                    job_apply_url: jobLink.job_apply_url,
+                    source_url: jobLink.source_url,
+                    job_description: jobLink.job_description,
+                    company_name: jobLink.company_name,
+                    position_title: jobLink.position_title,
+                    location: jobLink.location,
+                    fetch_status: jobLink.fetch_status,
+                    created_at: jobLink.created_at,
+                    location_flag: jobLink.location_flag,
+                    comment: jobLink.comment,
+                    is_available: jobLink.is_available
+                } : null
+            });
             onChanged?.();
         } catch (err) {
             setLocalError(err.response?.data?.error || 'Regenerate failed');
@@ -263,7 +284,10 @@ function ApplicationCard({ application, onChanged }) {
         setMarkingApplied(true);
         setLocalError(null);
         try {
-            await adminAPI.markApplicationApplied(application.job_link_id, application.id);
+            const linkId = jobLink?.id || application.job_link_id;
+            await adminAPI.markApplicationApplied(linkId, application.id, {
+                profile_id: application.profile_id || profile?.id || null
+            });
             onChanged?.();
         } catch (err) {
             setLocalError(err.response?.data?.error || 'Mark applied failed');
@@ -1390,6 +1414,7 @@ export default function JobLinkDetail() {
                                         <ApplicationCard
                                             key={a.id}
                                             application={a}
+                                            jobLink={jobLink}
                                             onChanged={load}
                                         />
                                     ))}
