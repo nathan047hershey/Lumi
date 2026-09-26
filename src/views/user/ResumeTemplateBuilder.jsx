@@ -229,7 +229,7 @@ const STYLE_PRESETS = [
                 '3': { font: 'Calibri', size_half_pt: 22, bold: true, align: 'left', color: '1F4E79', uppercase: false, italic: false, space_before_pt: 8, space_after_pt: 2 }
             },
             body: { font: 'Calibri', font_pool: ['Calibri', 'Arial', 'Helvetica'], size_half_pt: 20, align: 'left', line_spacing: 1.15, space_after_pt: 2, color: null },
-            page: { paper_size: 'letter', margin_top_pt: 36, margin_bottom_pt: 36, margin_left_pt: 45, margin_right_pt: 45 },
+            page: { paper_size: 'letter', margin_top_pt: 36, margin_bottom_pt: 36, margin_left_pt: 72, margin_right_pt: 72 },
             list: { bullet_char: '▪', indent_left_pt: 18, indent_hanging_pt: 18, space_after_pt: 2 },
             experience_row: { layout: 'two_column', separator: '•', job_gap_pt: 8 },
             theme: { accent_color: '1F4E79' },

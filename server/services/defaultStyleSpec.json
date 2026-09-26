@@ -159,8 +159,8 @@
     "paper_size": "letter",
     "margin_top_pt": 36,
     "margin_bottom_pt": 36,
-    "margin_left_pt": 45,
-    "margin_right_pt": 45
+    "margin_left_pt": 72,
+    "margin_right_pt": 72
   },
   "theme": {
     "accent_color": "1F4E79"

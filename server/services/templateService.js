@@ -133,6 +133,41 @@ function normaliseFontName(name) {
     return null;
 }
 
+const SIDE_MARGIN_PT = 72;
+
+function applyWiderSideMargins(spec) {
+    if (!spec || typeof spec !== 'object') return false;
+    const page = spec.page && typeof spec.page === 'object' ? spec.page : {};
+    const left = Number(page.margin_left_pt);
+    const right = Number(page.margin_right_pt);
+    const nextLeft = Number.isFinite(left) ? Math.max(left, SIDE_MARGIN_PT) : SIDE_MARGIN_PT;
+    const nextRight = Number.isFinite(right) ? Math.max(right, SIDE_MARGIN_PT) : SIDE_MARGIN_PT;
+    if (nextLeft === left && nextRight === right) return false;
+    spec.page = {
+        ...page,
+        margin_left_pt: nextLeft,
+        margin_right_pt: nextRight
+    };
+    return true;
+}
+
+function widenStoredSideMargins() {
+    try {
+        for (const table of ['resume_templates', 'user_resume_templates']) {
+            const rows = getAll(`SELECT id, style_spec FROM ${table}`);
+            for (const row of rows) {
+                let spec = {};
+                try { spec = JSON.parse(row.style_spec || '{}'); } catch (_) { continue; }
+                if (!applyWiderSideMargins(spec)) continue;
+                runQuery(
+                    `UPDATE ${table} SET style_spec = ? WHERE id = ?`,
+                    [JSON.stringify(spec), row.id]
+                );
+            }
+        }
+    } catch (_) { /* table may be absent on a fresh boot */ }
+}
+
 function fixBrandonBulletIndent() {
     try {
         const branded = getAll(
@@ -189,9 +224,11 @@ function ensureDefaultTemplate() {
             );
         }
         fixBrandonBulletIndent();
+        widenStoredSideMargins();
         return { id: existing.id };
     }
     fixBrandonBulletIndent();
+    widenStoredSideMargins();
     const result = runQuery(
         `INSERT INTO resume_templates
             (name, description, filename, file_size, style_spec, is_default, uploaded_by)

@@ -41,9 +41,24 @@ function findChromiumExecutable() {
     }) || null;
 }
 
+function pageMarginPt(styleSpec, key, fallback) {
+    const n = Number(styleSpec?.page?.[key]);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function pdfPageMargins(styleSpec) {
+    return {
+        top: `${pageMarginPt(styleSpec, 'margin_top_pt', 36)}pt`,
+        bottom: `${pageMarginPt(styleSpec, 'margin_bottom_pt', 36)}pt`,
+        left: `${pageMarginPt(styleSpec, 'margin_left_pt', 72)}pt`,
+        right: `${pageMarginPt(styleSpec, 'margin_right_pt', 72)}pt`
+    };
+}
+
 function buildPrintHtml(resumeHtml, styleSpec, font) {
     const normalizedFont = templateService.normaliseFontName(font) || 'Arial';
     const templateCss = templateRenderer.buildPdfCss(styleSpec, normalizedFont);
+    const paper = styleSpec?.page?.paper_size === 'a4' ? 'A4' : 'letter';
 
     return `<!DOCTYPE html>
 <html>
@@ -51,7 +66,7 @@ function buildPrintHtml(resumeHtml, styleSpec, font) {
 <meta charset="UTF-8" />
 <title>Resume</title>
 <style>
-    @page { size: A4; margin: 12mm; }
+    @page { size: ${paper}; margin: 0; }
     html, body { margin: 0; padding: 0; background: #ffffff; color: #000000; }
     ${templateCss}
     h2 { page-break-after: avoid; }
@@ -113,10 +128,11 @@ async function renderResumePdfBuffer({ resumeHtml, styleSpec, font = 'Arial' }) 
     try {
         await page.setContent(printHtml, { waitUntil: 'load', timeout: 30000 });
         await page.evaluate(() => document.fonts && document.fonts.ready);
+        const margins = pdfPageMargins(styleSpec);
         const pdfBuffer = await page.pdf({
-            format: 'A4',
+            format: styleSpec?.page?.paper_size === 'a4' ? 'A4' : 'Letter',
             printBackground: true,
-            margin: { top: '12mm', bottom: '12mm', left: '12mm', right: '12mm' }
+            margin: margins
         });
         return pdfBuffer;
     } finally {
