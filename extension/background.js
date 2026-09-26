@@ -3740,6 +3740,10 @@ async function processReadyQueue(opts = {}) {
             }
 
             const item = items[i];
+            if (String(item.status || '').toLowerCase() === 'applied') {
+                await clearFalseApplicationSuccess(item.id).catch(() => {});
+                item.status = 'pending';
+            }
             if (selectedProfileId && Number(item.profile_id) !== selectedProfileId) {
                 await logCourseEvent(item.id, 'wrong_profile_blocked', {
                     selectedProfileId,

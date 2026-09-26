@@ -487,7 +487,7 @@ function readyItemsFromLinks(links, profileId) {
             String(p.profile_id || p.id) === String(profileId)
             && p.generation_status === 'ready'
             && p.application_id
-            && String(p.status || 'pending').toLowerCase() === 'pending'
+            && ['pending', 'applied'].includes(String(p.status || 'pending').toLowerCase())
         ));
         if (!profile) continue;
         const url = primaryJobUrl(link);

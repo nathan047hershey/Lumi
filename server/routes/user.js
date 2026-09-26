@@ -4164,7 +4164,10 @@ function listBidderReadyHandler(req, res) {
         ${profileClause}
         ${linkClause}
         AND a.generation_status = 'ready'
-        AND COALESCE(a.status, 'pending') = 'pending'
+        AND (
+          COALESCE(a.status, 'pending') = 'pending'
+          OR (${rawIds ? "COALESCE(a.status, '') = 'applied'" : '0'})
+        )
         AND (
           (a.resume_filename IS NOT NULL AND TRIM(a.resume_filename) <> '')
           OR (a.draft_html IS NOT NULL AND TRIM(a.draft_html) <> '')
@@ -4205,7 +4208,20 @@ function listBidderReadyHandler(req, res) {
         }
 
         const { items: eligible, skipped } = filterEligibleReadyApps(rows, priorsByProfileId);
-        const limited = eligible.slice(0, limit);
+        const byLink = new Map();
+        const picked = [];
+        for (const row of eligible) {
+            if (!rawIds) {
+                picked.push(row);
+                continue;
+            }
+            const key = `${row.job_link_id || 0}:${row.profile_id}`;
+            const prev = byLink.get(key);
+            const prevApplied = String(prev?.status || '') === 'applied';
+            const rowApplied = String(row.status || '') === 'applied';
+            if (!prev || (prevApplied && !rowApplied)) byLink.set(key, row);
+        }
+        const limited = (rawIds ? [...byLink.values()] : picked).slice(0, limit);
 
         res.json({
             items: limited.map((r) => {
