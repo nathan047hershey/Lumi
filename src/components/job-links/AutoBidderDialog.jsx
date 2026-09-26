@@ -447,7 +447,11 @@ function displayCompanyName(course, application, jobLinkById) {
 }
 
 function primaryJobUrl(row) {
-    return row?.job_apply_url || row?.source_url || row?.job_url || '';
+    const candidates = [row?.job_apply_url, row?.source_url, row?.job_url]
+        .map((u) => String(u || '').trim())
+        .filter((u) => /^https?:\/\//i.test(u));
+    // Keep the company job page. The Greenhouse embed URL is a second navigation.
+    return candidates.find((u) => !/\/embed\/job_app/i.test(u)) || candidates[0] || '';
 }
 
 function rememberedBidLinks(links, profileId) {
@@ -2519,8 +2523,7 @@ export default function AutoBidderDialog({
             return;
         }
         const openUrls = (selectedLinks || []).map((link) => primaryJobUrl(link)).filter(Boolean);
-        if (openUrls[0]) window.open(openUrls[0], '_blank');
-        const freshReady = await loadReadyPreview();
+        const freshReady = readyPreview.length ? readyPreview : await loadReadyPreview();
         const preview = Array.isArray(freshReady) ? freshReady : readyPreview;
         const startReady = preview.filter((r) => !isUnsupportedAtsLink(r.open_url || r.job_url));
         if (!preview.length && !openUrls.length) {
@@ -2545,16 +2548,6 @@ export default function AutoBidderDialog({
             return;
         }
 
-        const ver = await pingLumi();
-        if (!versionAtLeast(ver, MIN_LUMI_VERSION)) {
-            setError(
-                `Lumi not connected (need v${MIN_LUMI_VERSION}+). Reload Lumi in chrome://extensions, then click Check Lumi (no page refresh needed). ` +
-                `Or use “Open for manual fill” (allow pop-ups if the browser blocks them).`
-            );
-            setStatus('');
-            return;
-        }
-
         let token = null;
         let user = null;
         try {
@@ -2566,44 +2559,38 @@ export default function AutoBidderDialog({
             return;
         }
 
-        // Start the apply tab immediately. Packet AI used to run here first and
-        // held this click for 1–5 minutes. The extension fills the profile while
-        // answers generate, and it reuses any packet already saved.
+        // Open one job tab and start the fill. Do not navigate this page.
         setStatus('Starting bids…');
 
         // Follow the active queue course in Live monitor (clear prior manual pick).
         selectedIdTouchedRef.current = false;
         setWorkspaceTab('courses');
 
-        // Create bid courses immediately so the left list shows this job even if fill fails.
-        try {
-            await Promise.all(
-                startReady.map((item) => {
-                    const link = jobLinkById.get(Number(item.job_link_id));
-                    const company =
-                        (item.company_name && !/^unknown$/i.test(item.company_name)
-                            ? item.company_name
-                            : null)
-                        || link?.company_name
-                        || item.company_name;
-                    return userAPI.logBidCourseEvent({
-                        application_id: item.id,
-                        event_type: 'queue_enqueued',
-                        company_name: company,
-                        job_role: item.job_role || link?.position_title,
-                        job_url: item.open_url || item.job_url,
-                        meta: {
-                            source: 'job-links-ui',
-                            profile_id: Number(profileId),
-                            job_link_id: item.job_link_id || null
-                        }
-                    });
-                })
-            );
-            await loadList();
-        } catch (err) {
+        void Promise.all(
+            startReady.map((item) => {
+                const link = jobLinkById.get(Number(item.job_link_id));
+                const company =
+                    (item.company_name && !/^unknown$/i.test(item.company_name)
+                        ? item.company_name
+                        : null)
+                    || link?.company_name
+                    || item.company_name;
+                return userAPI.logBidCourseEvent({
+                    application_id: item.id,
+                    event_type: 'queue_enqueued',
+                    company_name: company,
+                    job_role: item.job_role || link?.position_title,
+                    job_url: item.open_url || item.job_url,
+                    meta: {
+                        source: 'job-links-ui',
+                        profile_id: Number(profileId),
+                        job_link_id: item.job_link_id || null
+                    }
+                });
+            })
+        ).then(() => loadList()).catch((err) => {
             console.warn('[auto-bidder] queue_enqueued log failed', err);
-        }
+        });
 
         const applicationIds = startReady.map((r) => r.id).filter(Boolean);
         if (blockedAtsReady.length) {
@@ -2635,6 +2622,7 @@ export default function AutoBidderDialog({
             unattended: true,
             autoSubmit: true,
             autoNext: true,
+            stayInApp: true,
             reviewOnlyMode: false,
             requirePacketBeforeProcess: false,
             captchaFocus: false

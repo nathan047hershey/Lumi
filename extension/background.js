@@ -2942,16 +2942,27 @@ function urlsSameApplyJob(a, b) {
     }
 }
 
-/** Open the apply page as a normal visible tab. Do not hide it in a background window. */
+/** Put the Lumi page back in front if opening a job tab stole it. */
+async function keepLumiTabInFront() {
+    try {
+        const tabs = await chrome.tabs.query({});
+        const home = (tabs || []).find((t) => t?.id && isAppUrl(t.url) && /\/pipeline\/lumi/i.test(t.url || ''))
+            || (tabs || []).find((t) => t?.id && isAppUrl(t.url));
+        if (!home?.id) return false;
+        await chrome.tabs.update(home.id, { active: true });
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+/** Open the job in a background tab. Leave the Lumi page in front. */
 async function openVisibleApplyTab(url) {
     const applyUrl = isAshbyJobDescriptionUrl(url) ? ashbyApplicationUrl(url) : String(url || '').trim();
     if (!/^https?:\/\//i.test(applyUrl)) return null;
     const existing = await findLiveApplyTabForUrl(applyUrl);
     if (existing?.id) {
-        await chrome.tabs.update(existing.id, { active: true }).catch(() => {});
-        if (existing.windowId != null) {
-            await chrome.windows.update(existing.windowId, { focused: true }).catch(() => {});
-        }
+        await keepLumiTabInFront();
         return { tabId: existing.id, url: applyUrl, windowId: existing.windowId, reused: true };
     }
     let windowId;
@@ -2961,12 +2972,11 @@ async function openVisibleApplyTab(url) {
     } catch (_) { /* create in the default window */ }
     const tab = await chrome.tabs.create({
         url: applyUrl,
-        active: true,
+        active: false,
         ...(windowId ? { windowId } : {})
     });
-    if (tab?.windowId != null) {
-        await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
-    }
+    await keepLumiTabInFront();
+    setTimeout(() => { keepLumiTabInFront().catch(() => {}); }, 400);
     return tab?.id ? { tabId: tab.id, url: applyUrl, windowId: tab.windowId, reused: false } : null;
 }
 
@@ -3744,6 +3754,9 @@ async function processReadyQueue(opts = {}) {
             }
 
             const item = items[i];
+            if (Array.isArray(opts.openUrls) && opts.openUrls[i]) {
+                item.open_url = opts.openUrls[i];
+            }
             if (String(item.status || '').toLowerCase() === 'applied') {
                 await clearFalseApplicationSuccess(item.id).catch(() => {});
                 item.status = 'pending';
@@ -4327,13 +4340,9 @@ async function processReadyQueue(opts = {}) {
                 }
             }
 
-            // The engine already started on the open page. Do not click Apply now —
-            // that navigates away and the engine never runs on the form the user sees.
-            const revealed = engineStartedOnOpen
-                ? { formAlreadyOpen: true, clicked: false }
-                : await ensureApplyFormVisible(opened.tabId);
+            // Reveal the form on this same tab. Do not send the window back to Lumi.
+            const revealed = await ensureApplyFormVisible(opened.tabId);
             await logCourseEvent(item.id, 'form_revealed', revealed);
-            await refocusStayInAppHome();
 
             if (!engineStartedOnOpen) await ensureApplyFormVisible(opened.tabId);
             const ready = await waitForFormReady(opened.tabId, {
@@ -6604,8 +6613,18 @@ async function ensureApplyFormVisible(tabId, opts = {}) {
                 );
                 const applyFound = !!(apply && visible(apply));
                 let clicked = false;
+                const applyHref = apply?.href || apply?.getAttribute?.('href') || '';
+                let leavesThisPage = false;
+                try {
+                    if (apply && apply.tagName === 'A' && applyHref) {
+                        const dest = new URL(applyHref, location.href);
+                        leavesThisPage = dest.hostname.replace(/^www\./i, '')
+                            !== location.hostname.replace(/^www\./i, '');
+                    }
+                } catch (_) { /* same-page control */ }
                 // Form is already on this page — do not click Apply (opens login/create walls).
-                if (applyFound && !formAlreadyOpen) {
+                // A cross-site Apply link would navigate this tab away. Leave the tab here.
+                if (applyFound && !formAlreadyOpen && !leavesThisPage) {
                     try {
                         apply.scrollIntoView({ block: 'center', behavior: 'instant' });
                     } catch (_) { /* ignore */ }
@@ -9317,19 +9336,6 @@ function handleExtensionMessage(msg, _sender, sendResponse) {
         (async () => {
             let acked = false;
             try {
-                // Sync web-app session into the extension before listing ready apps.
-                const openUrls = [
-                    ...(Array.isArray(msg.openUrls) ? msg.openUrls : []),
-                    ...(Array.isArray(msg.remembered)
-                        ? msg.remembered.map((row) => row?.job_apply_url || row?.source_url || '')
-                        : [])
-                ].map((u) => String(u || '').trim()).filter((u) => /^https?:\/\//i.test(u));
-                if (openUrls[0]) {
-                    await openVisibleApplyTab(openUrls[0]).catch((err) => {
-                        console.warn('[bidder] open tab on start', err?.message || err);
-                    });
-                }
-
                 if (msg.token) {
                     const patch = { token: String(msg.token) };
                     if (msg.user && typeof msg.user === 'object') patch.user = msg.user;
@@ -9375,12 +9381,34 @@ function handleExtensionMessage(msg, _sender, sendResponse) {
                     });
                     return;
                 }
+                const rawOpen = [
+                    ...(Array.isArray(msg.openUrls) ? msg.openUrls : []),
+                    ...(Array.isArray(msg.remembered)
+                        ? msg.remembered.map((row) => row?.job_apply_url || row?.source_url || '')
+                        : [])
+                ].map((u) => String(u || '').trim()).filter((u) => /^https?:\/\//i.test(u));
+                const openUrl = rawOpen.find((u) => !/\/embed\/job_app/i.test(u)) || rawOpen[0] || '';
+                if (openUrl) {
+                    const openedNow = await openVisibleApplyTab(openUrl).catch((err) => {
+                        console.warn('[bidder] open tab on start', err?.message || err);
+                        return null;
+                    });
+                    const first = (Array.isArray(msg.readyItems) ? msg.readyItems : []).find((it) => it?.id);
+                    if (openedNow?.tabId && first) {
+                        void startJobFillEngine(openedNow.tabId, {
+                            ...first,
+                            open_url: openUrl,
+                            job_url: first.job_url || openUrl
+                        });
+                    }
+                }
                 const summary = await processReadyQueue({
                     jobLinkIds,
                     applicationIds,
                     profileId: msg.selectedProfileId,
                     remembered: Array.isArray(msg.remembered) ? msg.remembered : null,
                     readyItems: Array.isArray(msg.readyItems) ? msg.readyItems : null,
+                    openUrls: openUrl ? [openUrl] : [],
                     uploadCoverLetter: msg.uploadCoverLetter,
                     stayInApp: msg.stayInApp,
                     unattended: msg.unattended,

@@ -4200,6 +4200,8 @@ function listBidderReadyHandler(req, res) {
         const rows = getAll(`
       SELECT a.id, a.profile_id, a.company_name, a.job_role,
              COALESCE(NULLIF(TRIM(a.job_url), ''), NULLIF(TRIM(jl.job_apply_url), ''), NULLIF(TRIM(jl.source_url), '')) AS job_url,
+             jl.job_apply_url AS link_apply_url,
+             jl.source_url AS link_source_url,
              a.job_description, a.core_skills,
              a.resume_filename, a.generation_status, a.status, a.source,
              a.job_link_id, a.match_score, a.created_at, a.updated_at,
@@ -4276,17 +4278,16 @@ function listBidderReadyHandler(req, res) {
 
         res.json({
             items: limited.map((r) => {
-                let openUrl = r.job_url || null;
-                try {
-                    const { canonicalizeGreenhouseApplyUrl, isGreenhouseUrl } = require('../services/scraper/greenhouseUrl');
-                    if (openUrl && isGreenhouseUrl(openUrl)) {
-                        openUrl = canonicalizeGreenhouseApplyUrl(openUrl) || openUrl;
-                    }
-                } catch (_) { /* ignore */ }
+                const candidates = [r.link_apply_url, r.link_source_url, r.job_url]
+                    .map((u) => String(u || '').trim())
+                    .filter((u) => /^https?:\/\//i.test(u));
+                const openUrl = candidates.find((u) => !/\/embed\/job_app/i.test(u)) || candidates[0] || null;
                 const {
                     job_description: _jd,
                     core_skills: _cs,
                     link_techstack: _ts,
+                    link_apply_url: _apply,
+                    link_source_url: _source,
                     ...publicRow
                 } = r;
                 return {
