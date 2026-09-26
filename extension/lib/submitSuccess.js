@@ -29,8 +29,9 @@ function isStrongThankYou(body, headings) {
 }
 
 /**
- * Pure success classifier (unit-tested). Rejects open apply forms even if
- * the word "success" appears in a question label or validation error.
+ * Applied only when the apply form is gone and the site shows its confirmation
+ * shell (or the form is gone and the remaining copy is a real receipt).
+ * A thank-you sentence on an open form is not a finished bid.
  */
 export function evaluateSubmitSuccessPage({
     text = '',
@@ -39,34 +40,39 @@ export function evaluateSubmitSuccessPage({
     visibleFieldCount = 0,
     hasSubmitControl = false,
     emptyVisibleFields = 0,
-    hasValidationErrors = false
+    hasValidationErrors = false,
+    formPresent = null,
+    confirmationShell = false,
+    applicationIdInUrl = false
 } = {}) {
     const body = String(text || '');
-    if (hasValidationErrors || SUCCESS_NEGATIVE_RE.test(body)) {
-        return { ok: false, reason: 'validation_errors' };
-    }
     const heads = headingList(headings);
     const headingHit = heads.some((h) => SUCCESS_HEADING_RE.test(h));
     const bodyHit = SUCCESS_RE.test(body);
-    if (!bodyHit && !headingHit) return { ok: false, reason: 'no_match' };
+    const shell = !!confirmationShell || !!applicationIdInUrl;
+    const formOpen = formPresent === true
+        || (formPresent == null && !!hasSubmitControl && (
+            Number(visibleFieldCount) >= 1 || Number(radioCount) >= 1
+        ));
 
-    // Greenhouse thank-you pages often keep leftover fields / "Track application"
-    // sign-in in the DOM. A real confirmation headline still means SUCCESS.
-    const leftoverLight = Number(radioCount) < 4 && Number(visibleFieldCount) < 6;
-    const headingApplyThanks = heads.some((h) => /thank\s*you\s+for\s+applying|thanks\s+for\s+applying/i.test(h));
-    if (isStrongThankYou(body, heads) || (headingApplyThanks && leftoverLight)) {
-        return { ok: true, reason: 'strong_thank_you' };
+    // Greenhouse replaces the form with View more jobs / Back to job post /
+    // Track your application. The employer's sentence is custom, so the shell
+    // is the proof. The same words on a still-open form are not.
+    if (shell && !formOpen) {
+        return { ok: true, reason: applicationIdInUrl && !confirmationShell ? 'application_id' : 'confirmation_shell' };
     }
 
-    // Active multi-field apply form → never SUCCESS (even if a phrase matched).
-    const formOpen = (radioCount >= 2 || visibleFieldCount >= 2) && hasSubmitControl;
+    if (hasValidationErrors || SUCCESS_NEGATIVE_RE.test(body)) {
+        return { ok: false, reason: 'validation_errors' };
+    }
     if (formOpen) {
-        return { ok: false, reason: 'form_still_open' };
+        return { ok: false, reason: (bodyHit || headingHit) ? 'form_still_open' : 'no_match' };
     }
-    if (radioCount >= 2 && emptyVisibleFields >= 0 && hasSubmitControl) {
-        return { ok: false, reason: 'form_still_open' };
-    }
-    return { ok: true, reason: bodyHit ? 'body' : 'heading' };
+    if (!bodyHit && !headingHit) return { ok: false, reason: 'no_match' };
+    return {
+        ok: true,
+        reason: isStrongThankYou(body, heads) ? 'strong_thank_you' : (bodyHit ? 'body' : 'heading')
+    };
 }
 
 /** Pick the best frame result: any SUCCESS wins; else keep the most informative fail. */

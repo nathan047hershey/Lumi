@@ -1147,13 +1147,23 @@ function collectSubmitSuccessSignalsInPage(negativeReSource) {
         'input:not([type="hidden"]):not([type="submit"]):not([type="button"]):not([type="radio"]):not([type="checkbox"]):not([type="file"]), textarea, select'
     )].filter(isVisible);
     const emptyVisibleFields = fields.filter((el) => !String(el.value || '').trim()).length;
+    const controlText = (el) => `${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''}`;
     const hasSubmitControl = !![...document.querySelectorAll(
         'button[type="submit"], input[type="submit"], button, a[role="button"], [data-qa*="submit" i], [data-testid*="submit" i]'
     )].find((el) => {
         if (!isVisible(el)) return false;
-        const t = `${el.innerText || ''} ${el.value || ''} ${el.getAttribute('aria-label') || ''}`.toLowerCase();
-        return /submit|apply|send application|finish application/.test(t) || el.type === 'submit';
+        const t = controlText(el);
+        return /\bsubmit\b/i.test(t) || el.type === 'submit';
     });
+    const resumeSlot = [...document.querySelectorAll('input[type="file"]')].some(isVisible);
+    const href = String(location.href || '');
+    const applicationIdInUrl = /[?&]application_id=/i.test(href);
+    const viewMoreJobs = /\bview more jobs\b/i.test(text);
+    const backToJobPost = /\bback to (?:the )?job post\b/i.test(text);
+    const trackStages = /track your application/i.test(text)
+        && /initial screen/i.test(text)
+        && /team interview/i.test(text);
+    const confirmationShell = (viewMoreJobs && backToJobPost) || trackStages;
     return {
         text,
         headings,
@@ -1161,7 +1171,10 @@ function collectSubmitSuccessSignalsInPage(negativeReSource) {
         visibleFieldCount: fields.length,
         hasSubmitControl,
         emptyVisibleFields,
-        hasValidationErrors: !!(negativeRe && negativeRe.test(text))
+        hasValidationErrors: !!(negativeRe && negativeRe.test(text)),
+        formPresent: !!(resumeSlot || hasSubmitControl),
+        confirmationShell,
+        applicationIdInUrl
     };
 }
 

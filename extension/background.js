@@ -3050,6 +3050,41 @@ async function captureFailEvidence(applicationId, tabId, reason, extra = {}) {
 }
 
 /** Enrich queue payload with live tab liveness for Control / popup. */
+let lastConfirmProbeAt = 0;
+
+/** If the apply tab is already Greenhouse's confirmation view, stop saying "bidding". */
+async function noteConfirmedApplication(data, tabId, appId) {
+    const phase = `${data.status || ''} ${data.runState || ''} ${data.lastStatusEvent || ''}`;
+    if (/marked_applied|submit_success_detected/i.test(phase)) return data;
+    const unfinished = data.running === true
+        || /running|filling|submitting|verifying|incomplete|submit_no_click|resume_required|submit_blocked/i.test(phase);
+    if (!unfinished || !tabId || !appId) return data;
+    const now = Date.now();
+    if (now - lastConfirmProbeAt < 8000) return data;
+    lastConfirmProbeAt = now;
+    const ok = await detectSubmitSuccess(tabId).catch(() => false);
+    if (!ok) return data;
+    try { await markApplicationApplied(appId); } catch (_) { /* ignore */ }
+    await logCourseEvent(appId, 'marked_applied', { via: 'confirmation_shell' }).catch(() => {});
+    await setAppRunState(appId, 'success', {
+        tabId,
+        eventType: 'marked_applied',
+        missingRequired: []
+    }).catch(() => {});
+    const patch = {
+        status: 'done',
+        running: false,
+        runState: 'success',
+        lastStatusEvent: 'marked_applied',
+        lastStatusAt: now,
+        lastStatusMeta: { success: true, via: 'confirmation_shell' },
+        missingRequired: []
+    };
+    await setQueueState(patch).catch(() => {});
+    uploadSuccessProofScreenshot(appId, tabId, { stayInApp: true, waitMs: 400 }).catch(() => {});
+    return { ...data, ...patch };
+}
+
 async function enrichQueueSnapshot(st) {
     const data = st && typeof st === 'object' ? { ...st } : {};
     const appId = data.currentId || data.captchaApplicationId || data.lastApplicationId;
@@ -3096,17 +3131,20 @@ async function enrichQueueSnapshot(st) {
     } else if (!ownedTabAlive && ownedTabId && appId) {
         await clearTabMapping({ applicationId: appId, tabId: ownedTabId }).catch(() => {});
     }
+    const confirmed = await noteConfirmedApplication(data, ownedTabAlive ? ownedTabId : null, appId);
     return {
-        ...data,
-        runState: data.runState || runRow?.status || null,
+        ...confirmed,
+        runState: confirmed.runState || runRow?.status || null,
         ownedTabId: ownedTabAlive ? ownedTabId : (ownedTabId || null),
         ownedTabAlive,
         captchaTabMissing: !ownedTabAlive,
         ownedTabUrl: ownedTabUrl || null,
-        missingRequired: runRow?.missingRequired
-            || data.lastStatusMeta?.missing
-            || data.lastStatusMeta?.missingRequired
-            || [],
+        missingRequired: /marked_applied/i.test(String(confirmed.lastStatusEvent || ''))
+            ? []
+            : (runRow?.missingRequired
+                || data.lastStatusMeta?.missing
+                || data.lastStatusMeta?.missingRequired
+                || []),
         lastDomSummary: data.lastDomSummary || runRow?.lastDomSummary || null,
         captcha: /awaiting_captcha/i.test(String(data.status || '')) || !!runRow?.captcha
     };

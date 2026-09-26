@@ -117,27 +117,40 @@ const thankYouButFormOpen = evaluateSubmitSuccessPage({
 checks.push(['thank-you text ignored while form open', thankYouButFormOpen.ok === false]);
 checks.push(['thank-you+form reason form_still_open', thankYouButFormOpen.reason === 'form_still_open']);
 
-const zoominfoThanksLeftoverForm = evaluateSubmitSuccessPage({
-    text: 'Thank you for your application. We\'re excited to learn more about you! Your application has been routed to our Talent Acquisition team.',
-    headings: ['Thank you for your application. We\'re excited to learn more about you!'],
+const thankYouOnOpenForm = evaluateSubmitSuccessPage({
+    text: 'Thank you for your application. We\'re excited to learn more about you!\nSubmit application',
+    headings: ['Thank you for your application'],
     radioCount: 0,
     visibleFieldCount: 2,
     hasSubmitControl: true,
+    formPresent: true,
     emptyVisibleFields: 2
 });
-checks.push(['zoominfo thank-you beats leftover track-application fields', zoominfoThanksLeftoverForm.ok === true]);
-checks.push(['zoominfo thank-you reason strong', zoominfoThanksLeftoverForm.reason === 'strong_thank_you']);
+checks.push(['thank-you words on an open form are not applied', thankYouOnOpenForm.ok === false]);
+checks.push(['open form reason', thankYouOnOpenForm.reason === 'form_still_open']);
 
-const greenhouseResonate = evaluateSubmitSuccessPage({
-    text: 'Thank you for applying to Resonate!\nYour application\nTrack your application',
-    headings: ['Thank you for applying to Resonate!'],
+const thankYouFormGone = evaluateSubmitSuccessPage({
+    text: 'Thank you for your application. Your application has been routed to our Talent Acquisition team.',
+    headings: ['Thank you for your application'],
     radioCount: 0,
-    visibleFieldCount: 2,
-    hasSubmitControl: true,
-    emptyVisibleFields: 2
+    visibleFieldCount: 0,
+    hasSubmitControl: false,
+    formPresent: false
 });
-checks.push(['greenhouse thank you for applying to company is SUCCESS', greenhouseResonate.ok === true]);
-checks.push(['greenhouse thank you reason strong', greenhouseResonate.reason === 'strong_thank_you']);
+checks.push(['thank-you after the form is gone is applied', thankYouFormGone.ok === true]);
+
+const crexiConfirmation = evaluateSubmitSuccessPage({
+    text: 'Thanks for reaching out!\nWe\'re excited to learn more about you.\nView more jobs at Crexi\nBack to job post\nTrack your application\nInitial screen\nTeam interview\nOnsite interview\nOffer',
+    headings: ['Thanks for reaching out!'],
+    radioCount: 0,
+    visibleFieldCount: 0,
+    hasSubmitControl: false,
+    formPresent: false,
+    confirmationShell: true
+});
+checks.push(['greenhouse confirmation shell is applied', crexiConfirmation.ok === true]);
+checks.push(['confirmation shell reason', crexiConfirmation.reason === 'confirmation_shell']);
+checks.push(['custom thanks sentence alone is not a match', SUCCESS_RE.test('Thanks for reaching out!') === false]);
 
 let failed = 0;
 for (const [name, ok] of checks) {
