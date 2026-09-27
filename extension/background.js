@@ -6192,6 +6192,7 @@ async function startJobFillEngine(tabId, item) {
                         kick: true
                     }
                 };
+            if (useGreenhouse) await installMainWorldPicker(tabId);
             let ack = null;
             try {
                 ack = await Promise.race([
@@ -8263,6 +8264,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             console.warn('[bidder] dial country', err);
         }
 
+        await installMainWorldPicker(tabId);
         let run = await sendTabMessage(tabId, {
             type: 'BIDDER_ENGINE_RUN',
             payload: {
@@ -8374,6 +8376,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 lastStatusAt: Date.now(),
                 lastStatusMeta: { missing: result.missingRequired || [], pass: pass + 1 }
             }).catch(() => {});
+            await installMainWorldPicker(tabId);
             const again = await sendTabMessage(tabId, {
                 type: 'BIDDER_ENGINE_RUN',
                 payload: {
@@ -8861,7 +8864,18 @@ chrome.commands.onCommand.addListener((command) => {
     }
 });
 
-function handleExtensionMessage(msg, _sender, sendResponse) {
+async function installMainWorldPicker(tabId) {
+    if (!tabId) return;
+    try {
+        await chrome.scripting.executeScript({
+            target: { tabId, allFrames: true },
+            world: 'MAIN',
+            files: ['content/mainPick.js']
+        });
+    } catch (_) { /* some frames reject injection */ }
+}
+
+function handleExtensionMessage(msg, sender, sendResponse) {
     if (msg?.type === 'GET_CAPTURED_QUESTIONS') {
         getLatestCapturedPack()
             .then((pack) => sendResponse({ ok: true, pack }))
@@ -8905,7 +8919,7 @@ function handleExtensionMessage(msg, _sender, sendResponse) {
         return true;
     }
     if (msg?.type === 'BIDDER_PAGE_SHOT') {
-        const tabId = _sender?.tab?.id;
+        const tabId = sender?.tab?.id;
         const applicationId = Number(msg.applicationId) || 0;
         const stage = String(msg.stage || '').replace(/[^a-z0-9_]/gi, '').slice(0, 24);
         const scrollHeight = Number(msg.scrollHeight) || 0;
@@ -8923,7 +8937,7 @@ function handleExtensionMessage(msg, _sender, sendResponse) {
         return true;
     }
     if (msg?.type === 'ENSURE_US_DIAL_CODE') {
-        const tabId = msg.tabId || _sender?.tab?.id;
+        const tabId = msg.tabId || sender?.tab?.id;
         ensureUsDialCodeTrusted(tabId)
             .then((ok) => sendResponse({ ok: !!ok }))
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));

@@ -386,6 +386,11 @@
             }
             return 'city';
         }
+        // Zip / postal is a number, never a Yes/No ("primary residence" is not "do you reside").
+        if (/\b(zip\s*code|postal\s*code|postcode|post\s*code)\b/.test(hay)
+            && !/\b(do you|are you|have you|will you)\b/.test(hay)) {
+            return 'postal_code';
+        }
         // Yes/No "reside in the US / legally authorized" BEFORE city/location wording.
         // Exclude "Where do you currently reside?" (city) — that also contains "do you".
         if (
@@ -507,7 +512,7 @@
         }
         if (/\bsalary|compensation|pay\b/.test(hay)) return 'salary';
         if (
-            /\b(data[\s_-]*protection|privacy|gdpr|nda|non[\s_-]*disclosure|acknowledg|consent|ai[\s_-]*note|note[\s_-]*tak)\b/.test(hay)
+            /\b(data[\s_-]*protection|privacy|gdpr|nda|non[\s_-]*disclosure|acknowledg|consent|ai[\s_-]*note|note[\s_-]*tak|personal[\s_-]*data|ai[\s_-]*policy)\b/.test(hay)
             && !/\b(describe|explain)\b/.test(hay)
         ) {
             return 'data_protection';
@@ -1334,7 +1339,8 @@
         // Re-classify skill dropdowns / education dates when initially scraped as question.
         const re = classify(lab, name);
         if (re === 'skill_experience' || /^education_(start|end)_/.test(re)
-            || re === 'how_heard' || re === 'current_company' || re === 'other_source_details') {
+            || re === 'how_heard' || re === 'current_company' || re === 'other_source_details'
+            || re === 'postal_code' || re === 'data_protection' || re === 'veteran_status') {
             return re;
         }
         return kind || re || 'question';
@@ -1441,6 +1447,10 @@
             const m = t.match(/^(Yes|No)\b/i);
             if (m) return m[1];
             if (t && !isPlaceholderValue(t) && t.length < 80) return t;
+        }
+        const controlText = String(shell?.innerText || '').replace(/\s+/g, ' ').trim();
+        if (el.getAttribute('role') === 'combobox' && (!controlText || /^select(\.\.\.|…)?$/i.test(controlText))) {
+            return '';
         }
         return el.value || '';
     }
@@ -1970,6 +1980,10 @@
                 if (/linkedin/.test(tl)) score = Math.max(score, 99);
                 else if (/job board|company website|career site/.test(tl)) score = Math.max(score, 84);
             }
+            if (kind === 'data_protection') {
+                if (/do not|don't|decline|disagree/.test(tl)) return -1;
+                if (/acknowledge|i agree|consent|accept|yes/.test(tl)) score = Math.max(score, 96);
+            }
             if (/^education_(start|end)_month$/.test(kind)) {
                 const wantM = w.slice(0, 3);
                 const optM = tl.slice(0, 3);
@@ -2498,6 +2512,39 @@
         return false;
     }
 
+    async function pickVisibleMenuOption(input, wanted, kind) {
+        if (!input || !wanted) return { ok: false, chosen: '' };
+        const shownNow = String(input.closest('.select__control')?.innerText || '').replace(/\s+/g, ' ').trim();
+        if (shownNow && !/^select(\.\.\.|…)?$/i.test(shownNow)) {
+            return { ok: true, chosen: shownNow };
+        }
+        const token = `p${Date.now().toString(36)}${Math.random().toString(16).slice(2, 8)}`;
+        try { input.setAttribute('data-lumi-pick', token); } catch (_) { /* ignore */ }
+        const reply = await new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                window.removeEventListener('message', onDone);
+                resolve({ ok: false, chosen: '' });
+            }, 2500);
+            const onDone = (ev) => {
+                const data = ev.data;
+                if (!data || data.source !== 'lumi-main-pick-done' || data.token !== token) return;
+                clearTimeout(timer);
+                window.removeEventListener('message', onDone);
+                resolve(data.result || { ok: false, chosen: '' });
+            };
+            window.addEventListener('message', onDone);
+            window.postMessage({
+                source: 'lumi-main-pick',
+                token,
+                inputId: input.id || '',
+                wanted: String(wanted || ''),
+                kind: String(kind || '')
+            }, '*');
+        });
+        try { input.removeAttribute('data-lumi-pick'); } catch (_) { /* ignore */ }
+        return reply?.ok ? reply : { ok: false, chosen: '' };
+    }
+
     async function fillGreenhouseIdentityGaps(profile = {}) {
         try {
             if (typeof window.__lumiEnsureUsDialCode === 'function') {
@@ -2546,20 +2593,49 @@
                 const wrongPlace = !!(cityName && shown
                     && !shown.toLowerCase().includes(cityName.toLowerCase()));
                 if (!shown || /^(select|search|city|location)/i.test(shown) || wrongPlace) {
-                    if (wrongPlace) {
-                        try { setNativeValue(cityEl, ''); } catch (_) { /* clear Yesagyo-style miss */ }
-                    }
-                    const res = await fillCombobox(cityEl, cityWanted, 'city', 'type', profile, 'Location (City)');
-                    if (!res?.ok) {
-                        setNativeValue(cityEl, cityWanted);
-                        try {
-                            cityEl.dispatchEvent(new KeyboardEvent('keydown', {
-                                key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-                            }));
-                        } catch (_) { /* ignore */ }
-                    }
+                    setNativeValue(cityEl, cityWanted);
                 }
             }
+        }
+
+        const zip = String(profile?.postal_code || profile?.zip || '').trim();
+        if (zip) {
+            for (const el of document.querySelectorAll('input, textarea')) {
+                if (!visible(el)) continue;
+                const lab = labelFor(el);
+                if (!/\b(zip\s*code|postal\s*code|postcode)\b/i.test(lab)) continue;
+                const shown = String(el.value || '').trim();
+                if (!shown || /^(yes|no|y|n)$/i.test(shown)) setNativeValue(el, zip);
+            }
+        }
+        const leftovers = [...document.querySelectorAll('select, [role="combobox"]')].filter((el) => {
+            if (!visible(el)) return false;
+            const shown = String(
+                el.closest('.select__control, .select__value-container')?.innerText || el.value || ''
+            ).replace(/\s+/g, ' ').trim();
+            return !shown || /^select\b/i.test(shown);
+        }).slice(0, 24);
+        for (const el of leftovers) {
+            const lab = labelFor(el);
+            const kind = classify(lab, el.name || el.id || '');
+            if (![
+                'how_heard', 'work_authorization', 'requires_sponsorship', 'previous_employer_no',
+                'veteran_status', 'data_protection', 'gender', 'race_ethnicity',
+                'hispanic_latino', 'disability_status'
+            ].includes(kind)) continue;
+            const field = {
+                label: lab,
+                kind,
+                name: el.name || '',
+                id: el.id || '',
+                type: el.tagName === 'SELECT' ? 'select-one' : 'text',
+                role: el.getAttribute('role') || ''
+            };
+            const wanted = profileValue(profile, {}, {}, field, '');
+            if (!wanted) continue;
+            if (el.tagName === 'SELECT') await fillSelect(el, wanted);
+            else await pickVisibleMenuOption(el, wanted, kind);
+            await sleep(80);
         }
     }
 
@@ -2632,6 +2708,29 @@
             const choiceKind = canonical
                 ? req
                 : ((labelLooksLikeRace(liveLab) || labelLooksLikeRace(field.label)) ? 'race_ethnicity' : kind);
+            if ((kind === 'city' || /\blocation\s*\(?\s*city/i.test(String(liveLab || field.label || ''))) && !canonical) {
+                const freeText = formatLocationFreeText(profile, want);
+                const cityName = String(profile?.city || '').split(',')[0].trim();
+                if (freeText && cityName && !/^(yes|no)$/i.test(cityName)) {
+                    setNativeValue(el, freeText);
+                    const got = String(el.value || '').trim();
+                    if (got.toLowerCase().includes(cityName.toLowerCase())) {
+                        try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
+                        return { ok: true, chosen: got, strategy: 'location_free_text' };
+                    }
+                }
+            }
+            if (el.getAttribute('role') === 'combobox' && [
+                'how_heard', 'work_authorization', 'requires_sponsorship', 'previous_employer_no',
+                'veteran_status', 'data_protection', 'gender', 'race_ethnicity',
+                'hispanic_latino', 'disability_status'
+            ].includes(choiceKind || kind)) {
+                const direct = await pickVisibleMenuOption(el, want, choiceKind || kind);
+                if (direct?.ok) {
+                    try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
+                }
+                return { ...(direct || { ok: false, chosen: '' }), strategy: 'visible_option' };
+            }
             let res = await fillCombobox(
                 el,
                 want,
@@ -2643,6 +2742,13 @@
             if (!res?.ok && nativeSel) {
                 const sel = await fillSelect(nativeSel, want);
                 if (sel?.ok) return { ...sel, strategy: 'native_select' };
+            }
+            if (!res?.ok && (el.getAttribute('role') === 'combobox' || el.getAttribute('aria-autocomplete'))) {
+                const direct = await pickVisibleMenuOption(el, want, choiceKind || kind);
+                if (direct?.ok) {
+                    try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
+                    return { ...direct, strategy: 'visible_option' };
+                }
             }
             // Location select often lists US states — retry with state name if city string missed.
             if (res?.ok && (canonical || labelLooksLikeRace(liveLab))) {
@@ -2774,7 +2880,10 @@
             };
             return map[st.toLowerCase()] || st || '';
         }
-        if (kind === 'how_heard' || /\bhear about|how did you\b/i.test(lab)) return 'LinkedIn';
+        if (kind === 'postal_code' || /\b(zip\s*code|postal\s*code|postcode)\b/i.test(lab)) {
+            return String(profile?.postal_code || profile?.zip || '').trim();
+        }
+        if (kind === 'how_heard' || /\bhear about|how did you|learned about|where have you learned\b/i.test(lab)) return 'LinkedIn';
         if (kind === 'willing_to_relocate' || /\brelocat/i.test(lab)) {
             return profile?.willing_to_relocate || 'No';
         }
@@ -2794,6 +2903,7 @@
             if (/\b(written|built|maintain|production|python|rest|api|sql|certificate|pki|x\.?509)\b/i.test(lab)) {
                 return 'Yes';
             }
+            if (/\b(zip\s*code|postal\s*code|postcode|phone|email|address)\b/i.test(lab)) return '';
             if (/\b(require|need|sponsor|convict|felony|disability|veteran|former|ever been|criminal|related company|affiliate)\b/i.test(lab)) {
                 return 'No';
             }
@@ -3245,6 +3355,7 @@
                 return city || stateFull || '';
             }
             case 'country': return p.country || 'United States';
+            case 'postal_code': return String(p.postal_code || p.zip || '').trim();
             case 'school': return p.school || '';
             case 'degree': return p.degree || p.education_level || '';
             case 'discipline': {
@@ -3374,7 +3485,7 @@
                     return raw || '$140,000';
                 }
             }
-            case 'data_protection': return 'Yes';
+            case 'data_protection': return 'I agree';
             case 'question': {
                 // Consent / retain-data / privacy-read checkboxes & Yes/No — never leave blank.
                 if (/\b(agree|acknowledg|consent|terms|certify|confirm|retain|future opportunit|talent pool|privacy\s*policy|have you read)\b/i.test(field.label || '')) {
@@ -3627,6 +3738,7 @@
             } catch (_) { /* continue */ }
 
             for (const field of fields) {
+                if (Date.now() > deadline) break;
                 const fieldEl = findEl(field) || document.getElementById(field.id);
                 if (effectiveFieldKind(field) === 'other_source_details'
                     || (/\bif you selected\b/i.test(String(field.label || ''))
@@ -3765,6 +3877,7 @@
                     });
                     // Same course: only leftover empties — never rewrite a first-pass answer.
                     for (const f of gaps) {
+                        if (Date.now() > deadline) break;
                         if (effectiveFieldKind(f) === 'other_source_details') continue;
                         const current = readCurrentValue(f);
                         const wanted = wantedForField(
