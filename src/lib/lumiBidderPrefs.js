@@ -29,8 +29,8 @@ export const DEFAULT_LUMI_BIDDER_PREFS = {
     stayInApp: true,
     unattended: true,
     captchaHelper: true,
-    /** Start fills, submits, and continues. No review click between jobs. */
-    autoSubmit: true,
+    /** Off until Start or Settings turns submit on. */
+    autoSubmit: false,
     autoNext: true,
     captchaFocus: false,
     uploadCoverLetter: false,

@@ -72,7 +72,7 @@ export const BIDDER_DEFAULTS = {
     openGapMs: 500,
     /** Base form wait. Do not shorten — required fields mount after the first paint. */
     formWaitMs: 8000,
-    autoSubmit: true,
+    autoSubmit: false,
     autoNext: true,
     soundEnabled: true,
     /** Pause opening more tabs until CAPTCHA/login is cleared (human handoff). */
@@ -153,10 +153,8 @@ export async function getBidderPrefs() {
                 ? Math.min(600, Math.round(graceSec))
                 : Math.round(BIDDER_DEFAULTS.humanAssistWaitMs / 1000)));
     const humanAssistWaitMs = Math.round(resolvedAssistSec * 1000);
-    // Unset follows the hands-free default. An explicit false still parks for review.
-    const autoSubmit = data.bidderAutoSubmit == null
-        ? BIDDER_DEFAULTS.autoSubmit
-        : data.bidderAutoSubmit === true;
+    // Submit only when Settings or Start stored an explicit true.
+    const autoSubmit = data.bidderAutoSubmit === true;
     let disabledFillLessons = {};
     try {
         const raw = data.bidderDisabledFillLessons;
