@@ -2515,8 +2515,17 @@
     async function pickVisibleMenuOption(input, wanted, kind) {
         if (!input || !wanted) return { ok: false, chosen: '' };
         const shownNow = String(input.closest('.select__control')?.innerText || '').replace(/\s+/g, ' ').trim();
+        const howHeard = kind === 'how_heard';
         if (shownNow && !/^select(\.\.\.|…)?$/i.test(shownNow)) {
-            return { ok: true, chosen: shownNow };
+            if (!howHeard) return { ok: true, chosen: shownNow };
+            const chips = [...(input.closest('.select__control')?.querySelectorAll(
+                '.select__multi-value__label, [class*="multi-value__label"]'
+            ) || [])]
+                .map((el) => (el.innerText || '').replace(/\s+/g, ' ').trim())
+                .filter(Boolean);
+            const extra = chips.some((chip) => !/linkedin/i.test(chip))
+                || (!chips.length && /\bother\b|wasn'?t familiar|not familiar/i.test(shownNow));
+            if (!extra && /linkedin/i.test(shownNow)) return { ok: true, chosen: shownNow };
         }
         const token = `p${Date.now().toString(36)}${Math.random().toString(16).slice(2, 8)}`;
         try { input.setAttribute('data-lumi-pick', token); } catch (_) { /* ignore */ }
@@ -3279,6 +3288,15 @@
             || /\b(learned about|hear about|how did you (?:hear|learn|find)|where (?:have|did) you (?:hear|learn|find))\b/i.test(lab)) {
             return profile?.how_heard || 'LinkedIn';
         }
+        if (kind === 'years_of_experience'
+            || (/\bhow many years\b/i.test(lab) && /\bexperience\b/i.test(lab))) {
+            return yearsExperienceFillFromProfile(profile);
+        }
+        if (kind === 'postal_code' || /\b(zip\s*code|postal\s*code|postcode)\b/i.test(lab)) {
+            const zip = String(profile?.postal_code || profile?.zip || '').trim();
+            if (zip && !/^n\/?a$/i.test(zip)) return zip;
+            return '';
+        }
         if (kind === 'current_company'
             || (/\b(most[\s_-]*recent[\s_-]*employer|current[\s_-]*company|current[\s_-]*employer|present[\s_-]*employer)\b/i.test(lab)
                 && !/\b(previous|prior|former|have you|worked (?:at|for))\b/i.test(lab))) {
@@ -3639,6 +3657,30 @@
             } catch (_) { /* shot is best-effort */ }
         };
         const attempts = [];
+        const noteAttempt = (row) => {
+            attempts.push(row);
+            if (!applicationId) return;
+            try {
+                chrome.runtime.sendMessage({
+                    type: 'BIDDER_FIELD_ATTEMPT',
+                    applicationId,
+                    attempt: row
+                });
+            } catch (_) { /* tracking is best-effort */ }
+        };
+        const noteProgress = () => {
+            if (!applicationId) return;
+            try {
+                chrome.runtime.sendMessage({
+                    type: 'BIDDER_FILL_PROGRESS',
+                    applicationId,
+                    filled,
+                    pages,
+                    requiredOk,
+                    requiredTotal
+                });
+            } catch (_) { /* tracking is best-effort */ }
+        };
         let pages = 0;
         let filled = 0;
         let requiredTotal = 0;
@@ -3801,7 +3843,7 @@
                     if (res?.ok || valuesMatch(wanted, got || chosen, field.kind) || selectDone) {
                         ok = true;
                         chosen = got || chosen;
-                        attempts.push({
+                        noteAttempt({
                             application_id: applicationId,
                             page_index: pages,
                             field_id: field.id,
@@ -3815,7 +3857,7 @@
                         break;
                     }
                     if (attempt === maxTries) {
-                        attempts.push({
+                        noteAttempt({
                             application_id: applicationId,
                             page_index: pages,
                             field_id: field.id,
@@ -3828,10 +3870,12 @@
                     }
                     await sleep(200);
                 }
+                if (ok) noteProgress();
                 if (field.required && !ok) {
                     // continue trying other fields; report at end
                 }
             }
+            noteProgress();
 
             try {
                 await fillGreenhouseIdentityGaps(profile);
@@ -4100,6 +4144,7 @@
             }
         }
 
+        noteProgress();
         return {
             ok: requiredComplete,
             engine: ENGINE,

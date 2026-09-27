@@ -2970,10 +2970,35 @@ async function findLiveApplyTabForUrl(wantedUrl) {
     }
 }
 
+const intentionalCloseTabs = new Set();
+const fillProgressByApp = new Map();
+const fieldAttemptBuffer = new Map();
+
 async function closeBidderTab(tabId) {
     if (!tabId) return;
+    intentionalCloseTabs.add(Number(tabId));
     await releasePageDebugger(tabId);
     try { await chrome.tabs.remove(tabId); } catch (_) { /* ignore */ }
+}
+
+function noteFillProgress(applicationId, progress) {
+    const id = Number(applicationId);
+    if (!id) return;
+    const prev = fillProgressByApp.get(id) || {};
+    fillProgressByApp.set(id, {
+        ...prev,
+        ...progress,
+        filled: Math.max(Number(prev.filled) || 0, Number(progress?.filled) || 0),
+        at: Date.now()
+    });
+}
+
+async function flushFieldAttempts(applicationId) {
+    const id = Number(applicationId);
+    const rows = fieldAttemptBuffer.get(id);
+    if (!id || !rows?.length) return;
+    fieldAttemptBuffer.delete(id);
+    await logBidderFieldAttempts(id, rows).catch(() => {});
 }
 
 const successFinishStarted = new Set();
@@ -3078,7 +3103,7 @@ async function finishSuccessfulBid({
 }
 
 /** Drop dead tab ids from queue maps so Control never shows a fake Focus chip. */
-async function clearTabMapping({ applicationId = null, tabId = null } = {}) {
+async function clearTabMapping({ applicationId = null, tabId = null, intentional = false } = {}) {
     const st = await getQueueState().catch(() => null);
     if (!st) return;
     const tabsByAppId = { ...(st.tabsByAppId || {}) };
@@ -3091,7 +3116,7 @@ async function clearTabMapping({ applicationId = null, tabId = null } = {}) {
     const patch = {
         tabsByAppId,
         ownedTabAlive: false,
-        captchaTabMissing: true
+        captchaTabMissing: intentional ? false : true
     };
     if (tabId != null && Number(st.currentTabId) === Number(tabId)) patch.currentTabId = null;
     if (tabId != null && Number(st.captchaTabId) === Number(tabId)) patch.captchaTabId = null;
@@ -4459,12 +4484,64 @@ async function processReadyQueue(opts = {}) {
                     || fillErr?.code === 'answers_budget_short';
                 const isThin = /form_too_thin/i.test(errMsg) || fillErr?.code === 'form_too_thin';
                 const isCaptcha = /captcha/i.test(errMsg);
+                const tabGone = !!fillErr?.tabClosed || /^Tab closed$/i.test(errMsg);
+                if (tabGone) {
+                    const progress = fillProgressByApp.get(Number(item.id)) || {};
+                    const hadFill = Number(progress.filled || 0) > 0 || Number(progress.pages || 0) > 0;
+                    await flushFieldAttempts(item.id).catch(() => {});
+                    if (hadFill) {
+                        await logCourseEvent(item.id, 'fill_done', {
+                            filled: Number(progress.filled) || 0,
+                            requiredOk: progress.requiredOk,
+                            requiredTotal: progress.requiredTotal,
+                            via: 'tab_closed_after_fill',
+                            tabClosed: true
+                        }).catch(() => {});
+                        await setAppRunState(item.id, 'filled', {
+                            tabId: opened.tabId,
+                            eventType: 'fill_done',
+                            missingRequired: []
+                        }).catch(() => {});
+                        await setQueueState({
+                            runState: 'filled',
+                            lastStatusEvent: 'fill_done',
+                            lastStatusAt: Date.now(),
+                            lastStatusMeta: {
+                                filled: Number(progress.filled) || 0,
+                                tabClosed: true,
+                                via: 'tab_closed_after_fill'
+                            },
+                            coachStatus: 'Filled — job tab closed',
+                            coachAt: Date.now(),
+                            ownedTabAlive: false,
+                            captchaTabMissing: false
+                        }).catch(() => {});
+                        if (opened?.tabId) intentionalCloseTabs.add(Number(opened.tabId));
+                        processed += 1;
+                        continue;
+                    }
+                }
                 // bid_budget_exceeded already logged — avoid a second FAILED event.
-                if (!parkedRegen && !isBudget && !isThin) {
+                if (!parkedRegen && !isBudget && !isThin && !tabGone) {
                     await logCourseEvent(item.id, 'fill_failed', {
                         error: errMsg,
                         tabId: opened.tabId
                     });
+                }
+                if (tabGone) {
+                    await logCourseEvent(item.id, 'tab_closed', {
+                        reason: 'during_fill',
+                        phase: 'fill',
+                        tabId: opened.tabId,
+                        error: 'Tab closed'
+                    }).catch(() => {});
+                    await setQueueState({
+                        coachStatus: 'Apply tab closed before the fill finished',
+                        coachAt: Date.now(),
+                        ownedTabAlive: false
+                    }).catch(() => {});
+                    if (opened?.tabId) intentionalCloseTabs.add(Number(opened.tabId));
+                    continue;
                 }
                 // Capture form + screenshot BEFORE any close/park so Control keeps evidence.
                 const snap = await captureFailEvidence(
@@ -8500,6 +8577,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             });
         }
 
+        fieldAttemptBuffer.delete(Number(item.id));
         if (Array.isArray(result.attempts) && result.attempts.length) {
             try {
                 await logBidderFieldAttempts(item.id, result.attempts.map((row) => ({
@@ -8670,9 +8748,16 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
 // When the user (or Chrome) closes an owned apply tab — clear stale Focus chips + log once.
 chrome.tabs.onRemoved.addListener((tabId) => {
     (async () => {
-        const st = await getQueueState().catch(() => null);
-        if (!st) return;
         const tid = Number(tabId);
+        const intentional = intentionalCloseTabs.has(tid);
+        if (intentional) intentionalCloseTabs.delete(tid);
+        let st = await getQueueState().catch(() => null);
+        if (!st) return;
+        const phase = `${st.runState || ''} ${st.lastStatusEvent || ''}`;
+        if (/filling|verifying/.test(phase) && !intentional) {
+            await new Promise((r) => setTimeout(r, 600));
+            st = await getQueueState().catch(() => st);
+        }
         const tabsByAppId = st.tabsByAppId || {};
         let appId = null;
         for (const [k, v] of Object.entries(tabsByAppId)) {
@@ -8687,8 +8772,25 @@ chrome.tabs.onRemoved.addListener((tabId) => {
             || Number(st.currentTabId) === tid
             || Number(st.captchaTabId) === tid;
         if (!ours) return;
-        // Avoid duplicate tab_closed if leftover_sweep / fill park already logged.
         const lastEv = String(st.lastStatusEvent || '');
+        const runPhase = String(st.runState || '');
+        const closedAfterFill = intentional
+            || /success|filled/i.test(runPhase)
+            || /fill_done|after_fill|marked_applied|awaiting_manual_submit|ready_to_submit/i.test(lastEv);
+        if (closedAfterFill) {
+            await clearTabMapping({ applicationId: appId, tabId: tid, intentional: true }).catch(() => {});
+            if (!/Filled — job tab closed|confirmed/i.test(String(st.coachStatus || ''))) {
+                await setQueueState({
+                    ownedTabAlive: false,
+                    captchaTabMissing: false,
+                    coachStatus: /success|marked_applied/i.test(`${runPhase} ${lastEv}`)
+                        ? (st.coachStatus || 'Applied — job tab closed')
+                        : 'Filled — job tab closed'
+                }).catch(() => {});
+            }
+            return;
+        }
+        // Avoid duplicate tab_closed if leftover_sweep / fill park already logged.
         const lastTab = Number(st.lastStatusMeta?.tabId || 0);
         const alreadyLogged = /tab_closed/i.test(lastEv) && lastTab === tid
             && (Date.now() - Number(st.lastStatusAt || 0) < 15_000);
@@ -8917,6 +9019,37 @@ function handleExtensionMessage(msg, sender, sendResponse) {
             .then((pack) => sendResponse({ ok: true, pack }))
             .catch((err) => sendResponse({ ok: false, error: err?.message || String(err) }));
         return true;
+    }
+    if (msg?.type === 'BIDDER_FILL_PROGRESS') {
+        noteFillProgress(msg.applicationId, {
+            filled: msg.filled,
+            pages: msg.pages,
+            requiredOk: msg.requiredOk,
+            requiredTotal: msg.requiredTotal
+        });
+        sendResponse({ ok: true });
+        return false;
+    }
+    if (msg?.type === 'BIDDER_FIELD_ATTEMPT') {
+        const id = Number(msg.applicationId);
+        const row = msg.attempt;
+        if (id && row) {
+            const list = fieldAttemptBuffer.get(id) || [];
+            list.push({
+                application_id: row.application_id || id,
+                page_index: row.page_index,
+                field_id: row.field_id,
+                field_kind: row.field_kind,
+                ok: row.ok,
+                strategy: row.strategy,
+                attempt_n: row.attempt_n,
+                error: row.error
+            });
+            fieldAttemptBuffer.set(id, list);
+            if (list.length >= 8) flushFieldAttempts(id).catch(() => {});
+        }
+        sendResponse({ ok: true });
+        return false;
     }
     if (msg?.type === 'BIDDER_PAGE_SHOT') {
         const tabId = sender?.tab?.id;

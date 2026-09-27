@@ -95,6 +95,67 @@
             click(best);
             return (best.textContent || '').replace(/\s+/g, ' ').trim();
         };
+        const howHeard = kind === 'how_heard' || /\blinkedin\b/.test(String(wanted || '').toLowerCase());
+        const controlRoot = () => input.closest('.select__control') || input.parentElement;
+        const setNative = (el, value) => {
+            const proto = el.tagName === 'TEXTAREA'
+                ? window.HTMLTextAreaElement.prototype
+                : window.HTMLInputElement.prototype;
+            const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+            try {
+                const tracker = el._valueTracker;
+                if (tracker && typeof tracker.setValue === 'function') tracker.setValue('');
+            } catch (_) { /* ignore */ }
+            if (desc && desc.set) desc.set.call(el, value);
+            else el.value = value;
+            el.dispatchEvent(new Event('input', { bubbles: true }));
+            el.dispatchEvent(new Event('change', { bubbles: true }));
+        };
+        const dropExtraChips = () => {
+            if (!howHeard) return;
+            const root = controlRoot();
+            const removes = [...(root?.querySelectorAll?.(
+                '.select__multi-value__remove, [class*="multi-value__remove"]'
+            ) || [])];
+            for (const btn of removes) {
+                const chip = (btn.parentElement?.innerText || '').replace(/\s+/g, ' ').trim();
+                if (/linkedin/i.test(chip)) continue;
+                click(btn);
+            }
+        };
+        const linkedInOnly = () => {
+            const root = controlRoot();
+            const chips = [...(root?.querySelectorAll?.(
+                '.select__multi-value__label, [class*="multi-value__label"]'
+            ) || [])]
+                .map((el) => (el.innerText || '').replace(/\s+/g, ' ').trim())
+                .filter(Boolean);
+            if (!chips.length || chips.some((chip) => !/linkedin/i.test(chip))) return '';
+            return chips.join(', ');
+        };
+        const clearOtherDetails = () => {
+            if (!howHeard) return;
+            for (const el of document.querySelectorAll('textarea, input[type="text"]')) {
+                let text = `${el.getAttribute('aria-label') || ''} ${el.getAttribute('placeholder') || ''}`;
+                if (el.id) {
+                    try {
+                        const lab = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+                        if (lab) text += ` ${lab.innerText || ''}`;
+                    } catch (_) { /* ignore */ }
+                }
+                const wrap = el.closest('.field, .application-question, [class*="question"]');
+                if (wrap) text += ` ${(wrap.innerText || '').slice(0, 240)}`;
+                if (!/\bif you selected\b/i.test(text) || !/\bother\b/i.test(text)) continue;
+                if (String(el.value || '').trim()) setNative(el, '');
+            }
+        };
+        dropExtraChips();
+        await sleep(40);
+        const kept = linkedInOnly();
+        if (kept) {
+            clearOtherDetails();
+            return { ok: true, chosen: kept };
+        }
         try { input.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (_) { /* ignore */ }
         click(input);
         try { input.focus(); } catch (_) { /* ignore */ }
@@ -105,12 +166,16 @@
         }
         const chosen = choose();
         await sleep(80);
-        const shown = String(input.closest('.select__control')?.innerText || '').replace(/\s+/g, ' ').trim();
+        dropExtraChips();
+        await sleep(40);
+        clearOtherDetails();
+        const only = linkedInOnly();
+        const shown = only || String(input.closest('.select__control')?.innerText || '').replace(/\s+/g, ' ').trim();
         const placeholderOnly = !shown || /^select(\.\.\.|…)?$/i.test(shown);
         try {
             input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         } catch (_) { /* ignore */ }
-        return { ok: !!(chosen && !placeholderOnly), chosen: shown || chosen || '' };
+        return { ok: !!(only || (chosen && !placeholderOnly)), chosen: shown || chosen || '' };
     }
 
     window.addEventListener('message', (ev) => {

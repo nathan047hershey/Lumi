@@ -205,6 +205,39 @@ export function isFilledEvent(eventType) {
     );
 }
 
+function isCloseAfterFillEvent(eventType, meta) {
+    const t = String(eventType || '');
+    const m = meta && typeof meta === 'object' ? meta : {};
+    if (isTabClosedEvent(t, m)) return true;
+    return /fill_failed|run_failed/i.test(t) && /Tab closed/i.test(String(m.error || m.reason || ''));
+}
+
+function eventListHasFill(events) {
+    return (Array.isArray(events) ? events : []).some((e) => {
+        const t = String(e?.event_type || e?.type || '');
+        if (isFilledEvent(t) || isSuccessEvent(t) || /submit_clicked|mid_fill/i.test(t)) return true;
+        if (/^screenshot$/i.test(t) && /^(page_\d+|after_fill|after_fill_done|pre_submit)$/i.test(String(e?.meta?.stage || ''))) {
+            return true;
+        }
+        return false;
+    });
+}
+
+/** Short select answers that must not stay as essays, N/A, or a second "Other" chip. */
+export function canonicalDisplayedAnswer(label, answer) {
+    const lab = String(label || '');
+    const val = String(answer || '').trim();
+    if (/\bif you selected\b/i.test(lab) && /\bother\b/i.test(lab)) return '';
+    if (/\b(where have you learned|learned about|how did you hear|hear about)\b/i.test(lab)) {
+        if (!val || /^n\/?a$/i.test(val) || /\bother\b/i.test(val) || val.length > 48) return 'LinkedIn';
+        const hit = val.split(/[,\n]/).map((s) => s.trim()).find((s) => /linkedin/i.test(s));
+        return hit || 'LinkedIn';
+    }
+    if (/\b(zip\s*code|postal\s*code|postcode)\b/i.test(lab) && /^n\/?a$/i.test(val)) return '';
+    if (/\bhow many years\b/i.test(lab) && /\bexperience\b/i.test(lab) && /^yes\.?$/i.test(val)) return '';
+    return val;
+}
+
 /** Incomplete required fields — not FILLED and not hard FAILED. */
 export function isIncompleteFillEvent(eventType, meta) {
     const t = String(eventType || '');
@@ -558,6 +591,16 @@ export function lastStatusEvent(courseOrEvents) {
             }
         }
         const picked = lastPrimary || fallback;
+        if (
+            picked?.event_type
+            && isCloseAfterFillEvent(picked.event_type, picked.meta)
+            && eventListHasFill(courseOrEvents)
+        ) {
+            return {
+                event_type: 'fill_done',
+                meta: { ...(picked.meta || {}), tabClosed: true, via: 'tab_closed_after_fill' }
+            };
+        }
         if (
             sawBenignAbort
             && picked?.event_type
@@ -1002,6 +1045,8 @@ export function bidStageProgress({
 
     if (/marked_applied|submitted_ok|mark_applied|submit_success_detected/i.test(t) || courseApplied) {
         bump(4, 100, 'APPLIED — Confirmed on site', 'emerald');
+    } else if (isCloseAfterFillEvent(t, meta) && eventListHasFill(list)) {
+        bump(4, 100, 'Filled — tab closed', 'sky');
     } else if (isTabClosedEvent(t, meta)) {
         bump(Math.max(stepIndex, 1), Math.max(pct, 40), 'TAB CLOSED — Open tab, then Re-autofill', 'amber');
     } else if (isBudgetExceededEvent(t, meta)) {
@@ -1040,7 +1085,7 @@ export function bidStageProgress({
         if (/marked_applied|submitted_ok|submitted/i.test(t)) {
             bump(4, 100, 'APPLIED — Confirmed on site', 'emerald');
         } else if (/awaiting_manual_submit|after_fill|fill_done|ready_to_submit|reautofill_done/i.test(t)) {
-            bump(4, 100, 'Filled — waiting for thank-you', 'sky');
+            bump(4, 100, meta.tabClosed ? 'Filled — tab closed' : 'Filled — waiting for thank-you', 'sky');
         } else if (/fill_incomplete|submit_blocked_incomplete|cv_presubmit_blocked|cv_regen_pending|cv_regenerate/i.test(t)) {
             const ro = Number(meta.requiredOk);
             const rt = Number(meta.requiredTotal);
@@ -1067,6 +1112,8 @@ export function bidStageProgress({
                 : `SKIPPED — ${meta.error || t}`, 'amber');
         } else if (/needs_captcha|login_wall/i.test(t)) {
             bump(4, 90, 'Needs CAPTCHA / login — not finished', 'amber');
+        } else if (eventListHasFill(list)) {
+            bump(4, 100, 'Filled — tab closed', 'sky');
         } else if (Number.isFinite(processed) && processed <= 0) {
             bump(1, 25, 'Queue finished — 0 processed (no fill)', 'amber');
         } else {
@@ -1087,7 +1134,7 @@ export function bidStageProgress({
                 ? `INCOMPLETE —${ratio} ${missHint}`
                 : `INCOMPLETE — finish empty fields${ratio}`, 'amber');
     } else if (/awaiting_manual_submit|after_fill|ready_to_submit|fill_done|reautofill_done/i.test(t)) {
-        bump(4, 92, 'Filled — waiting for thank-you', 'sky');
+        bump(4, meta.tabClosed ? 100 : 92, meta.tabClosed ? 'Filled — tab closed' : 'Filled — waiting for thank-you', 'sky');
     } else if (/autofill|dial_country|fill_retry|mid_fill/i.test(t)) {
         const ro = Number(meta.requiredOk);
         const rt = Number(meta.requiredTotal);
@@ -1139,8 +1186,9 @@ export function bidStageProgress({
         const stageFrac = Math.min(1, Math.max(0, pct / 100));
         const overall = ((Math.max(0, queueIndex - 1) + stageFrac) / queueTotal) * 100;
         const doneIsSuccess = /done/i.test(qStatus)
-            && /APPLIED|Filled — waiting|SUCCESS/i.test(label)
-            && !/INCOMPLETE|FAILED|SKIPPED|TAB CLOSED|0 processed|CV /i.test(label);
+            && /APPLIED|Filled — waiting|Filled — tab closed|SUCCESS/i.test(label)
+            && !/INCOMPLETE|FAILED|SKIPPED|0 processed|CV /i.test(label)
+            && !/^TAB CLOSED/i.test(label);
         if (doneIsSuccess) {
             pct = 100;
             if (queueLabel && label && !/SUCCESS|FAILED|FILLED|TIME LIMIT|TAB CLOSED|SKIPPED|RE-FILL|Queue finished|Needs CAPTCHA|INCOMPLETE|APPLIED/i.test(label)) {

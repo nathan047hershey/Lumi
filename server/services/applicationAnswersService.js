@@ -51,7 +51,8 @@ const FIXED_FIELD_RE = {
     willing_to_travel: /\b(willing[\s_-]*to[\s_-]*travel|percent[\s_-]*travel|\btravel\b)/i,
     earliest_start_date: /\b(start[\s_-]*date|earliest[\s_-]*start|available[\s_-]*to[\s_-]*start|when[\s_-]*can[\s_-]*you[\s_-]*start)\b/i,
     notice_period: /\b(notice[\s_-]*period|notice[\s_-]*time)\b/i,
-    how_heard: /\b(how[\s_-]*did[\s_-]*you[\s_-]*(hear|find)|hear[\s_-]*about|find[\s_-]*this[\s_-]*(position|role|job)|referral[\s_-]*source)\b/i,
+    how_heard: /\b(how[\s_-]*did[\s_-]*you[\s_-]*(hear|find|learn)|where[\s_-]*(have|did)[\s_-]*you[\s_-]*(hear|learn|find)|learned[\s_-]*about|hear[\s_-]*about|find[\s_-]*this[\s_-]*(position|role|job)|referral[\s_-]*source)\b/i,
+    postal_code: /\b(zip[\s_-]*code|postal[\s_-]*code|postcode)\b/i,
     years_of_experience: /\b((total\s+)?years?[\s_-]*of[\s_-]*experience|total[\s_-]*experience)\b/i,
     education_level: /\b(highest[\s_-]*(degree|education)|education[\s_-]*level|degree[\s_-]*level)\b/i,
     school: /\b(school|university|college|institution)\b/i,
@@ -637,12 +638,13 @@ function fixedProfileKind(q) {
         'hispanic_latino', 'work_authorization', 'requires_sponsorship',
         'disability_status', 'veteran_status', 'security_clearance',
         'willing_to_relocate', 'willing_to_travel', 'earliest_start_date',
-        'notice_period', 'how_heard', 'years_of_experience',
+        'notice_period', 'how_heard', 'postal_code', 'years_of_experience',
         'school', 'discipline', 'degree', 'education_level',
         'over_18', 'preferred_name', 'portfolio_url', 'website_url',
         'race_ethnicity', 'gender', 'birthdate', 'todays_date',
         'city', 'state', 'current_company'
     ];
+    if (/\bif you selected\b/i.test(hay) && /\bother\b/i.test(hay)) return 'other_source_details';
     for (const kind of order) {
         if (!FIXED_FIELD_RE[kind]?.test(hay)) continue;
         // "Disability insurance" is not ADA self-ID.
@@ -656,13 +658,8 @@ function fixedProfileKind(q) {
             continue;
         }
         // "Years of experience with React" is a skill written Q — not the profile YoE field.
-        if (
-            kind === 'years_of_experience'
-            && /\byears?[\s_-]*of[\s_-]*experience\s+(with|in|using|on)\b/i.test(hay)
-        ) {
-            continue;
-        }
-        if (kind === 'years_of_experience' && /\b(describe|explain|provide|open[\s_-]*source)\b/i.test(hay)) {
+        if (kind === 'years_of_experience' && /\b(describe|explain|provide an|open[\s_-]*source)\b/i.test(hay)
+            && !/\bhow many\b/i.test(hay)) {
             continue;
         }
         if (kind === 'degree' && /\b(highest[\s_-]*(degree|education)|degree[\s_-]*level)\b/i.test(hay)) {
@@ -695,7 +692,12 @@ function fixedProfileValue(kind, profile) {
             return `${String(d.getUTCMonth() + 1).padStart(2, '0')}/${String(d.getUTCDate()).padStart(2, '0')}/${d.getUTCFullYear()}`;
         }
     }
+    if (kind === 'other_source_details') return '';
     if (kind === 'how_heard') return profile.how_heard || 'LinkedIn';
+    if (kind === 'postal_code') {
+        const zip = String(profile.postal_code || profile.zip || profile.zip_code || '').trim();
+        return /^n\/?a$/i.test(zip) ? '' : zip;
+    }
     if (kind === 'requires_sponsorship') {
         const raw = String(profile.requires_sponsorship || '').trim();
         if (/^(yes|y|true|1)$/i.test(raw)) return 'Yes';

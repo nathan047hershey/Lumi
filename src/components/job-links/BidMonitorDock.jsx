@@ -1097,7 +1097,11 @@ export default function BidMonitorDock({
                                                 : (imgBroken ? (imgErr || 'Preview could not load') : (imgErr || progressLabel || statusLine || 'Waiting for live frames…'))}
                                         </span>
                                         {!loading && !imgErr && !imgBroken && (queueRunning || progressLabel) ? (
-                                            <span className="text-[10px] text-white/30">Live frame updates while this job is open</span>
+                                            <span className="text-[10px] text-white/30">
+                                                {queueRunning
+                                                    ? 'Live frame updates while this job is open'
+                                                    : 'The saved page capture stays here after the job tab closes'}
+                                            </span>
                                         ) : null}
                                     </div>
                                 )}

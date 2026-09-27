@@ -71,6 +71,7 @@ import {
     sortScreenshotsForReview,
     isProofScreenshotStage,
     screenshotStageLabel,
+    canonicalDisplayedAnswer,
     liveStatusComment,
     isSuccessEvent,
     runStatusBadgeClass,
@@ -3622,7 +3623,7 @@ export default function AutoBidderDialog({
                                                     <div key={i} className="rounded border px-2 py-1">
                                                         <div className="font-medium">{a.label || a.id}</div>
                                                         <div className="whitespace-pre-wrap text-muted-foreground">
-                                                            {a.answer || a.value || '—'}
+                                                            {canonicalDisplayedAnswer(a.label || a.id, a.answer || a.value) || '—'}
                                                         </div>
                                                     </div>
                                                 ))}
@@ -3912,7 +3913,7 @@ export default function AutoBidderDialog({
                 () => runExt('JOB_APPLY_BIDDER_STOP', 'Stop'),
                 'Stop'
             )}
-            shotStage={screenshotStageLabel(activeMonitorShot?.stage)}
+            shotStage={activeMonitorShot ? screenshotStageLabel(activeMonitorShot.stage) : ''}
             imgSrc={dockShot.src}
             imgErr={dockShot.err}
             loading={dockShot.loading}

@@ -123,6 +123,7 @@ function clip(s) {
 export function shortenOutcomeLabel(label) {
     const s = String(label || '').trim();
     if (!s) return '';
+    if (/^Filled — tab closed/i.test(s)) return 'Filled — tab closed';
     if (/^FILLED/i.test(s)) return 'Filled — waiting for thank-you';
     if (/^APPLIED/i.test(s) || /^SUCCESS/i.test(s)) return 'APPLIED — confirmed on site';
     if (/^REJECTED/i.test(s)) return 'REJECTED';

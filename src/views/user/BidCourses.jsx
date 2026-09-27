@@ -21,6 +21,7 @@ import {
     formatElapsedSince,
     sortScreenshotsForReview,
     screenshotStageLabel,
+    canonicalDisplayedAnswer,
     runStatusBadgeClass,
     runStatusRowClass,
     runStatusBannerClass,
@@ -709,7 +710,7 @@ function BidCourses({ embedded = false }) {
                                                                         </div>
                                                                     </div>
                                                                 ) : (
-                                                                    <div className="mt-1 whitespace-pre-wrap text-muted-foreground">{a.value || a.answer || '—'}</div>
+                                                                    <div className="mt-1 whitespace-pre-wrap text-muted-foreground">{canonicalDisplayedAnswer(a.label || a.id, a.value || a.answer) || '—'}</div>
                                                                 )}
                                                             </div>
                                                         ))}
