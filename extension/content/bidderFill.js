@@ -1581,7 +1581,71 @@
     }
 
     function isCatchAll(t) {
-        return /somewhere\s*else|^other\b|not listed|none of the above|prefer not/i.test(String(t || ''));
+        return /somewhere\s*else|^other\b|not listed|none of the above|none of these|prefer not|do not reside|not in (?:the )?list/i.test(String(t || ''));
+    }
+
+    const US_STATE_BY_ABBR = {
+        al: 'alabama', ak: 'alaska', az: 'arizona', ar: 'arkansas', ca: 'california',
+        co: 'colorado', ct: 'connecticut', de: 'delaware', dc: 'district of columbia',
+        fl: 'florida', ga: 'georgia', hi: 'hawaii', id: 'idaho', il: 'illinois',
+        in: 'indiana', ia: 'iowa', ks: 'kansas', ky: 'kentucky', la: 'louisiana',
+        me: 'maine', md: 'maryland', ma: 'massachusetts', mi: 'michigan', mn: 'minnesota',
+        ms: 'mississippi', mo: 'missouri', mt: 'montana', ne: 'nebraska', nv: 'nevada',
+        nh: 'new hampshire', nj: 'new jersey', nm: 'new mexico', ny: 'new york',
+        nc: 'north carolina', nd: 'north dakota', oh: 'ohio', ok: 'oklahoma', or: 'oregon',
+        pa: 'pennsylvania', ri: 'rhode island', sc: 'south carolina', sd: 'south dakota',
+        tn: 'tennessee', tx: 'texas', ut: 'utah', vt: 'vermont', va: 'virginia',
+        wa: 'washington', wv: 'west virginia', wi: 'wisconsin', wy: 'wyoming'
+    };
+
+    function stateNameSet(raw, profile) {
+        const set = new Set();
+        const add = (s) => {
+            const x = String(s || '').replace(/\s+/g, ' ').trim().toLowerCase();
+            if (!x || /^(yes|no)$/.test(x)) return;
+            set.add(x);
+            if (US_STATE_BY_ABBR[x]) set.add(US_STATE_BY_ABBR[x]);
+            for (const [abbr, name] of Object.entries(US_STATE_BY_ABBR)) {
+                if (name === x) set.add(abbr);
+            }
+        };
+        add(raw);
+        add(profile?.state);
+        return set;
+    }
+
+    function stateOptionIsExact(raw, profile, optionText) {
+        const tl = String(optionText || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!tl || isCatchAll(optionText)) return false;
+        return stateNameSet(raw, profile).has(tl);
+    }
+
+    async function listAllMenuOptions(anchorEl) {
+        const byText = new Map();
+        const add = (nodes) => {
+            for (const o of nodes || []) {
+                const t = (o.textContent || '').replace(/\s+/g, ' ').trim();
+                if (t) byText.set(t.toLowerCase(), o);
+            }
+        };
+        add(listMenuOptions(anchorEl));
+        let menu = null;
+        try {
+            const listId = anchorEl?.getAttribute?.('aria-controls');
+            if (listId) menu = document.getElementById(listId);
+        } catch (_) { /* ignore */ }
+        if (!menu) {
+            menu = document.querySelector('.select__menu-list, [class*="menu-list"], [role="listbox"]');
+        }
+        if (menu && menu.scrollHeight > (menu.clientHeight || 0) + 8) {
+            const step = Math.max(80, (menu.clientHeight || 120) - 20);
+            for (let y = 0; y <= menu.scrollHeight; y += step) {
+                menu.scrollTop = y;
+                await sleep(30);
+                add(listMenuOptions(anchorEl));
+            }
+        }
+        return [...byText.values()];
     }
 
     function simplifyAliasesFor(raw, kind, skillAliases, profile = null) {
@@ -1808,6 +1872,11 @@
             }
             const tl = t.toLowerCase();
             const w = raw.toLowerCase();
+            // Limited state lists: only the profile state, never a neighboring state.
+            if (kind === 'state') {
+                if (isCatchAll(t)) return -1;
+                return stateOptionIsExact(raw, profile, t) ? 100 : -1;
+            }
 
             // Experienced candidates: never pick "No experience" / academic-only / Not at all / 0–2.
             if ((kind === 'skill_experience' || kind === 'years_of_experience') && yoeN >= 1) {
@@ -2073,12 +2142,38 @@
             pick = bestScore >= minScore ? best : null;
         }
 
+        // Required state list with no matching state: choose Other, otherwise skip.
+        // Do not type — typing highlights a different state (Texas) that is not theirs.
+        if (kind === 'state') {
+            const pool = await listAllMenuOptions(input);
+            let exact = null;
+            let other = null;
+            for (const o of pool) {
+                const t = (o.textContent || '').replace(/\s+/g, ' ').trim();
+                if (!t) continue;
+                if (isCatchAll(t)) {
+                    other = other || o;
+                    continue;
+                }
+                if (stateOptionIsExact(raw, profile, t)) exact = o;
+            }
+            if (exact) pick = exact;
+            else if (other) pick = other;
+            else {
+                try {
+                    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+                    input.blur();
+                } catch (_) { /* ignore */ }
+                return { ok: true, chosen: '', reason: 'skipped_no_matching_option' };
+            }
+        }
+
         // Type immediately when not yet picked (Discipline / School / long lists)
         // Also type "No" for disability/sponsorship when menu peek missed.
         // City/location: stop typing as soon as the top hint matches.
         // NEVER type essay / skill aliases into static skill dropdowns after open miss —
         // type a short filter string only.
-        if (!pick && (!yn || typeFilter) && !looksLikeEssay) {
+        if (!pick && kind !== 'state' && (!yn || typeFilter) && !looksLikeEssay) {
             try { setNativeValue(input, ''); } catch (_) { /* ignore */ }
             const typed = typeFilter
                 || (forceOpenOnly && kind === 'skill_experience'
@@ -2276,6 +2371,9 @@
             if (/\bfemale\b/i.test(raw) && /\bmale\b/i.test(shown) && !/\bfemale\b/i.test(shown)) {
                 return { ok: false, chosen: shown, reason: 'gender_mismatch' };
             }
+        }
+        if (kind === 'state' && (isCatchAll(displayed) || isCatchAll(chosen))) {
+            return { ok: true, chosen: displayed || chosen, reason: 'other_no_exact_state' };
         }
         const ok = !!(displayed && valuesMatch(raw, displayed, kind))
             || (helper && displayed && helper.scoreChoice(raw, displayed, '') >= 70)
@@ -2768,7 +2866,8 @@
                     );
                 } catch (_) { /* ignore */ }
             }
-            if (!res?.ok && !canonical && !labelLooksLikeRace(liveLab) && (kind === 'city' || kind === 'state')) {
+            if (!res?.ok && res?.reason !== 'skipped_no_matching_option'
+                && !canonical && !labelLooksLikeRace(liveLab) && (kind === 'city' || kind === 'state')) {
                 const st = String(wanted || '').split(',').pop()?.trim();
                 if (st && st.toLowerCase() !== String(wanted || '').toLowerCase()) {
                     res = await fillCombobox(el, st, 'state', 'type', profile, field.label || '');

@@ -2987,7 +2987,7 @@ export default function AutoBidderDialog({
     const Subcopy = pageMode ? 'p' : DialogDescription;
 
     return (
-        <div className={pageMode ? 'flex w-full flex-col gap-4' : 'contents'}>
+        <div className={pageMode ? 'w-full' : 'contents'}>
         <BidderShell pageMode={pageMode} open={open} onOpenChange={onOpenChange}>
                 <div className={pageMode
                     ? 'flex flex-col gap-3 p-5 sm:p-6'
@@ -3008,17 +3008,6 @@ export default function AutoBidderDialog({
                             <span className="leading-none">Lumi</span>
                             <span className="text-[11px] font-medium tracking-normal text-white/40">Auto Bidder</span>
                         </span>
-                        {pageMode ? (
-                            <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                className="ml-auto h-8"
-                                onClick={() => navigate(jobLinksHref)}
-                            >
-                                Job links
-                            </Button>
-                        ) : null}
                     </Heading>
                     <div
                         className="mt-3 h-px w-16"
@@ -3029,6 +3018,95 @@ export default function AutoBidderDialog({
                         Auto Bidder — select profile and process job links
                     </Subcopy>
                 </DialogHeader>
+
+                {pageMode ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                        <Button
+                            type="button"
+                            size="sm"
+                            className="h-8 gap-1"
+                            disabled={dockBusy || busy || !canStartFromDock}
+                            title="Start the bid in a new background tab. This page stays here."
+                            onClick={startBidFromDock}
+                        >
+                            <Play className="h-3.5 w-3.5" />
+                            Start
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1"
+                            disabled={dockBusy || busy}
+                            onClick={() => runDockControl(
+                                () => openCaptchaTab(),
+                                ownedTabMapped && !captchaTabMissing ? 'Focus tab' : 'Open apply tab'
+                            )}
+                        >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            {ownedTabMapped && !captchaTabMissing ? 'Focus' : 'Open'}
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1"
+                            disabled={dockBusy || busy}
+                            onClick={() => runDockControl(() => reAutofillCurrentJob(), 'Re-autofill')}
+                        >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Re-fill
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1"
+                            disabled={dockBusy || busy}
+                            onClick={() => runDockControl(() => submitApplyFromControl(), 'Submit')}
+                        >
+                            <Play className="h-3.5 w-3.5" />
+                            Submit
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1"
+                            disabled={dockBusy || busy}
+                            onClick={() => runDockControl(
+                                () => runExt('JOB_APPLY_BIDDER_NEXT', 'Next'),
+                                'Next job'
+                            )}
+                        >
+                            <SkipForward className="h-3.5 w-3.5" />
+                            Next
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="destructive"
+                            className="h-8 gap-1"
+                            disabled={dockBusy || busy}
+                            onClick={() => runDockControl(
+                                () => runExt('JOB_APPLY_BIDDER_STOP', 'Stop'),
+                                'Stop'
+                            )}
+                        >
+                            <Square className="h-3.5 w-3.5" />
+                            Stop
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="ghost"
+                            className="ml-auto h-8"
+                            onClick={() => navigate(jobLinksHref)}
+                        >
+                            Job links
+                        </Button>
+                    </div>
+                ) : null}
 
                 <DialogBody className={pageMode
                     ? 'flex flex-col gap-3'
@@ -3737,7 +3815,8 @@ export default function AutoBidderDialog({
             isAdmin={isAdmin}
             refreshKey={shotBustKey}
         />
-        <div className={pageMode ? 'order-first w-full' : 'contents'}>
+        {pageMode ? null : (
+        <div className="contents">
         <BidMonitorDock
             embedded={pageMode}
             hidePreview={pageMode}
@@ -3959,6 +4038,7 @@ export default function AutoBidderDialog({
             }}
         />
         </div>
+        )}
         </div>
     );
 }

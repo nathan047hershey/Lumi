@@ -60,6 +60,13 @@
             if (tl === w) return 100;
             if (tl.startsWith(`${w} `) || tl.startsWith(`${w},`)) return 90;
         }
+        if (kind === 'state') {
+            if (/^other\b|somewhere else|not listed|none of the above|none of these|do not reside|not in (?:the )?list/.test(tl)) {
+                return 0;
+            }
+            if (tl === w) return 100;
+            return 0;
+        }
         if (tl === w) return 100;
         if (w.length > 8 && tl.length > 8 && (tl.includes(w) || w.includes(tl))) return 85;
         return 0;
@@ -91,7 +98,19 @@
                     best = option;
                 }
             }
-            if (!best || bestScore < 70) return '';
+            if (!best || bestScore < 70) {
+                if (kind === 'state') {
+                    const other = visible().find((option) => (
+                        /^other\b|somewhere else|not listed|none of the above|none of these|do not reside|not in (?:the )?list/i
+                            .test((option.textContent || '').replace(/\s+/g, ' ').trim())
+                    ));
+                    if (other) {
+                        click(other);
+                        return (other.textContent || '').replace(/\s+/g, ' ').trim();
+                    }
+                }
+                return '';
+            }
             click(best);
             return (best.textContent || '').replace(/\s+/g, ' ').trim();
         };
