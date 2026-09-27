@@ -665,12 +665,6 @@ export function courseRunStatus(course) {
     ) {
         return { kind: 'success', label: 'APPLIED — Site confirmed the application', short: 'APPLIED' };
     }
-    const shots = [].concat(course?.screenshots || [], course?.disk_screenshots || []);
-    const hasThankYouProof = shots.some((s) => isProofScreenshotStage(s?.stage));
-    if (hasThankYouProof && (course?.filled_at || isFilledEvent(event) || isCaptchaAttention(event, meta)
-        || /submit_clicked/i.test(event))) {
-        return { kind: 'success', label: 'APPLIED — Site confirmed the application', short: 'APPLIED' };
-    }
     if (isCaptchaAttention(event, meta)) {
         return {
             kind: 'attention',
@@ -694,14 +688,8 @@ export function courseRunStatus(course) {
     }
     if (/^item_aborted$/i.test(event) && isBenignAppliedAccessError(meta?.error || '')) {
         const events = Array.isArray(course?.events) ? course.events : [];
-        const hadFill = !!course?.filled_at
-            || events.some((e) => {
-                const et = e?.event_type || e?.type || '';
-                return isFilledEvent(et) || isSuccessEvent(et) || /submit_clicked/i.test(et);
-            });
-        const shots = [].concat(course?.screenshots || [], course?.disk_screenshots || []);
-        const proof = shots.some((s) => isProofScreenshotStage(s?.stage));
-        if (hadFill || proof) {
+        const hadSuccess = events.some((e) => isSuccessEvent(e?.event_type || e?.type || ''));
+        if (hadSuccess) {
             return { kind: 'success', label: 'APPLIED — Site confirmed the application', short: 'APPLIED' };
         }
     }

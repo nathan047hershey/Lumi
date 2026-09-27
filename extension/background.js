@@ -2928,13 +2928,16 @@ async function keepLumiTabInFront() {
     }
 }
 
-/** Open the job behind the current tab. Do not change which tab is in front. */
-async function openVisibleApplyTab(url) {
+/** Open the job behind the current tab. Do not change which tab is in front.
+ *  fresh: Start always creates a new tab so a previous thank-you page cannot be reused. */
+async function openVisibleApplyTab(url, opts = {}) {
     const applyUrl = isAshbyJobDescriptionUrl(url) ? ashbyApplicationUrl(url) : String(url || '').trim();
     if (!/^https?:\/\//i.test(applyUrl)) return null;
-    const existing = await findLiveApplyTabForUrl(applyUrl);
-    if (existing?.id) {
-        return { tabId: existing.id, url: applyUrl, windowId: existing.windowId, reused: true };
+    if (!opts.fresh) {
+        const existing = await findLiveApplyTabForUrl(applyUrl);
+        if (existing?.id) {
+            return { tabId: existing.id, url: applyUrl, windowId: existing.windowId, reused: true };
+        }
     }
     let windowId;
     try {
@@ -3360,7 +3363,7 @@ async function openReadyApplication(item, { fromQueue = false } = {}) {
         ? ashbyApplicationUrl(item.open_url)
         : item.open_url;
 
-    const openedTab = await openVisibleApplyTab(applyUrl);
+    const openedTab = await openVisibleApplyTab(applyUrl, { fresh: true });
     if (!openedTab?.tabId) throw new Error('Could not open the job tab');
 
     await rememberCvForJob({

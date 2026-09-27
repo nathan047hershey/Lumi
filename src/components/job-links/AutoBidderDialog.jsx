@@ -238,7 +238,7 @@ function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, onWheelZoom }) {
             className={
                 fullscreen
                     ? 'flex-1 min-h-0 overflow-auto rounded bg-black/40 p-2'
-                    : 'min-h-[28rem] max-h-[min(72vh,42rem)] overflow-auto rounded border bg-background/80 p-1'
+                    : 'min-h-[36rem] max-h-[min(88vh,72rem)] overflow-auto rounded border bg-background/80 p-1'
             }
             onWheel={onWheel}
         >
@@ -313,12 +313,12 @@ function ScreenshotLightbox({ open, onClose, courseId, filename, stage, isAdmin,
 }
 
 function LiveScreenshotPanel({ courseId, shot, isAdmin, refreshKey, lastRefreshedAt, onExpand }) {
-    const [zoom, setZoom] = useState(125);
+    const [zoom, setZoom] = useState(100);
     const [, setTick] = useState(0);
     const { src, err, loading } = useScreenshotSrc(courseId, shot?.filename, isAdmin, refreshKey);
 
     useEffect(() => {
-        setZoom(125);
+        setZoom(100);
     }, [shot?.filename]);
 
     useEffect(() => {
@@ -830,9 +830,8 @@ export default function AutoBidderDialog({
                 );
                 if (active) {
                     if (Array.isArray(st?.uiMessageLog)) setExtNotifs(st.uiMessageLog);
-                    const savedId = readMonitorStorage().courseId;
-                    const liveId = st?.currentId || st?.captchaApplicationId || savedId || null;
-                    if (liveId) setSelectedId((prev) => prev || liveId);
+                const savedId = readMonitorStorage().courseId;
+                if (savedId) setSelectedId((prev) => prev || savedId);
                     setMonitorActive(true);
                     setDockOpen(true);
                     writeMonitorStorage({ active: true });
@@ -1451,10 +1450,15 @@ export default function AutoBidderDialog({
                             : data.application
                     };
                 }
-                const keepSuccess = successLatchRef.current
+                const sameCourse = prev?.course?.id
+                    && data?.course?.id
+                    && String(prev.course.id) === String(data.course.id);
+                const keepSuccess = !!sameCourse && (
+                    successLatchRef.current
                     || prev?.course?.outcome === 'applied'
                     || !!prev?.course?.applied_at
-                    || prev?.application?.status === 'applied';
+                    || prev?.application?.status === 'applied'
+                );
                 if (!keepSuccess || serverSuccess || !data.course) return data;
                 // Control detected thank-you before list/detail fully synced — do not wipe SUCCESS.
                 const latchEvent = {
@@ -1482,13 +1486,21 @@ export default function AutoBidderDialog({
                         : [...(Array.isArray(data.events) ? data.events : []), latchEvent]
                 };
             });
+            setError('');
             if (bumpLive) {
                 setLiveRefreshKey((k) => k + 1);
                 setLastRefreshedAt(Date.now());
             }
         } catch (err) {
+            const msg = err.response?.data?.error || err.message || 'Failed to load course';
+            if (/course not found/i.test(msg)) {
+                setDetail(null);
+                setSelectedId((cur) => (String(cur) === String(courseId) ? null : cur));
+                setError('');
+                return;
+            }
             if (!opts.silent) {
-                setError(err.response?.data?.error || err.message || 'Failed to load course');
+                setError(msg);
             }
         }
     }, [coursesApi]);
@@ -2562,10 +2574,17 @@ export default function AutoBidderDialog({
 
         // Open one job tab and start the fill. Do not navigate this page.
         setStatus('Starting bids…');
+        setError('');
+        // Drop the previous course's applied mark, frames, and log so they cannot
+        // make the next job look successful.
+        successLatchRef.current = false;
+        detailSigRef.current = '';
+        setDetail(null);
+        setSelectedId(null);
 
         // Follow the active queue course in Live monitor (clear prior manual pick).
         selectedIdTouchedRef.current = false;
-        setWorkspaceTab('courses');
+        setWorkspaceTab('form');
 
         void Promise.all(
             startReady.map((item) => {
@@ -2702,8 +2721,11 @@ export default function AutoBidderDialog({
             )
         );
 
-        // Prefer site success / thank-you whenever present (incl. manual submit + Update state).
-        if (hasProof) {
+        // A stored thank-you image is not proof for a job that is still running.
+        // Only pin to it after this course itself was confirmed on the live page.
+        const confirmed = detail?.course?.outcome === 'applied'
+            || isSuccessEvent(detail?.course?.last_event_type);
+        if (hasProof && confirmed && !thisCourseActive) {
             setMonitorFrameFollowLive(proofIdx >= monitorFrames.length - 1);
             setMonitorFrameIndex(proofIdx);
             return;
@@ -2735,9 +2757,11 @@ export default function AutoBidderDialog({
         queueState?.running,
         queueState?.currentId,
         queueState?.captchaApplicationId,
-        detail?.course?.application_id,
-        detail?.application?.id,
-        awaitingCaptcha
+            detail?.course?.application_id,
+            detail?.application?.id,
+            detail?.course?.outcome,
+            detail?.course?.last_event_type,
+            awaitingCaptcha
     ]);
 
     // Reset to follow-live when switching courses (proof pin runs after frames load).
@@ -2750,12 +2774,6 @@ export default function AutoBidderDialog({
         ? monitorFrames[Math.min(monitorFrameIndex, monitorFrames.length - 1)]
         : null;
 
-    // Prefer site success / thank-you frame for the in-dialog Live panel when present.
-    const latestShot = useMemo(() => {
-        if (!monitorFrames.length) return null;
-        const idx = preferredProofFrameIndex(monitorFrames);
-        return monitorFrames[idx] || monitorFrames[monitorFrames.length - 1];
-    }, [monitorFrames]);
     const courseIdForShots = (
         detail?.course?.id && String(detail.course.id) === String(selectedId)
     ) ? detail.course.id : null;
@@ -2969,7 +2987,7 @@ export default function AutoBidderDialog({
     const Subcopy = pageMode ? 'p' : DialogDescription;
 
     return (
-        <div className={pageMode ? 'grid w-full items-start gap-4 lg:grid-cols-[minmax(0,1fr)_28rem]' : 'contents'}>
+        <div className={pageMode ? 'flex w-full flex-col gap-4' : 'contents'}>
         <BidderShell pageMode={pageMode} open={open} onOpenChange={onOpenChange}>
                 <div className={pageMode
                     ? 'flex flex-col gap-3 p-5 sm:p-6'
@@ -3520,14 +3538,14 @@ export default function AutoBidderDialog({
                                             </div>
                                         ) : null}
 
-                                        {latestShot && courseIdForShots ? (
+                                        {activeMonitorShot && courseIdForShots ? (
                                             <LiveScreenshotPanel
                                                 courseId={courseIdForShots}
-                                                shot={latestShot}
+                                                shot={activeMonitorShot}
                                                 isAdmin={isAdmin}
                                                 refreshKey={shotBustKey}
                                                 lastRefreshedAt={lastRefreshedAt}
-                                                onExpand={() => openLightbox(latestShot)}
+                                                onExpand={() => openLightbox(activeMonitorShot)}
                                             />
                                         ) : selectedId ? (
                                             <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 px-3 py-6 text-center text-xs text-muted-foreground">
@@ -3719,9 +3737,10 @@ export default function AutoBidderDialog({
             isAdmin={isAdmin}
             refreshKey={shotBustKey}
         />
-        <div className={pageMode ? 'min-w-0 lg:sticky lg:top-4' : 'contents'}>
+        <div className={pageMode ? 'order-first w-full' : 'contents'}>
         <BidMonitorDock
             embedded={pageMode}
+            hidePreview={pageMode}
             open={pageMode || dockOpen || monitorActive}
             minimized={dockMinimized}
             onClose={() => {

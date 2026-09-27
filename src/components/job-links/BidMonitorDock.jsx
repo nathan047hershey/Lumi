@@ -72,6 +72,7 @@ function loadPos() {
 export default function BidMonitorDock({
     open,
     embedded = false,
+    hidePreview = false,
     minimized,
     onMinimizedChange,
     onClose,
@@ -798,8 +799,8 @@ export default function BidMonitorDock({
                 : 'lumi-control pointer-events-auto fixed z-[2147483000] flex flex-col overflow-hidden rounded-2xl border border-white/[0.08] bg-[hsl(240_6%_9%/0.94)] shadow-[0_24px_64px_-20px_rgba(0,0,0,0.75),0_0_0_1px_hsla(187,85%,53%,0.12)] backdrop-blur-xl animate-in fade-in-0 zoom-in-95 duration-200'}
             style={embedded
                 ? {
-                    minHeight: DOCK_H_MIN,
-                    maxHeight: minimized ? undefined : 'calc(100vh - 5.5rem)'
+                    minHeight: hidePreview ? undefined : DOCK_H_MIN,
+                    maxHeight: hidePreview || minimized ? undefined : 'calc(100vh - 5.5rem)'
                 }
                 : {
                     left: pos.x,
@@ -1075,7 +1076,7 @@ export default function BidMonitorDock({
 
                     {dockTab === 'live' ? (
                         <>
-                            {/* Preview */}
+                            {hidePreview ? null : (
                             <div className="relative overflow-hidden rounded-xl border border-white/[0.08] bg-black/50">
                                 {imgSrc && !imgBroken ? (
                                     <button type="button" className="block w-full cursor-zoom-in" onClick={onFullscreen} title="Scroll the page, or click for full screen">
@@ -1125,6 +1126,7 @@ export default function BidMonitorDock({
                                     </Button>
                                 ) : null}
                             </div>
+                            )}
 
                             {(hasFrames || !followLive) ? (
                                 <div className="flex items-center gap-1.5">

@@ -287,7 +287,9 @@ async function setQueueState(patch) {
         const sealedId = String(cur.lastApplicationId || cur.currentId || '');
         const nextId = patch?.currentId != null ? String(patch.currentId) : sealedId;
         const sameBid = !sealedId || nextId === sealedId;
-        if (sameBid && (patch?.status === 'running' || patch?.running === true)) {
+        if (!sameBid) {
+            patch = { ...patch, successSeal: false };
+        } else if (patch?.status === 'running' || patch?.running === true) {
             patch = { ...patch, status: 'done', running: false, runState: 'success' };
         }
     }
@@ -902,42 +904,6 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
     }
 }
 
-/** Show the job tab only long enough to grab a frame, then return to the previous tab. */
-async function captureVisibleThenRestore(tab, settleMs = 160) {
-    if (!tab?.id) return '';
-    let prev = null;
-    let prevWindowId = null;
-    try {
-        const active = await chrome.tabs.query({ active: true, windowId: tab.windowId });
-        prev = active?.[0] || null;
-    } catch (_) { /* ignore */ }
-    try {
-        prevWindowId = (await chrome.windows.getLastFocused())?.id ?? null;
-    } catch (_) { /* ignore */ }
-    try {
-        await chrome.tabs.update(tab.id, { active: true });
-        if (tab.windowId != null) {
-            await chrome.windows.update(tab.windowId, { focused: true });
-        }
-    } catch (_) { /* best-effort */ }
-    await new Promise((r) => setTimeout(r, Math.max(80, Number(settleMs) || 160)));
-    let dataUrl = '';
-    try {
-        const windowId = tab.windowId != null ? tab.windowId : null;
-        dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 55 });
-    } catch (_) {
-        dataUrl = '';
-    }
-    if (prev?.id && prev.id !== tab.id) {
-        try { await chrome.tabs.update(prev.id, { active: true }); } catch (_) { /* ignore */ }
-    }
-    if (prevWindowId != null && prevWindowId !== tab.windowId) {
-        try { await chrome.windows.update(prevWindowId, { focused: true }); } catch (_) { /* ignore */ }
-    }
-    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) return '';
-    return dataUrl;
-}
-
 async function captureTabScreenshot(tabId, opts = {}) {
     const stayInApp = opts.stayInApp !== false;
     let tab;
@@ -997,12 +963,9 @@ async function captureTabScreenshot(tabId, opts = {}) {
     };
 
     if (stayInApp) {
+        // Full page from the layout tree. Do not flash the job tab or save a viewport slice.
         const quiet = await captureViaDebugger(tabId, opts.scrollHeight);
         if (quiet) return quiet;
-        // Background capture can miss a tab that has never been painted. Flash it,
-        // grab the viewport, then put the Lumi tab back in front.
-        const flashed = await captureVisibleThenRestore(tab, 160);
-        if (flashed) return flashed;
         throw new Error('full-page screenshot failed');
     }
 
