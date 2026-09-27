@@ -3988,7 +3988,7 @@ router.post('/bid-courses/screenshot', (req, res) => {
         let imageBlob = String(body.image_base64 || '');
         const dataUrl = imageBlob.match(/^data:image\/\w+;base64,(.+)$/);
         if (dataUrl) imageBlob = dataUrl[1];
-        if (imageBlob.length > 4000000) imageBlob = '';
+        if (imageBlob.length > 8000000) imageBlob = '';
         // Upsert one DB row per stage (overwrite live.png path) instead of endless inserts.
         const existingShot = getOne(
             `SELECT id FROM bid_course_screenshots WHERE course_id = ? AND stage = ? ORDER BY id DESC LIMIT 1`,

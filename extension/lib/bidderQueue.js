@@ -869,15 +869,17 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
                 900,
                 Math.min(14000, Math.ceil(Number(css.height) || Number(pageH) || Number(scrollHeight) || 1600))
             );
+            // clip and captureBeyondViewport cannot be combined — Chrome rejects that call.
+            // fromSurface fails on a tab that was never focused, so try the layout tree first.
             const shots = [
+                { format: 'jpeg', quality: 52, captureBeyondViewport: true, fromSurface: false },
                 {
                     format: 'jpeg',
-                    quality: 64,
-                    captureBeyondViewport: true,
-                    fromSurface: true,
-                    clip: { x: 0, y: 0, width, height, scale: 1 }
+                    quality: 50,
+                    fromSurface: false,
+                    clip: { x: 0, y: 0, width, height: Math.min(height, 5000), scale: 1 }
                 },
-                { format: 'jpeg', quality: 60, fromSurface: true }
+                { format: 'jpeg', quality: 48, fromSurface: true }
             ];
             for (const params of shots) {
                 try {
@@ -898,6 +900,42 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
         if (/chrome error page/i.test(String(err?.message || err))) throw err;
         return '';
     }
+}
+
+/** Show the job tab only long enough to grab a frame, then return to the previous tab. */
+async function captureVisibleThenRestore(tab, settleMs = 160) {
+    if (!tab?.id) return '';
+    let prev = null;
+    let prevWindowId = null;
+    try {
+        const active = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+        prev = active?.[0] || null;
+    } catch (_) { /* ignore */ }
+    try {
+        prevWindowId = (await chrome.windows.getLastFocused())?.id ?? null;
+    } catch (_) { /* ignore */ }
+    try {
+        await chrome.tabs.update(tab.id, { active: true });
+        if (tab.windowId != null) {
+            await chrome.windows.update(tab.windowId, { focused: true });
+        }
+    } catch (_) { /* best-effort */ }
+    await new Promise((r) => setTimeout(r, Math.max(80, Number(settleMs) || 160)));
+    let dataUrl = '';
+    try {
+        const windowId = tab.windowId != null ? tab.windowId : null;
+        dataUrl = await chrome.tabs.captureVisibleTab(windowId, { format: 'jpeg', quality: 55 });
+    } catch (_) {
+        dataUrl = '';
+    }
+    if (prev?.id && prev.id !== tab.id) {
+        try { await chrome.tabs.update(prev.id, { active: true }); } catch (_) { /* ignore */ }
+    }
+    if (prevWindowId != null && prevWindowId !== tab.windowId) {
+        try { await chrome.windows.update(prevWindowId, { focused: true }); } catch (_) { /* ignore */ }
+    }
+    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image')) return '';
+    return dataUrl;
 }
 
 async function captureTabScreenshot(tabId, opts = {}) {
@@ -961,7 +999,11 @@ async function captureTabScreenshot(tabId, opts = {}) {
     if (stayInApp) {
         const quiet = await captureViaDebugger(tabId, opts.scrollHeight);
         if (quiet) return quiet;
-        throw new Error('full-page screenshot failed without focusing the job tab');
+        // Background capture can miss a tab that has never been painted. Flash it,
+        // grab the viewport, then put the Lumi tab back in front.
+        const flashed = await captureVisibleThenRestore(tab, 160);
+        if (flashed) return flashed;
+        throw new Error('full-page screenshot failed');
     }
 
     const prevTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });

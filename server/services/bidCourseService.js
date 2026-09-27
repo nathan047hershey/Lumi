@@ -685,11 +685,14 @@ function pruneMissingScreenshotFiles(courseId, applicationId) {
         return 0;
     }
     const rows = getAll(
-        `SELECT id, file_path FROM bid_course_screenshots WHERE course_id = ?`,
+        `SELECT id, file_path,
+                CASE WHEN image_blob IS NOT NULL AND length(image_blob) > 40 THEN 1 ELSE 0 END AS has_blob
+         FROM bid_course_screenshots WHERE course_id = ?`,
         [parseInt(courseId, 10)]
     );
     let removed = 0;
     for (const row of rows) {
+        if (Number(row.has_blob) === 1) continue;
         const name = path.basename(String(row.file_path || ''));
         if (!name) continue;
         const disk = artifacts.readScreenshotFile(applicationId, name);
@@ -713,15 +716,17 @@ function listExistingScreenshots(courseId, applicationId) {
         artifacts = null;
     }
     const shots = getAll(
-        `SELECT id, stage, file_path, created_at FROM bid_course_screenshots WHERE course_id = ? ORDER BY created_at ASC`,
+        `SELECT id, stage, file_path, created_at,
+                CASE WHEN image_blob IS NOT NULL AND length(image_blob) > 40 THEN 1 ELSE 0 END AS has_blob
+         FROM bid_course_screenshots WHERE course_id = ? ORDER BY created_at ASC`,
         [parseInt(courseId, 10)]
     );
     const byStage = new Map();
     for (const s of shots) {
-        const name = path.basename(String(s.file_path || ''));
+        const name = path.basename(String(s.file_path || `${s.stage || 'shot'}.png`));
         const disk = artifacts ? artifacts.readScreenshotFile(applicationId, name) : null;
         const absOk = s.file_path && fs.existsSync(s.file_path);
-        if (!disk && !absOk) continue;
+        if (!disk && !absOk && Number(s.has_blob) !== 1) continue;
         byStage.set(String(s.stage || 'shot'), {
             ...s,
             filename: name,
