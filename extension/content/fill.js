@@ -6844,10 +6844,25 @@
         ].join(' ').replace(/\s+/g, ' ').trim().slice(0, 600);
     }
 
+    function ownUploadCaption(input) {
+        let node = input;
+        for (let depth = 0; depth < 6 && node; depth += 1) {
+            let prev = node.previousElementSibling;
+            for (let i = 0; i < 3 && prev; i += 1, prev = prev.previousElementSibling) {
+                const t = String(prev.innerText || prev.textContent || '').replace(/\s+/g, ' ').trim();
+                if (t && t.length < 80) return t;
+            }
+            node = node.parentElement;
+            if (!node || /^(FORM|BODY|HTML)$/i.test(node.tagName)) break;
+        }
+        return '';
+    }
+
     function fileInputKind(input) {
         const idHay = `${input.id || ''} ${input.name || ''}`.toLowerCase();
-        if (/^cover_letter$|cover[\s_-]*letter/i.test(idHay)) return 'cover_letter';
-        if (/^resume$|\bresum|\bcv\b/i.test(idHay)) return 'resume';
+        const own = ownUploadCaption(input).toLowerCase();
+        if (/cover[\s_-]*letter/.test(own) || /^cover_letter$|cover[\s_-]*letter/i.test(idHay)) return 'cover_letter';
+        if ((/\b(resume|cv)\b/.test(own) && !/cover/.test(own)) || /^resume$|\bresum|\bcv\b/i.test(idHay)) return 'resume';
         const label = labelFor(input);
         const nearby = nearbyUploadLabel(input);
         const kind = classifyPersonal(label, input.name || '', input.getAttribute('data-automation-id') || '');

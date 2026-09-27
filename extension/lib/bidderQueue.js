@@ -780,13 +780,36 @@ export async function setFileInputViaDebugger(tabId, file) {
         });
         const rootId = doc?.root?.nodeId;
         if (!rootId) return { ok: false, reason: 'no_document' };
+        await evalInTab(tabId, `(() => {
+            const caption = (input) => {
+                let node = input;
+                const bits = [input.id || '', input.name || ''];
+                for (let depth = 0; depth < 6 && node; depth += 1) {
+                    let prev = node.previousElementSibling;
+                    for (let i = 0; i < 3 && prev; i += 1, prev = prev.previousElementSibling) {
+                        const t = String(prev.innerText || '').replace(/\\s+/g, ' ').trim();
+                        if (t && t.length < 80) bits.push(t);
+                    }
+                    node = node.parentElement;
+                    if (!node || /^(FORM|BODY|HTML)$/i.test(node.tagName)) break;
+                }
+                return bits.join(' ');
+            };
+            const inputs = [...document.querySelectorAll('input[type="file"]')];
+            const resume = inputs.find((input) => {
+                const hay = caption(input);
+                return /\\b(resume|cv)\\b/i.test(hay) && !/cover\\s*letter/i.test(hay);
+            });
+            document.querySelector('[data-lumi-resume-slot]')?.removeAttribute('data-lumi-resume-slot');
+            if (resume) resume.setAttribute('data-lumi-resume-slot', '1');
+            return !!resume;
+        })()`);
         const selectors = [
+            'input[data-lumi-resume-slot="1"]',
             'input#resume',
             'input[name="resume"]',
             'input[type="file"][id*="resume" i]',
-            'input[type="file"][name*="resume" i]',
-            'input[type="file"][id*="cv" i]',
-            'input[type="file"]'
+            'input[type="file"][name*="resume" i]'
         ];
         let nodeId = 0;
         for (const selector of selectors) {

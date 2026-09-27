@@ -173,6 +173,17 @@
         return false;
     }
 
+    function labelOwnedByOther(text, el) {
+        const needle = String(text || '').replace(/\s+/g, ' ').trim().toLowerCase();
+        if (!needle || needle.length > 80) return false;
+        for (const lab of document.querySelectorAll('label[for]')) {
+            const t = cleanLabelText(lab.innerText || lab.textContent || '').toLowerCase();
+            if (t !== needle) continue;
+            if (lab.htmlFor && lab.htmlFor !== el?.id) return true;
+        }
+        return false;
+    }
+
     function labelFor(el) {
         if (!el) return '';
         if (el.id) {
@@ -216,7 +227,7 @@
                 + '.select__single-value, [class*="single-value"], [class*="menu"]'
             ).forEach((n) => n.remove());
             const t = cleanLabelText((clone.innerText || '').replace(/\s+/g, ' ').trim());
-            if (t && !isYesNoOnlyLabel(t)) return t.slice(0, 200);
+            if (t && !isYesNoOnlyLabel(t) && !labelOwnedByOther(t, el)) return t.slice(0, 200);
             }
         }
         // Previous sibling title (common Greenhouse education / essay layout).
@@ -229,9 +240,10 @@
             const t = cleanLabelText(prev.innerText || prev.textContent || '');
             if (!t || t.length > maxSibling || isPlaceholderLabelText(t) || isYesNoOnlyLabel(t)) continue;
             // Skip a neighboring select's chosen value ("Palo Alto") and keep looking for the question.
-            if (t.length < 24 && !/[?]|\b(race|ethnic|veteran|gender|disabilit|hispanic|latino|city|location|state)\b/i.test(t)) {
+            if (t.length < 24 && !/[?]|\b(race|ethnic|veteran|gender|disabilit|hispanic|latino|city|location|state|employer|linkedin|zip|postal|profile|company)\b/i.test(t)) {
                 continue;
             }
+            if (labelOwnedByOther(t, el)) continue;
             return t.slice(0, maxSibling);
         }
         // Parent field shell often holds the long question text above a textarea.
@@ -2715,6 +2727,36 @@
                 if (!shown || /^(yes|no|y|n)$/i.test(shown)) setNativeValue(el, zip);
             }
         }
+        const cityName = String(profile?.city || '').split(',')[0].trim();
+        const linkedin = String(profile?.linkedin_url || profile?.linkedin || profile?.linkedIn || '').trim();
+        const employer = currentCompanyFromProfile(profile);
+        const token = `r${Date.now().toString(36)}`;
+        await new Promise((resolve) => {
+            const timer = setTimeout(() => {
+                window.removeEventListener('message', onDone);
+                resolve();
+            }, 2500);
+            const onDone = (ev) => {
+                const data = ev.data;
+                if (!data || data.source !== 'lumi-main-repair-done' || data.token !== token) return;
+                clearTimeout(timer);
+                window.removeEventListener('message', onDone);
+                resolve();
+            };
+            window.addEventListener('message', onDone);
+            window.postMessage({
+                source: 'lumi-main-repair',
+                token,
+                payload: {
+                    cityLine: cityWanted,
+                    cityName,
+                    linkedin,
+                    zip,
+                    employer
+                }
+            }, '*');
+        });
+
         const leftovers = [...document.querySelectorAll('select, [role="combobox"]')].filter((el) => {
             if (!visible(el)) return false;
             const shown = String(
@@ -2789,7 +2831,41 @@
         const isCombo = el.getAttribute('role') === 'combobox'
             || el.getAttribute('aria-autocomplete')
             || el.className?.toString?.().includes('select__');
+        const commitInPage = async (mode, value) => {
+            const token = `c${Date.now().toString(36)}${Math.random().toString(16).slice(2, 6)}`;
+            try { el.setAttribute('data-lumi-commit', token); } catch (_) { /* ignore */ }
+            const result = await new Promise((resolve) => {
+                const timer = setTimeout(() => {
+                    window.removeEventListener('message', onDone);
+                    resolve(null);
+                }, 1800);
+                const onDone = (ev) => {
+                    const data = ev.data;
+                    if (!data || data.source !== 'lumi-main-commit-done' || data.token !== token) return;
+                    clearTimeout(timer);
+                    window.removeEventListener('message', onDone);
+                    resolve(data.result || null);
+                };
+                window.addEventListener('message', onDone);
+                window.postMessage({
+                    source: 'lumi-main-commit',
+                    token,
+                    mode,
+                    value: String(value || ''),
+                    kind: kind0
+                }, '*');
+            });
+            try { el.removeAttribute('data-lumi-commit'); } catch (_) { /* ignore */ }
+            return result;
+        };
         if (isCombo || field.role === 'combobox' || nativeSel) {
+            const textFirst = kind0 === 'city' || kind0 === 'linkedin' || kind0 === 'postal_code'
+                || kind0 === 'current_company';
+            const pageFirst = await commitInPage(textFirst ? 'text' : 'choice', wanted);
+            if (pageFirst?.ok && pageFirst.chosen && !isPlaceholderValue(pageFirst.chosen)) {
+                try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
+                return { ok: true, chosen: pageFirst.chosen, strategy: 'page' };
+            }
             const kind = kind0;
             let want = wanted;
             if (kind === 'skill_experience' || (kind === 'years_of_experience' && String(want || '').length > 40)) {
@@ -2905,6 +2981,11 @@
                 try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
             }
             return { ...res, strategy };
+        }
+        const pageText = await commitInPage('text', wanted);
+        if (pageText?.ok && pageText.chosen) {
+            try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
+            return { ok: true, chosen: pageText.chosen, strategy: 'page' };
         }
         setNativeValue(el, wanted);
         await sleep(60);
@@ -3544,7 +3625,7 @@
             case 'earliest_start_date': return p.earliest_start_date || '2 weeks';
             case 'willing_to_travel': return p.willing_to_travel || 'Yes';
             case 'website_url':
-                return p.website_url || p.portfolio_url || p.github_url || p.linkedin_url || '';
+                return p.website_url || p.portfolio_url || '';
             case 'employer_count': return String(countEmployersFromProfile(p));
             case 'high_school_performance': return 'Above average';
             case 'high_school_rationale': {
