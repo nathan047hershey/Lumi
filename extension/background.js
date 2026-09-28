@@ -4640,7 +4640,7 @@ async function processReadyQueue(opts = {}) {
                 await new Promise((r) => setTimeout(r, settleSec * 1000));
             }
             await ensureApplyFormVisible(opened.tabId);
-            await uploadScreenshot(item.id, 'after_fill', opened.tabId, { settleMs: 0, stayInApp: true });
+            await uploadScreenshot(item.id, 'answers', opened.tabId, { settleMs: 600, stayInApp: true });
             fillStats = normalizeFillStats(fillStats || {});
             await setAppRunState(item.id, 'verifying', {
                 tabId: opened.tabId,
@@ -8300,12 +8300,14 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             type: 'FILL_FORM',
             payload: {
                 ...filePayload,
+                coverLetter: null,
                 profile: { ...profile, ...payload.profile },
                 answers: [],
                 autoSubmit: false,
                 skipQuestions: true,
                 profileOnly: true,
-                skipFiles: false
+                skipFiles: false,
+                skipCoverLetter: true
             }
         }).catch(() => null);
         if (resumeFile?.base64) {
@@ -8560,12 +8562,14 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                     type: 'FILL_FORM',
                     payload: {
                         ...filePayload,
+                        coverLetter: null,
                         profile: { ...profile, ...payload.profile },
                         answers: [],
                         autoSubmit: false,
                         skipQuestions: true,
                         uploadOnly: true,
-                        skipFiles: false
+                        skipFiles: false,
+                        skipCoverLetter: true
                     }
                 }).catch(() => null);
                 const trusted = await setFileInputViaDebugger(tabId, resumeFile).catch((err) => ({
@@ -8594,6 +8598,10 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 console.warn('[bidder] greenhouse resume upload', err);
             }
         }
+
+        // Final picture: every answer is already on the form, including the resume slot.
+        await new Promise((r) => setTimeout(r, 900));
+        await uploadScreenshot(item.id, 'answers', tabId, shotOpts({ settleMs: 400 })).catch(() => {});
 
         if (result.timeout || /bid_time_budget|budget_exceeded/i.test(String(result.reason || ''))) {
             await logCourseEvent(item.id, 'bid_budget_exceeded', {

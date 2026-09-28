@@ -784,13 +784,17 @@ function walkFileInputs(node, acc) {
     for (const root of node.shadowRoots || []) walkFileInputs(root, acc);
 }
 
+function isCoverLetterHay(hay) {
+    return /cover[_\s-]*letter|covering[_\s-]*letter|motivation[_\s-]*letter/i.test(String(hay || ''));
+}
+
 function scoreResumeFileInput(attrs) {
     const hay = `${attrs.id || ''} ${attrs.name || ''} ${attrs['aria-label'] || ''} ${attrs.accept || ''} ${attrs.class || ''}`;
-    if (/cover\s*letter/i.test(hay)) return -1;
-    let score = 1;
+    if (isCoverLetterHay(hay)) return -1;
+    let score = 0;
     if (attrs['data-lumi-resume-slot']) score += 80;
-    if (/\b(resume|cv)\b|curriculum/i.test(hay)) score += 50;
-    if (/pdf|docx?|word/i.test(attrs.accept || '')) score += 5;
+    if (/(^|[^a-z])(resume|cv)([^a-z]|$)|curriculum/i.test(hay)) score += 50;
+    if (score > 0 && /pdf|docx?|word/i.test(attrs.accept || '')) score += 5;
     return score;
 }
 
@@ -813,7 +817,7 @@ async function markResumeSlotsInFrames(tabId) {
         const inputs = [...document.querySelectorAll('input[type="file"]')];
         const resume = inputs.find((input) => {
             const hay = caption(input);
-            return /\\b(resume|cv)\\b/i.test(hay) && !/cover\\s*letter/i.test(hay);
+            return /\\b(resume|cv)\\b/i.test(hay) && !/cover[_\\s-]*letter/i.test(hay);
         });
         document.querySelector('[data-lumi-resume-slot]')?.removeAttribute('data-lumi-resume-slot');
         if (resume) resume.setAttribute('data-lumi-resume-slot', '1');
@@ -854,16 +858,14 @@ async function findResumeFileInputNode(tabId) {
         }).catch(() => null);
         const found = [];
         walkFileInputs(doc?.root, found);
-        let bestId = 0;
-        let bestScore = 0;
-        for (const row of found) {
-            const score = scoreResumeFileInput(row.attrs);
-            if (score > bestScore) {
-                bestScore = score;
-                bestId = row.nodeId;
-            }
+        const scored = found.map((row) => ({ ...row, score: scoreResumeFileInput(row.attrs) }));
+        const resumeHits = scored.filter((row) => row.score >= 50);
+        if (resumeHits.length) {
+            resumeHits.sort((a, b) => b.score - a.score);
+            return resumeHits[0].nodeId;
         }
-        if (bestId) return bestId;
+        const plain = scored.filter((row) => row.score >= 0);
+        if (plain.length === 1 && scored.length === 1) return plain[0].nodeId;
     }
     return 0;
 }
@@ -881,6 +883,24 @@ async function fileInputHasFile(tabId, nodeId) {
         return !!check?.result?.value;
     } catch (_) {
         return false;
+    }
+}
+
+/** Resume must not stay on the Cover Letter input. Clear that slot after the CV attaches. */
+async function clearCoverLetterFileInputs(tabId) {
+    const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', {
+        depth: -1,
+        pierce: true
+    }).catch(() => null);
+    const found = [];
+    walkFileInputs(doc?.root, found);
+    for (const row of found) {
+        const hay = `${row.attrs?.id || ''} ${row.attrs?.name || ''} ${row.attrs?.['aria-label'] || ''} ${row.attrs?.class || ''}`;
+        if (!isCoverLetterHay(hay)) continue;
+        await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
+            files: [],
+            nodeId: row.nodeId
+        }).catch(() => {});
     }
 }
 
@@ -916,6 +936,7 @@ export async function setFileInputViaDebugger(tabId, file) {
         });
         const hasFile = await fileInputHasFile(tabId, nodeId);
         if (!hasFile) return { ok: false, reason: 'file_not_attached', filename, path: absPath };
+        await clearCoverLetterFileInputs(tabId);
         return { ok: true, filename, path: absPath };
     } catch (err) {
         return { ok: false, reason: err?.message || String(err), filename };
@@ -1420,7 +1441,7 @@ export async function uploadScreenshot(applicationId, stage, tabId, opts = {}) {
             method: 'POST',
             body: { application_id: applicationId, stage, image_base64: dataUrl }
         });
-        if (/^(live|opened|mid_fill|after_fill|after_fill_done|no_form|pre_submit|captcha|login_wall|reopened|after_submit)$/.test(String(stage))
+        if (/^(live|opened|mid_fill|after_fill|after_fill_done|answers|no_form|pre_submit|captcha|login_wall|reopened|after_submit)$/.test(String(stage))
             || /^autofill_page_/i.test(String(stage))
             || /^page_\d+$/i.test(String(stage))) {
             await setQueueState({ liveShotAt: Date.now() }).catch(() => {});

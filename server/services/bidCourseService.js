@@ -753,7 +753,7 @@ function listExistingScreenshots(courseId, applicationId) {
  *  need a second request that 404s when the file URL or another instance has no file. */
 function attachInlineScreenshotBytes(shots) {
     const list = Array.isArray(shots) ? shots : [];
-    const answers = /^(page_\d+|after_fill|after_fill_done|pre_submit)$/i;
+    const answers = /^(answers|page_\d+|after_fill|after_fill_done|pre_submit)$/i;
     const ranked = list.map((shot, index) => ({ shot, index })).filter(({ shot }) => shot?.id);
     const preferred = ranked.filter(({ shot }) => answers.test(String(shot.stage || '')));
     const chosen = (preferred.length ? preferred : ranked).slice(-1);

@@ -2780,11 +2780,16 @@ export default function AutoBidderDialog({
             // Prefer the updating `live` frame while this course is the active bid.
             if (thisCourseActive || awaitingCaptcha) {
                 let answersIdx = -1;
+                let filledIdx = -1;
                 monitorFrames.forEach((s, i) => {
-                    if (/^(page_\d+|after_fill|after_fill_done|pre_submit)$/i.test(String(s?.stage || ''))) {
-                        answersIdx = i;
-                    }
+                    const stage = String(s?.stage || '');
+                    if (/^answers$/i.test(stage)) filledIdx = i;
+                    else if (/^(page_\d+|after_fill|after_fill_done|pre_submit)$/i.test(stage)) answersIdx = i;
                 });
+                if (filledIdx >= 0) {
+                    setMonitorFrameIndex(filledIdx);
+                    return;
+                }
                 if (answersIdx >= 0) {
                     setMonitorFrameIndex(answersIdx);
                     return;
@@ -3153,6 +3158,18 @@ export default function AutoBidderDialog({
                         >
                             <Square className="h-3.5 w-3.5" />
                             Stop
+                        </Button>
+                        <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="h-8 gap-1"
+                            disabled={dockBusy || busy}
+                            title="Read the apply tab and update Applied or incomplete"
+                            onClick={() => runDockControl(() => updateApplyState(), 'Update state')}
+                        >
+                            <RefreshCw className="h-3.5 w-3.5" />
+                            Update state
                         </Button>
                         <Button
                             type="button"
