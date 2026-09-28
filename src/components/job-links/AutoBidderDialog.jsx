@@ -120,7 +120,21 @@ function writeMonitorStorage(patch) {
     } catch (_) { /* ignore */ }
 }
 
-function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
+function blobFromShotBase64(raw) {
+    try {
+        const clean = String(raw || '').replace(/^data:image\/\w+;base64,/, '');
+        if (clean.length < 40) return null;
+        const binary = atob(clean);
+        const bytes = new Uint8Array(binary.length);
+        for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+        const type = bytes[0] === 0xFF && bytes[1] === 0xD8 ? 'image/jpeg' : 'image/png';
+        return new Blob([bytes], { type });
+    } catch (_) {
+        return null;
+    }
+}
+
+function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0, inlineBase64 = '') {
     const [src, setSrc] = useState('');
     const [err, setErr] = useState('');
     const [loading, setLoading] = useState(false);
@@ -133,7 +147,7 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
             setSrc('');
             setErr('');
         }
-        if (!courseId || !filename) {
+        if (!courseId || (!filename && !inlineBase64)) {
             setLoading(false);
             return undefined;
         }
@@ -141,11 +155,16 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
         setLoading(true);
         (async () => {
             try {
-                const api = isAdmin ? adminAPI : userAPI;
-                const bust = `${refreshKey || 0}-${Date.now()}`;
-                const { data } = await api.getBidCourseScreenshot(courseId, filename, {
-                    t: bust
-                });
+                const inline = blobFromShotBase64(inlineBase64);
+                let data = inline;
+                if (!data) {
+                    const api = isAdmin ? adminAPI : userAPI;
+                    const bust = `${refreshKey || 0}-${Date.now()}`;
+                    const res = await api.getBidCourseScreenshot(courseId, filename, {
+                        t: bust
+                    });
+                    data = res.data;
+                }
                 const contentType = String(data?.type || '').toLowerCase();
                 if (
                     !(data instanceof Blob)
@@ -177,7 +196,7 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
         return () => {
             alive = false;
         };
-    }, [courseId, filename, isAdmin, refreshKey]);
+    }, [courseId, filename, isAdmin, refreshKey, inlineBase64]);
 
     useEffect(() => () => {
         if (prevObjectUrlRef.current) {
@@ -235,9 +254,9 @@ function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, emptyLabel }) {
     );
 }
 
-function ScreenshotLightbox({ open, onClose, courseId, filename, stage, isAdmin, refreshKey }) {
+function ScreenshotLightbox({ open, onClose, courseId, filename, stage, isAdmin, refreshKey, imageBase64 = '' }) {
     const [zoom, setZoom] = useState(100);
-    const { src, err } = useScreenshotSrc(courseId, filename, isAdmin, refreshKey);
+    const { src, err } = useScreenshotSrc(courseId, filename, isAdmin, refreshKey, imageBase64);
 
     useEffect(() => {
         if (open) setZoom(100);
@@ -297,7 +316,13 @@ function LiveScreenshotPanel({ courseId, shot, isAdmin, refreshKey, lastRefreshe
         heldShotRef.current = { courseId, shot };
     }
     const shownShot = shot || heldShotRef.current.shot;
-    const { src, err, loading } = useScreenshotSrc(courseId, shownShot?.filename, isAdmin, refreshKey);
+    const { src, err, loading } = useScreenshotSrc(
+        courseId,
+        shownShot?.filename,
+        isAdmin,
+        refreshKey,
+        shownShot?.image_base64 || ''
+    );
 
     useEffect(() => {
         setZoom(100);
@@ -369,8 +394,8 @@ function LiveScreenshotPanel({ courseId, shot, isAdmin, refreshKey, lastRefreshe
     );
 }
 
-function AuthShot({ courseId, filename, stage, isAdmin, imgClassName, onExpand, refreshKey = 0 }) {
-    const { src, err } = useScreenshotSrc(courseId, filename, isAdmin, refreshKey);
+function AuthShot({ courseId, filename, stage, isAdmin, imgClassName, onExpand, refreshKey = 0, imageBase64 = '' }) {
+    const { src, err } = useScreenshotSrc(courseId, filename, isAdmin, refreshKey, imageBase64);
     const label = screenshotStageLabel(stage);
     if (!src) {
         return (
@@ -2813,6 +2838,7 @@ export default function AutoBidderDialog({
         activeMonitorShot?.filename || '',
         activeMonitorShot?.updated_ms || '',
         activeMonitorShot?.created_at || '',
+        activeMonitorShot?.image_base64 ? String(activeMonitorShot.image_base64.length) : '',
         liveRefreshKey
     ].join('|');
     const dockShot = useScreenshotSrc(
@@ -2820,12 +2846,13 @@ export default function AutoBidderDialog({
         activeMonitorShot?.filename,
         isAdmin,
         // Always include course + mtime so switching jobs / overwritten live.png refreshes.
-        monitorFrameFollowLive ? shotBustKey : `${courseIdForShots}|${activeMonitorShot?.filename}|${activeMonitorShot?.created_at || ''}`
+        monitorFrameFollowLive ? shotBustKey : `${courseIdForShots}|${activeMonitorShot?.filename}|${activeMonitorShot?.created_at || ''}`,
+        activeMonitorShot?.image_base64 || ''
     );
 
     const openLightbox = (shot) => {
         if (!shot) return;
-        setLightboxShot({ filename: shot.filename, stage: shot.stage });
+        setLightboxShot({ filename: shot.filename, stage: shot.stage, image_base64: shot.image_base64 || '' });
     };
 
     const clearBidHistory = async () => {
@@ -3676,6 +3703,7 @@ export default function AutoBidderDialog({
                                                         stage={s.stage}
                                                         isAdmin={isAdmin}
                                                         refreshKey={shotBustKey}
+                                                        imageBase64={s.image_base64 || ''}
                                                         onExpand={() => openLightbox(s)}
                                                     />
                                                 ))}
@@ -3841,6 +3869,7 @@ export default function AutoBidderDialog({
             stage={lightboxShot?.stage}
             isAdmin={isAdmin}
             refreshKey={shotBustKey}
+            imageBase64={lightboxShot?.image_base64 || ''}
         />
         {pageMode ? null : (
         <div className="contents">

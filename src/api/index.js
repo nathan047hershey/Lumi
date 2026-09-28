@@ -93,7 +93,7 @@ export const adminAPI = {
     getBidCourseCvHtml: (id) => api.get(`/admin/bid-courses/${id}/cv-html`),
     clearBidCourses: () => api.post('/admin/bid-courses/clear'),
     getBidCourseScreenshot: (id, filename, opts = {}) =>
-        api.get(`/admin/bid-courses/${id}/screenshots/${encodeURIComponent(filename)}`, {
+        api.get(`/admin/bid-courses/${id}/screenshots/${encodeURIComponent(String(filename || '').replace(/\.(png|jpe?g|webp)$/i, ''))}`, {
             responseType: 'blob',
             params: opts.t != null ? { t: opts.t } : undefined,
             headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }
@@ -387,7 +387,7 @@ export const userAPI = {
         timeout: 60000
     }),
     getBidCourseScreenshot: (id, filename, opts = {}) =>
-        api.get(`/user/bid-courses/${id}/screenshots/${encodeURIComponent(filename)}`, {
+        api.get(`/user/bid-courses/${id}/screenshots/${encodeURIComponent(String(filename || '').replace(/\.(png|jpe?g|webp)$/i, ''))}`, {
             responseType: 'blob',
             params: opts.t != null ? { t: opts.t } : undefined,
             headers: { 'Cache-Control': 'no-cache', Pragma: 'no-cache' }

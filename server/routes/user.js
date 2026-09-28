@@ -3670,7 +3670,9 @@ router.get('/bid-courses/:id', (req, res) => {
 
         const app = getOne(`SELECT * FROM job_applications WHERE id = ?`, [course.application_id]);
         const events = bidCourseService.listEvents(course.id);
-        const uniqueShots = bidCourseService.listExistingScreenshots(course.id, course.application_id);
+        const uniqueShots = bidCourseService.attachInlineScreenshotBytes(
+            bidCourseService.listExistingScreenshots(course.id, course.application_id)
+        );
         const diskShots = artifacts.listScreenshots(course.application_id);
 
         const needsManual = events.some((e) => {
@@ -3708,7 +3710,8 @@ router.get('/bid-courses/:id', (req, res) => {
                 created_at: s.created_at,
                 updated_ms: s.updated_ms || 0,
                 filename: s.filename || path.basename(s.file_path),
-                url: `/user/bid-courses/${course.id}/screenshots/${encodeURIComponent(s.filename || path.basename(s.file_path))}`
+                image_base64: s.image_base64 || undefined,
+                url: `/user/bid-courses/${course.id}/screenshots/${encodeURIComponent(String(s.stage || 'shot'))}`
             })),
             disk_screenshots: process.env.VERCEL ? [] : diskShots.map((s) => ({
                 stage: s.stage,

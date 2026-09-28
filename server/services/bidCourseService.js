@@ -749,6 +749,27 @@ function listExistingScreenshots(courseId, applicationId) {
     return [...byStage.values()];
 }
 
+/** Put image bytes on the frames the live monitor will show, so the page does not
+ *  need a second request that 404s when the file URL or another instance has no file. */
+function attachInlineScreenshotBytes(shots) {
+    const list = Array.isArray(shots) ? shots : [];
+    const answers = /^(page_\d+|after_fill|after_fill_done|pre_submit)$/i;
+    const ranked = list.map((shot, index) => ({ shot, index })).filter(({ shot }) => shot?.id);
+    const preferred = ranked.filter(({ shot }) => answers.test(String(shot.stage || '')));
+    const chosen = (preferred.length ? preferred : ranked).slice(-1);
+    const newest = ranked[ranked.length - 1];
+    if (newest && !chosen.some(({ shot }) => shot.id === newest.id)) chosen.push(newest);
+    for (const { shot } of chosen) {
+        const row = getOne(
+            `SELECT image_blob FROM bid_course_screenshots WHERE id = ?`,
+            [shot.id]
+        );
+        const blob = String(row?.image_blob || '').replace(/^data:image\/\w+;base64,/, '');
+        if (blob.length > 40 && blob.length <= 1800000) shot.image_base64 = blob;
+    }
+    return list;
+}
+
 function isStatusNoiseEventType(eventType) {
     return /^(screenshot|screenshot_failed|live|queue_enqueued|qa_admin_access_check)$/i.test(
         String(eventType || '')
@@ -990,6 +1011,7 @@ module.exports = {
     resolveCompanyForCourse,
     repairAllCourses,
     listExistingScreenshots,
+    attachInlineScreenshotBytes,
     pruneMissingScreenshotFiles,
     dedupeCourseScreenshots,
     clearHistory
