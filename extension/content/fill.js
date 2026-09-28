@@ -7228,7 +7228,8 @@
             input.dispatchEvent(new Event('input', { bubbles: true }));
             input.dispatchEvent(new Event('change', { bubbles: true }));
             try {
-                if (zone && zone !== input) {
+                const otherFiles = zone?.querySelectorAll?.('input[type="file"]')?.length || 0;
+                if (zone && zone !== input && otherFiles <= 1) {
                     zone.dispatchEvent(new Event('change', { bubbles: true }));
                     const drop = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
                     zone.dispatchEvent(drop);
@@ -7265,8 +7266,8 @@
             ),
             profile
         );
-        let coverLetter = payload.coverLetter || payload.cover_letter || null;
-        const skipCoverLetter = !!payload.skipCoverLetter;
+        let coverLetter = null;
+        const skipCoverLetter = true;
 
         // Hard gate: never put a resume into a cover-letter slot.
         // Refuse archive resume_* names and clean First_Last.docx without a cover marker.
@@ -7306,7 +7307,7 @@
                 continue;
             }
             if (kind === 'resume') {
-                if (resume?.base64 && resume?.filename) {
+                if (!uploadedResume && resume?.base64 && resume?.filename) {
                     if (await uploadBlobToInput(input, resume)) {
                         uploaded += 1;
                         uploadedResume += 1;

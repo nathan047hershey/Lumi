@@ -886,8 +886,8 @@ async function fileInputHasFile(tabId, nodeId) {
     }
 }
 
-/** Resume must not stay on the Cover Letter input. Clear that slot after the CV attaches. */
-async function clearCoverLetterFileInputs(tabId) {
+/** Leave the resume on one input. Clear every other file input, including Cover Letter. */
+async function clearOtherFileInputs(tabId, keepNodeId) {
     const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', {
         depth: -1,
         pierce: true
@@ -895,8 +895,7 @@ async function clearCoverLetterFileInputs(tabId) {
     const found = [];
     walkFileInputs(doc?.root, found);
     for (const row of found) {
-        const hay = `${row.attrs?.id || ''} ${row.attrs?.name || ''} ${row.attrs?.['aria-label'] || ''} ${row.attrs?.class || ''}`;
-        if (!isCoverLetterHay(hay)) continue;
+        if (!row.nodeId || row.nodeId === keepNodeId) continue;
         await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
             files: [],
             nodeId: row.nodeId
@@ -936,7 +935,7 @@ export async function setFileInputViaDebugger(tabId, file) {
         });
         const hasFile = await fileInputHasFile(tabId, nodeId);
         if (!hasFile) return { ok: false, reason: 'file_not_attached', filename, path: absPath };
-        await clearCoverLetterFileInputs(tabId);
+        await clearOtherFileInputs(tabId, nodeId);
         return { ok: true, filename, path: absPath };
     } catch (err) {
         return { ok: false, reason: err?.message || String(err), filename };

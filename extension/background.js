@@ -4608,12 +4608,8 @@ async function processReadyQueue(opts = {}) {
                                 : `Fill failed — tab kept for review: ${errMsg.slice(0, 80)}`))
                 );
                 await playBidderSound(prefs.soundEnabled);
-                // Hands-free: capture the failure and move to the next job. Keep the tab only while a CV regenerates.
-                if (prefs.unattended && !parkedRegen) {
-                    await clearTabMapping({ applicationId: item.id, tabId: opened.tabId }).catch(() => {});
-                    try { await chrome.tabs.remove(opened.tabId); } catch (_) { /* ignore */ }
-                    openTabs.delete(opened.tabId);
-                } else if (opened?.tabId) {
+                // Keep the apply tab until Submit. Closing here left the form gone before the click.
+                if (opened?.tabId) {
                     manualReviewTabs.set(opened.tabId, item);
                     openTabs.delete(opened.tabId);
                     await focusBidderTabForReview(opened.tabId).catch(() => {});
@@ -4804,8 +4800,8 @@ async function processReadyQueue(opts = {}) {
                                 timeout: !!wait?.timeout,
                                 via: wait?.via || 'timeout'
                             }).catch(() => {});
-                            await notify('Bidder — skipped', `No response on incomplete form — skip ${item.company_name || item.id}`);
-                            try { await chrome.tabs.remove(opened.tabId); } catch (_) { /* ignore */ }
+                            await notify('Bidder — skipped', `Incomplete form — tab kept open so you can submit ${item.company_name || item.id}`);
+                            manualReviewTabs.set(opened.tabId, item);
                             openTabs.delete(opened.tabId);
                             await setQueueState({
                                 status: 'running',
@@ -5162,10 +5158,11 @@ async function processReadyQueue(opts = {}) {
                     filled: fillStats?.filled || 0,
                     reason: 'unattended_continue'
                 }).catch(() => {});
+                await ensureApplyFormVisible(opened.tabId);
                 await uploadScreenshot(item.id, 'after_fill_done', opened.tabId, { stayInApp: true }).catch(() => {});
-                try { await chrome.tabs.remove(opened.tabId); } catch (_) { /* ignore */ }
+                manualReviewTabs.set(opened.tabId, item);
                 openTabs.delete(opened.tabId);
-                await notify('Bidder', `Could not submit ${item.company_name || 'job'} — continuing`);
+                await notify('Bidder', `Could not submit ${item.company_name || 'job'} — tab kept open`);
             } else {
                 // autoSubmit on but could not click Submit — keep tab for manual finish.
                 await ensureApplyFormVisible(opened.tabId);
@@ -6880,17 +6877,8 @@ async function prepareBidderApplicationFiles(tabId, item, app, prefs, profile = 
     }
     const detect = await chrome.tabs.sendMessage(tabId, { type: 'DETECT_APPLY_FORM' }).catch(() => null);
     const formSnap = detect?.data?.form || { fileInputs: [] };
-    const coverLetterFile = await maybePrepareCoverLetterFile({
-        form: formSnap,
-        profileId: app.profile_id || item.profile_id,
-        jobDescription: app.job_description || '',
-        resumeHtml: app.draft_html || '',
-        companyName: app.company_name || item.company_name || '',
-        jobRole: app.job_role || item.job_role || '',
-        settings,
-        uploadCoverLetter: !!prefs.uploadCoverLetter
-    });
-    return { resumeFile, coverLetterFile, formSnap, settings };
+    // Cover Letter stays empty. The resume must not be copied into that slot.
+    return { resumeFile, coverLetterFile: null, formSnap, settings };
 }
 
 function mapBidderQuestions(rawQuestions) {

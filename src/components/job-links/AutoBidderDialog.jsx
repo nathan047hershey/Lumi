@@ -234,7 +234,7 @@ function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, emptyLabel }) {
             className={
                 fullscreen
                     ? 'flex-1 min-h-0 overflow-auto rounded bg-black/40 p-2'
-                    : `${src ? 'min-h-[36rem]' : 'min-h-[12rem]'} max-h-[min(88vh,72rem)] overflow-auto rounded border bg-background/80 p-1`
+                    : `${src ? 'h-64' : 'h-32'} overflow-auto rounded border bg-background/80 p-1`
             }
         >
             {src ? (
