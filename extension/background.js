@@ -2928,14 +2928,28 @@ async function keepLumiTabInFront() {
     }
 }
 
+/** Tabs opened in the last few seconds for the same job. Stops Start from creating a twin. */
+const recentApplyOpens = new Map();
+
 /** Open the job behind the current tab. Do not change which tab is in front.
- *  fresh: Start always creates a new tab so a previous thank-you page cannot be reused. */
+ *  fresh: a later Start creates a new tab so a previous thank-you page cannot be reused.
+ *  A second open of the same job within 20s reuses the tab that is already filling. */
 async function openVisibleApplyTab(url, opts = {}) {
     const applyUrl = isAshbyJobDescriptionUrl(url) ? ashbyApplicationUrl(url) : String(url || '').trim();
     if (!/^https?:\/\//i.test(applyUrl)) return null;
+    const jobKey = greenhouseJobKey(applyUrl) || applyUrl;
+    const recent = recentApplyOpens.get(jobKey);
+    if (recent?.tabId && Date.now() - recent.at < 20000) {
+        const live = await chrome.tabs.get(recent.tabId).catch(() => null);
+        if (live?.id) {
+            return { tabId: live.id, url: applyUrl, windowId: live.windowId, reused: true };
+        }
+        recentApplyOpens.delete(jobKey);
+    }
     if (!opts.fresh) {
         const existing = await findLiveApplyTabForUrl(applyUrl);
         if (existing?.id) {
+            recentApplyOpens.set(jobKey, { tabId: existing.id, at: Date.now() });
             return { tabId: existing.id, url: applyUrl, windowId: existing.windowId, reused: true };
         }
     }
@@ -2949,6 +2963,7 @@ async function openVisibleApplyTab(url, opts = {}) {
         active: false,
         ...(windowId ? { windowId } : {})
     });
+    if (tab?.id) recentApplyOpens.set(jobKey, { tabId: tab.id, at: Date.now() });
     return tab?.id ? { tabId: tab.id, url: applyUrl, windowId: tab.windowId, reused: false } : null;
 }
 
@@ -3812,9 +3827,7 @@ async function processReadyQueue(opts = {}) {
                 url: applyUrl || opened.url || null,
                 eventType: 'run_gating'
             }).catch(() => {});
-            // First live frame ASAP so Control is not stuck on "Waiting for live frames…"
-            void uploadScreenshot(item.id, 'opened', opened.tabId, { settleMs: 0, stayInApp: true })
-                .catch(() => {});
+            // Live monitor waits for the filled form. A shot here is the empty site.
 
             try {
             let siteSuccess = false;
@@ -3862,7 +3875,6 @@ async function processReadyQueue(opts = {}) {
                 applicationId: item.id,
                 startedAt: Date.now()
             }).catch(() => {});
-            let lastGateShotAt = 0;
             while (Date.now() < formDeadline) {
                 try {
                     const liveTab = await chrome.tabs.get(opened.tabId).catch(() => null);
@@ -3893,25 +3905,23 @@ async function processReadyQueue(opts = {}) {
                         break;
                     }
                     await ensureScripts(opened.tabId);
-                    // Keep Live monitor updating during the gate wait (was stuck on “Waiting…”).
-                    if (Date.now() - lastGateShotAt > 1200) {
-                        lastGateShotAt = Date.now();
-                        void uploadScreenshot(item.id, 'live', opened.tabId, {
-                            settleMs: 0,
-                            stayInApp: true
-                        }).catch(() => {});
-                    }
                     const revealedEarly = await ensureApplyFormVisible(opened.tabId, {
                         profileEmail,
                         applicationId: item.id
                     });
                     if (revealedEarly?.tabId && revealedEarly.tabId !== opened.tabId) {
-                        openTabs.delete(opened.tabId);
+                        const prevId = opened.tabId;
+                        openTabs.delete(prevId);
                         opened.tabId = revealedEarly.tabId;
                         openTabs.set(opened.tabId, item);
+                        await closeReplacedApplyTab(prevId, opened.tabId);
                         await setQueueState({
                             currentTabId: opened.tabId,
-                            currentJobUrl: revealedEarly.href || opened.url || null
+                            currentJobUrl: revealedEarly.href || opened.url || null,
+                            tabsByAppId: {
+                                ...((await getQueueState().catch(() => null))?.tabsByAppId || {}),
+                                [String(item.id)]: opened.tabId
+                            }
                         }).catch(() => {});
                     }
                     if (revealedEarly?.clicked || revealedEarly?.applyFound) {
@@ -4083,9 +4093,11 @@ async function processReadyQueue(opts = {}) {
                     applicationId: item.id
                 }).catch(() => null);
                 if (lastReveal?.tabId && lastReveal.tabId !== opened.tabId) {
-                    openTabs.delete(opened.tabId);
+                    const prevId = opened.tabId;
+                    openTabs.delete(prevId);
                     opened.tabId = lastReveal.tabId;
                     openTabs.set(opened.tabId, item);
+                    await closeReplacedApplyTab(prevId, opened.tabId);
                 }
                 if (lastReveal?.clicked || lastReveal?.applyFound) {
                     formOk = await recheckFormAfterCaptcha(opened.tabId, Math.min(18000, formWaitMs));
@@ -4334,8 +4346,6 @@ async function processReadyQueue(opts = {}) {
                 pollMs: 80,
                 maxMs: 1500
             });
-            void uploadScreenshot(item.id, 'opened', opened.tabId, { settleMs: 0, stayInApp: true })
-                .catch(() => {});
             await logCourseEvent(item.id, 'form_detected', {
                 revealed,
                 fieldCount: ready.fieldCount || 0,
@@ -6066,6 +6076,17 @@ async function getOrCreateAtsPassword(host) {
     } catch {
         return generateAtsPassword(h);
     }
+}
+
+/** Apply opened a second tab. Close the first so only one tab fills this job. */
+async function closeReplacedApplyTab(prevId, nextId) {
+    const prev = Number(prevId) || 0;
+    const next = Number(nextId) || 0;
+    if (!prev || !next || prev === next) return;
+    engineKickByTab.delete(prev);
+    engineRanTabs.delete(prev);
+    intentionalCloseTabs.add(prev);
+    try { await chrome.tabs.remove(prev); } catch (_) { /* already gone */ }
 }
 
 async function followApplyOpenedTab(openerTabId, beforeTabIds, waitMs = 5000) {
@@ -8311,7 +8332,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
                 eventType: trusted?.ok ? 'cv_upload_ok' : 'cv_upload_retry'
             }).catch(() => {});
         }
-        uploadScreenshot(item.id, 'mid_fill', tabId, shotOpts({ settleMs: 200 })).catch(() => {});
+        // Shot waits until answers are on the form (after_fill / page_N).
     } catch (err) {
         console.warn('[bidder] file/profile fill', err);
     }
@@ -9445,20 +9466,8 @@ function handleExtensionMessage(msg, sender, sendResponse) {
                         : [])
                 ].map((u) => String(u || '').trim()).filter((u) => /^https?:\/\//i.test(u));
                 const openUrl = rawOpen.find((u) => !/\/embed\/job_app/i.test(u)) || rawOpen[0] || '';
-                if (openUrl) {
-                    const openedNow = await openVisibleApplyTab(openUrl).catch((err) => {
-                        console.warn('[bidder] open tab on start', err?.message || err);
-                        return null;
-                    });
-                    const first = (Array.isArray(msg.readyItems) ? msg.readyItems : []).find((it) => it?.id);
-                    if (openedNow?.tabId && first) {
-                        void startJobFillEngine(openedNow.tabId, {
-                            ...first,
-                            open_url: openUrl,
-                            job_url: first.job_url || openUrl
-                        });
-                    }
-                }
+                // The queue opens the apply tab once. Opening here as well started a second tab
+                // and a second fill of the same job.
                 const summary = await processReadyQueue({
                     jobLinkIds,
                     applicationIds,

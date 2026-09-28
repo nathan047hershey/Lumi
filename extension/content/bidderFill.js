@@ -3806,7 +3806,7 @@
         const applicationId = payload.applicationId || null;
         let pageShotN = 0;
         const captureFormPage = async () => {
-            if (!applicationId) return;
+            if (!applicationId || payload.kick) return;
             pageShotN += 1;
             const stage = `page_${pageShotN}`;
             const scrollHeight = Math.max(

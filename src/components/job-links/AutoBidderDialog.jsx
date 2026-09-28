@@ -209,25 +209,14 @@ function ZoomControls({ zoom, onZoom, onFit, compact }) {
     );
 }
 
-function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, onWheelZoom, emptyLabel }) {
-    const viewportRef = useRef(null);
-
-    const onWheel = (e) => {
-        if (!onWheelZoom) return;
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? -ZOOM_STEP : ZOOM_STEP;
-        onWheelZoom(delta);
-    };
-
+function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, emptyLabel }) {
     return (
         <div
-            ref={viewportRef}
             className={
                 fullscreen
                     ? 'flex-1 min-h-0 overflow-auto rounded bg-black/40 p-2'
                     : `${src ? 'min-h-[36rem]' : 'min-h-[12rem]'} max-h-[min(88vh,72rem)] overflow-auto rounded border bg-background/80 p-1`
             }
-            onWheel={onWheel}
         >
             {src ? (
                 <img
@@ -291,10 +280,9 @@ function ScreenshotLightbox({ open, onClose, courseId, filename, stage, isAdmin,
                 alt={stage}
                 zoom={zoom}
                 fullscreen
-                onWheelZoom={adjustZoom}
             />
             {err && <p className="px-4 py-2 text-xs text-red-300">{err}</p>}
-            <p className="px-4 py-2 text-[11px] text-white/60">Scroll to pan · mouse wheel to zoom · Esc to close</p>
+            <p className="px-4 py-2 text-[11px] text-white/60">Scroll to see the rest of the page · +/− to zoom · Esc to close</p>
         </div>
     );
 }
@@ -359,7 +347,6 @@ function LiveScreenshotPanel({ courseId, shot, isAdmin, refreshKey, lastRefreshe
                 src={src}
                 alt={shownShot?.stage || 'live'}
                 zoom={zoom}
-                onWheelZoom={adjustZoom}
                 emptyLabel={
                     src
                         ? ''
@@ -375,7 +362,7 @@ function LiveScreenshotPanel({ courseId, shot, isAdmin, refreshKey, lastRefreshe
                     Latest: <strong>{shownShot ? screenshotStageLabel(shownShot.stage) : 'waiting'}</strong>
                     {ago ? ` · updated ${ago}` : ''}
                 </span>
-                <span>Scroll to pan · wheel = zoom · Full screen for max size</span>
+                <span>Scroll to see the rest · +/− to zoom</span>
             </div>
             {err && !src && <p className="mt-1 text-[11px] text-destructive">{err}</p>}
         </div>
@@ -2767,12 +2754,14 @@ export default function AutoBidderDialog({
         if (monitorFrameFollowLive) {
             // Prefer the updating `live` frame while this course is the active bid.
             if (thisCourseActive || awaitingCaptcha) {
-                let pageIdx = -1;
+                let answersIdx = -1;
                 monitorFrames.forEach((s, i) => {
-                    if (/^page_\d+$/i.test(String(s?.stage || ''))) pageIdx = i;
+                    if (/^(page_\d+|after_fill|after_fill_done|pre_submit)$/i.test(String(s?.stage || ''))) {
+                        answersIdx = i;
+                    }
                 });
-                if (pageIdx >= 0) {
-                    setMonitorFrameIndex(pageIdx);
+                if (answersIdx >= 0) {
+                    setMonitorFrameIndex(answersIdx);
                     return;
                 }
                 const liveIdx = monitorFrames.findIndex((s) => /^live$/i.test(String(s?.stage || '')));

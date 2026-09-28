@@ -741,7 +741,8 @@ function listExistingScreenshots(courseId, applicationId) {
                     const fp = disk || s.file_path;
                     if (fp && fs.existsSync(fp)) return Math.round(fs.statSync(fp).mtimeMs || 0);
                 } catch (_) { /* ignore */ }
-                return 0;
+                const created = s.created_at ? new Date(s.created_at).getTime() : 0;
+                return Number.isFinite(created) ? created : 0;
             })()
         });
     }

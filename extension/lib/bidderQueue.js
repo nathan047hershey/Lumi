@@ -764,6 +764,126 @@ export async function getCvFolderStatus() {
     };
 }
 
+function nodeAttrMap(node) {
+    const attrs = {};
+    const list = node?.attributes || [];
+    for (let i = 0; i < list.length; i += 2) attrs[String(list[i] || '').toLowerCase()] = String(list[i + 1] || '');
+    return attrs;
+}
+
+function walkFileInputs(node, acc) {
+    if (!node) return;
+    if (String(node.nodeName || '').toUpperCase() === 'INPUT') {
+        const attrs = nodeAttrMap(node);
+        if (String(attrs.type || '').toLowerCase() === 'file' && node.nodeId) {
+            acc.push({ nodeId: node.nodeId, attrs });
+        }
+    }
+    for (const child of node.children || []) walkFileInputs(child, acc);
+    if (node.contentDocument) walkFileInputs(node.contentDocument, acc);
+    for (const root of node.shadowRoots || []) walkFileInputs(root, acc);
+}
+
+function scoreResumeFileInput(attrs) {
+    const hay = `${attrs.id || ''} ${attrs.name || ''} ${attrs['aria-label'] || ''} ${attrs.accept || ''} ${attrs.class || ''}`;
+    if (/cover\s*letter/i.test(hay)) return -1;
+    let score = 1;
+    if (attrs['data-lumi-resume-slot']) score += 80;
+    if (/\b(resume|cv)\b|curriculum/i.test(hay)) score += 50;
+    if (/pdf|docx?|word/i.test(attrs.accept || '')) score += 5;
+    return score;
+}
+
+async function markResumeSlotsInFrames(tabId) {
+    const expression = `(() => {
+        const caption = (input) => {
+            let node = input;
+            const bits = [input.id || '', input.name || '', input.getAttribute('aria-label') || ''];
+            for (let depth = 0; depth < 6 && node; depth += 1) {
+                let prev = node.previousElementSibling;
+                for (let i = 0; i < 3 && prev; i += 1, prev = prev.previousElementSibling) {
+                    const t = String(prev.innerText || '').replace(/\\s+/g, ' ').trim();
+                    if (t && t.length < 80) bits.push(t);
+                }
+                node = node.parentElement;
+                if (!node || /^(FORM|BODY|HTML)$/i.test(node.tagName)) break;
+            }
+            return bits.join(' ');
+        };
+        const inputs = [...document.querySelectorAll('input[type="file"]')];
+        const resume = inputs.find((input) => {
+            const hay = caption(input);
+            return /\\b(resume|cv)\\b/i.test(hay) && !/cover\\s*letter/i.test(hay);
+        });
+        document.querySelector('[data-lumi-resume-slot]')?.removeAttribute('data-lumi-resume-slot');
+        if (resume) resume.setAttribute('data-lumi-resume-slot', '1');
+        return !!resume;
+    })()`;
+    try {
+        const tree = await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree');
+        const frames = [];
+        const walk = (node) => {
+            if (node?.frame?.id) frames.push(node.frame.id);
+            for (const child of node?.childFrames || []) walk(child);
+        };
+        walk(tree?.frameTree);
+        for (const frameId of frames) {
+            const world = await chrome.debugger.sendCommand({ tabId }, 'Page.createIsolatedWorld', {
+                frameId,
+                worldName: 'lumi-cv-slot'
+            }).catch(() => null);
+            const contextId = world?.executionContextId;
+            if (!contextId) continue;
+            await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
+                expression,
+                contextId,
+                returnByValue: true
+            }).catch(() => {});
+        }
+    } catch (_) { /* top document walk still runs */ }
+}
+
+/** File input may live in a Greenhouse iframe. querySelector on the top document misses it. */
+async function findResumeFileInputNode(tabId) {
+    for (let attempt = 0; attempt < 8; attempt += 1) {
+        if (attempt) await new Promise((r) => setTimeout(r, 700));
+        await markResumeSlotsInFrames(tabId);
+        const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', {
+            depth: -1,
+            pierce: true
+        }).catch(() => null);
+        const found = [];
+        walkFileInputs(doc?.root, found);
+        let bestId = 0;
+        let bestScore = 0;
+        for (const row of found) {
+            const score = scoreResumeFileInput(row.attrs);
+            if (score > bestScore) {
+                bestScore = score;
+                bestId = row.nodeId;
+            }
+        }
+        if (bestId) return bestId;
+    }
+    return 0;
+}
+
+async function fileInputHasFile(tabId, nodeId) {
+    try {
+        const resolved = await chrome.debugger.sendCommand({ tabId }, 'DOM.resolveNode', { nodeId });
+        const objectId = resolved?.object?.objectId;
+        if (!objectId) return false;
+        const check = await chrome.debugger.sendCommand({ tabId }, 'Runtime.callFunctionOn', {
+            objectId,
+            functionDeclaration: 'function () { return !!(this.files && this.files.length); }',
+            returnByValue: true
+        });
+        return !!check?.result?.value;
+    } catch (_) {
+        return false;
+    }
+}
+
 /**
  * Greenhouse ignores untrusted change events on input[type=file].
  * Write the CV to Downloads/CVs/... and set it with CDP so the Attach slot updates.
@@ -788,59 +908,14 @@ export async function setFileInputViaDebugger(tabId, file) {
         }
         if (!absPath) return { ok: false, reason: 'cv_download_no_path', filename };
 
-        const doc = await chrome.debugger.sendCommand({ tabId }, 'DOM.getDocument', {
-            depth: 4,
-            pierce: true
-        });
-        const rootId = doc?.root?.nodeId;
-        if (!rootId) return { ok: false, reason: 'no_document' };
-        await evalInTab(tabId, `(() => {
-            const caption = (input) => {
-                let node = input;
-                const bits = [input.id || '', input.name || ''];
-                for (let depth = 0; depth < 6 && node; depth += 1) {
-                    let prev = node.previousElementSibling;
-                    for (let i = 0; i < 3 && prev; i += 1, prev = prev.previousElementSibling) {
-                        const t = String(prev.innerText || '').replace(/\\s+/g, ' ').trim();
-                        if (t && t.length < 80) bits.push(t);
-                    }
-                    node = node.parentElement;
-                    if (!node || /^(FORM|BODY|HTML)$/i.test(node.tagName)) break;
-                }
-                return bits.join(' ');
-            };
-            const inputs = [...document.querySelectorAll('input[type="file"]')];
-            const resume = inputs.find((input) => {
-                const hay = caption(input);
-                return /\\b(resume|cv)\\b/i.test(hay) && !/cover\\s*letter/i.test(hay);
-            });
-            document.querySelector('[data-lumi-resume-slot]')?.removeAttribute('data-lumi-resume-slot');
-            if (resume) resume.setAttribute('data-lumi-resume-slot', '1');
-            return !!resume;
-        })()`);
-        const selectors = [
-            'input[data-lumi-resume-slot="1"]',
-            'input#resume',
-            'input[name="resume"]',
-            'input[type="file"][id*="resume" i]',
-            'input[type="file"][name*="resume" i]'
-        ];
-        let nodeId = 0;
-        for (const selector of selectors) {
-            const found = await chrome.debugger.sendCommand({ tabId }, 'DOM.querySelector', {
-                nodeId: rootId,
-                selector
-            });
-            if (found?.nodeId) {
-                nodeId = found.nodeId;
-                break;
-            }
-        }
+        const nodeId = await findResumeFileInputNode(tabId);
         if (!nodeId) return { ok: false, reason: 'no_file_input', filename };
         await chrome.debugger.sendCommand({ tabId }, 'DOM.setFileInputFiles', {
             files: [absPath],
             nodeId
         });
+        const hasFile = await fileInputHasFile(tabId, nodeId);
+        if (!hasFile) return { ok: false, reason: 'file_not_attached', filename, path: absPath };
         return { ok: true, filename, path: absPath };
     } catch (err) {
         return { ok: false, reason: err?.message || String(err), filename };
