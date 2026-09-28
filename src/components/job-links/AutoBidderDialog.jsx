@@ -234,7 +234,7 @@ function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, emptyLabel }) {
             className={
                 fullscreen
                     ? 'flex-1 min-h-0 overflow-auto rounded bg-black/40 p-2'
-                    : `${src ? 'h-64' : 'h-32'} overflow-auto rounded border bg-background/80 p-1`
+                    : `${src ? 'h-[28rem]' : 'h-40'} overflow-auto rounded border bg-background/80 p-1`
             }
         >
             {src ? (
@@ -410,20 +410,22 @@ function AuthShot({ courseId, filename, stage, isAdmin, imgClassName, onExpand, 
             alt={label}
             className={
                 imgClassName
-                || 'block h-auto min-h-[18rem] w-full bg-black/20'
+                || 'block h-auto w-full min-w-full bg-black/20'
             }
         />
     );
     return (
-        <figure className="space-y-1">
+        <figure className="w-full min-w-0 space-y-1">
             {onExpand ? (
                 <button
                     type="button"
-                    className="group relative block w-full cursor-zoom-in overflow-hidden rounded border bg-background text-left"
+                    className="group relative block w-full min-w-0 cursor-zoom-in overflow-hidden rounded border bg-background text-left"
                     onClick={onExpand}
                     title="Click to open full-screen zoom"
                 >
-                    {img}
+                    <div className="max-h-[36rem] w-full min-w-0 overflow-auto">
+                        {img}
+                    </div>
                     <span className="pointer-events-none absolute bottom-2 right-2 rounded bg-black/70 px-2 py-1 text-xs font-medium text-white opacity-90 shadow transition group-hover:opacity-100">
                         Click to enlarge
                     </span>

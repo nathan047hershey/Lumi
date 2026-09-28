@@ -112,13 +112,15 @@ function AuthShot({ courseId, filename, stage, isAdmin }) {
         );
     }
     return (
-        <figure className="space-y-1">
-            <img
-                src={src}
-                alt={label}
-                className="max-h-[min(52vh,32rem)] min-h-[14rem] w-full rounded-lg border border-white/10 object-contain object-top bg-black/20"
-            />
-            <figcaption className="text-xs text-muted-foreground">{label}</figcaption>
+        <figure className="w-full min-w-0 space-y-1">
+            <div className="max-h-[36rem] w-full min-w-0 overflow-auto rounded-lg border border-white/10 bg-black/20">
+                <img
+                    src={src}
+                    alt={label}
+                    className="block h-auto w-full min-w-full"
+                />
+            </div>
+            <figcaption className="text-xs text-muted-foreground">{label} — scroll to see the rest</figcaption>
         </figure>
     );
 }

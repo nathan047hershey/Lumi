@@ -4340,15 +4340,29 @@
         }
 
         noteProgress();
-        const filledAnswers = collectFields()
-            .filter((f) => f && f.type !== 'password' && f.type !== 'hidden')
-            .map((f) => ({
-                id: f.id || '',
-                label: String(f.label || '').replace(/\s+/g, ' ').trim().slice(0, 180),
-                answer: String(readCurrentValue(f) || '').replace(/\s+/g, ' ').trim().slice(0, 500)
-            }))
-            .filter((row) => row.label && row.answer && !isPlaceholderValue(row.answer))
-            .slice(0, 60);
+        const seenAnswer = new Set();
+        const filledAnswers = [];
+        const pushAnswer = (row) => {
+            const label = String(row?.label || row?.question || row?.name || row?.id || '')
+                .replace(/\s+/g, ' ').trim().slice(0, 180);
+            const answer = String(row?.answer || row?.value || '')
+                .replace(/\s+/g, ' ').trim().slice(0, 500);
+            if (!label || !answer || isPlaceholderValue(answer)) return;
+            const key = label.toLowerCase();
+            if (seenAnswer.has(key)) return;
+            seenAnswer.add(key);
+            filledAnswers.push({ id: String(row?.id || ''), label, answer });
+        };
+        for (const field of collectFields()) {
+            if (!field || field.type === 'password' || field.type === 'hidden') continue;
+            pushAnswer({
+                id: field.id || '',
+                label: field.label || field.name || field.id || '',
+                answer: readCurrentValue(field) || ''
+            });
+        }
+        for (const row of answers) pushAnswer(row);
+        filledAnswers.splice(60);
         return {
             ok: requiredComplete,
             filledAnswers,
