@@ -491,6 +491,7 @@ export async function logCourseEvent(applicationId, eventType, meta = {}) {
 }
 
 const pageDebuggerTabs = new Set();
+const pageDebuggerRefs = new Map();
 
 async function ensureDebuggerPermission() {
     if (!chrome.debugger) return false;
@@ -519,12 +520,20 @@ export async function attachPageDebugger(tabId) {
         console.warn('[bidder] debugger permission not granted — continuing without CDP');
         return false;
     }
+    const held = pageDebuggerRefs.get(tabId) || 0;
+    if (held > 0) {
+        pageDebuggerRefs.set(tabId, held + 1);
+        pageDebuggerTabs.add(tabId);
+        return true;
+    }
     try {
         await chrome.debugger.attach({ tabId }, '1.3');
+        pageDebuggerRefs.set(tabId, 1);
         pageDebuggerTabs.add(tabId);
         return true;
     } catch (err) {
         if (/already attached/i.test(String(err?.message || err))) {
+            pageDebuggerRefs.set(tabId, 1);
             pageDebuggerTabs.add(tabId);
             return true;
         }
@@ -535,15 +544,22 @@ export async function attachPageDebugger(tabId) {
 
 export async function releasePageDebugger(tabId) {
     if (!tabId) return;
+    const held = pageDebuggerRefs.get(tabId) || 0;
+    if (held > 1) {
+        pageDebuggerRefs.set(tabId, held - 1);
+        return;
+    }
+    pageDebuggerRefs.delete(tabId);
+    pageDebuggerTabs.delete(tabId);
     try {
         await chrome.debugger.detach({ tabId });
     } catch (_) { /* ignore */ }
-    pageDebuggerTabs.delete(tabId);
 }
 
 export async function releaseAllPageDebuggers() {
     const ids = [...pageDebuggerTabs];
     pageDebuggerTabs.clear();
+    pageDebuggerRefs.clear();
     await Promise.all(ids.map((id) => chrome.debugger.detach({ tabId: id }).catch(() => {})));
 }
 
@@ -828,6 +844,8 @@ export async function setFileInputViaDebugger(tabId, file) {
         return { ok: true, filename, path: absPath };
     } catch (err) {
         return { ok: false, reason: err?.message || String(err), filename };
+    } finally {
+        await releasePageDebugger(tabId);
     }
 }
 
@@ -991,32 +1009,44 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
                 } catch (_) { /* keep the earlier override */ }
             }
             await evalInTab(tabId, `(() => { try { window.scrollTo(0, 0); } catch (_) {} return true; })()`).catch(() => {});
-            // clip and captureBeyondViewport cannot be combined — Chrome rejects that call.
-            // fromSurface fails on a tab that was never focused, so try the layout tree first.
-            const shots = [
-                { format: 'jpeg', quality: 48, captureBeyondViewport: true, fromSurface: false },
-                {
-                    format: 'jpeg',
-                    quality: 46,
-                    fromSurface: false,
-                    clip: { x: 0, y: 0, width, height, scale: 1 }
-                },
-                { format: 'jpeg', quality: 44, fromSurface: true }
-            ];
-            for (const params of shots) {
-                try {
-                    const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', params);
-                    if (result?.data && result.data.length > 800) {
-                        return `data:image/jpeg;base64,${result.data}`;
-                    }
-                } catch (err) {
-                    const msg = String(err?.message || err || '');
-                    if (/showing error page|chrome-error/i.test(msg)) {
-                        throw new Error('cannot capture Chrome error page (site failed to load)');
+            // Keep the frame under ~900KB so the API can store the bytes in SQLite.
+            // A larger full-page JPEG is dropped on Vercel and the monitor then 404s.
+            const maxB64 = 900000;
+            const clip = { x: 0, y: 0, width, height, scale: 1 };
+            const grab = async (quality, useClip) => {
+                const shots = [
+                    { format: 'jpeg', quality, captureBeyondViewport: true, fromSurface: false },
+                    useClip
+                        ? { format: 'jpeg', quality, fromSurface: false, clip: useClip }
+                        : null,
+                    { format: 'jpeg', quality, fromSurface: true }
+                ].filter(Boolean);
+                for (const params of shots) {
+                    try {
+                        const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', params);
+                        if (result?.data && result.data.length > 800) return result.data;
+                    } catch (err) {
+                        const msg = String(err?.message || err || '');
+                        if (/showing error page|chrome-error/i.test(msg)) {
+                            throw new Error('cannot capture Chrome error page (site failed to load)');
+                        }
                     }
                 }
+                return '';
+            };
+            let data = await grab(40, clip);
+            if (data.length > maxB64) data = await grab(22, clip) || data;
+            if (data.length > maxB64) {
+                data = await grab(14, {
+                    x: 0,
+                    y: 0,
+                    width,
+                    height: Math.min(height, 5200),
+                    scale: 0.7
+                }) || data;
             }
-            return '';
+            if (!data || data.length > 1700000) return '';
+            return `data:image/jpeg;base64,${data}`;
         });
     } catch (err) {
         if (/chrome error page/i.test(String(err?.message || err))) throw err;
@@ -1025,6 +1055,7 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
         if (metricsOverride) {
             await chrome.debugger.sendCommand({ tabId }, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
         }
+        await releasePageDebugger(tabId);
     }
 }
 
@@ -1279,6 +1310,8 @@ export async function ensureUsDialCodeTrusted(tabId) {
     } catch (err) {
         console.warn('[bidder] ensureUsDialCodeTrusted', err);
         return false;
+    } finally {
+        await releasePageDebugger(tabId);
     }
 }
 

@@ -126,7 +126,13 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
     const [loading, setLoading] = useState(false);
     const prevObjectUrlRef = useRef('');
 
+    const prevCourseRef = useRef(courseId);
     useEffect(() => {
+        if (prevCourseRef.current !== courseId) {
+            prevCourseRef.current = courseId;
+            setSrc('');
+            setErr('');
+        }
         if (!courseId || !filename) {
             setLoading(false);
             return undefined;
@@ -203,7 +209,7 @@ function ZoomControls({ zoom, onZoom, onFit, compact }) {
     );
 }
 
-function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, onWheelZoom }) {
+function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, onWheelZoom, emptyLabel }) {
     const viewportRef = useRef(null);
 
     const onWheel = (e) => {
@@ -219,7 +225,7 @@ function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, onWheelZoom }) {
             className={
                 fullscreen
                     ? 'flex-1 min-h-0 overflow-auto rounded bg-black/40 p-2'
-                    : 'min-h-[36rem] max-h-[min(88vh,72rem)] overflow-auto rounded border bg-background/80 p-1'
+                    : `${src ? 'min-h-[36rem]' : 'min-h-[12rem]'} max-h-[min(88vh,72rem)] overflow-auto rounded border bg-background/80 p-1`
             }
             onWheel={onWheel}
         >
@@ -232,8 +238,8 @@ function ScreenshotZoomViewport({ src, alt, zoom, fullscreen, onWheelZoom }) {
                     style={{ width: `${zoom}%`, maxWidth: 'none' }}
                 />
             ) : (
-                <div className="flex min-h-[8rem] items-center justify-center text-xs text-muted-foreground">
-                    Loading screenshot…
+                <div className="flex min-h-[8rem] items-center justify-center px-4 text-center text-xs text-muted-foreground">
+                    {emptyLabel || 'Waiting for screenshot…'}
                 </div>
             )}
         </div>
@@ -296,19 +302,24 @@ function ScreenshotLightbox({ open, onClose, courseId, filename, stage, isAdmin,
 function LiveScreenshotPanel({ courseId, shot, isAdmin, refreshKey, lastRefreshedAt, onExpand }) {
     const [zoom, setZoom] = useState(100);
     const [, setTick] = useState(0);
-    const { src, err, loading } = useScreenshotSrc(courseId, shot?.filename, isAdmin, refreshKey);
+    const heldShotRef = useRef({ courseId, shot: null });
+    if (String(heldShotRef.current.courseId || '') !== String(courseId || '')) {
+        heldShotRef.current = { courseId, shot: shot || null };
+    } else if (shot) {
+        heldShotRef.current = { courseId, shot };
+    }
+    const shownShot = shot || heldShotRef.current.shot;
+    const { src, err, loading } = useScreenshotSrc(courseId, shownShot?.filename, isAdmin, refreshKey);
 
     useEffect(() => {
         setZoom(100);
-    }, [shot?.filename]);
+    }, [shownShot?.filename]);
 
     useEffect(() => {
         if (!lastRefreshedAt) return undefined;
         const t = setInterval(() => setTick((n) => n + 1), 1000);
         return () => clearInterval(t);
     }, [lastRefreshedAt]);
-
-    if (!shot) return null;
 
     const adjustZoom = (delta) => {
         setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z + delta)));
@@ -346,18 +357,27 @@ function LiveScreenshotPanel({ courseId, shot, isAdmin, refreshKey, lastRefreshe
             </div>
             <ScreenshotZoomViewport
                 src={src}
-                alt={shot.stage}
+                alt={shownShot?.stage || 'live'}
                 zoom={zoom}
                 onWheelZoom={adjustZoom}
+                emptyLabel={
+                    src
+                        ? ''
+                        : !shownShot
+                            ? 'Waiting for the first screenshot…'
+                            : err
+                                ? 'Screenshot is not ready yet'
+                                : 'Loading screenshot…'
+                }
             />
             <div className="mt-1 flex flex-wrap justify-between gap-1 text-xs text-muted-foreground">
                 <span>
-                    Latest: <strong>{screenshotStageLabel(shot.stage)}</strong>
+                    Latest: <strong>{shownShot ? screenshotStageLabel(shownShot.stage) : 'waiting'}</strong>
                     {ago ? ` · updated ${ago}` : ''}
                 </span>
                 <span>Scroll to pan · wheel = zoom · Full screen for max size</span>
             </div>
-            {err && <p className="mt-1 text-[11px] text-destructive">{err}</p>}
+            {err && !src && <p className="mt-1 text-[11px] text-destructive">{err}</p>}
         </div>
     );
 }
@@ -1565,7 +1585,6 @@ export default function AutoBidderDialog({
         const courseChanged = String(prevMonitorCourseRef.current || '') !== String(selectedId);
         prevMonitorCourseRef.current = selectedId;
         if (courseChanged) {
-            setDetail(null);
             setMonitorFrameIndex(0);
             setMonitorFrameFollowLive(true);
             setLiveRefreshKey((k) => k + 1);
@@ -2701,16 +2720,13 @@ export default function AutoBidderDialog({
     };
 
     const shots = useMemo(() => {
-        // Never show another course's frames while selectedId has moved on.
-        if (!detail?.course?.id || String(detail.course.id) !== String(selectedId)) {
-            return [];
-        }
+        if (!detail?.course?.id) return [];
         const list = (detail.screenshots?.length ? detail.screenshots : detail.disk_screenshots || []);
         return list.map((s) => ({
             ...s,
             filename: s.filename || (s.url ? decodeURIComponent(s.url.split('/').pop()) : `${s.stage}.png`)
         }));
-    }, [detail, selectedId]);
+    }, [detail]);
 
     // Chronological unique frames — success / thank-you proof last so follow-live defaults there.
     const monitorFrames = useMemo(
@@ -2802,9 +2818,7 @@ export default function AutoBidderDialog({
         return next;
     }, [courses, detail]);
 
-    const courseIdForShots = (
-        detail?.course?.id && String(detail.course.id) === String(selectedId)
-    ) ? detail.course.id : null;
+    const courseIdForShots = detail?.course?.id || null;
     const shotBustKey = [
         courseIdForShots || '',
         activeMonitorShot?.filename || '',
@@ -3644,19 +3658,15 @@ export default function AutoBidderDialog({
                                             </div>
                                         ) : null}
 
-                                        {activeMonitorShot && courseIdForShots ? (
+                                        {detail?.course?.id ? (
                                             <LiveScreenshotPanel
-                                                courseId={courseIdForShots}
+                                                courseId={detail.course.id}
                                                 shot={activeMonitorShot}
                                                 isAdmin={isAdmin}
                                                 refreshKey={shotBustKey}
                                                 lastRefreshedAt={lastRefreshedAt}
-                                                onExpand={() => openLightbox(activeMonitorShot)}
+                                                onExpand={() => activeMonitorShot && openLightbox(activeMonitorShot)}
                                             />
-                                        ) : selectedId ? (
-                                            <div className="rounded-lg border border-dashed border-border/60 bg-muted/10 px-3 py-6 text-center text-xs text-muted-foreground">
-                                                Loading screenshots for this job…
-                                            </div>
                                         ) : null}
 
                                         <div>

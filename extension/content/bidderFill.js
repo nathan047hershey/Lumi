@@ -1304,7 +1304,8 @@
             if (/^yes\b/i.test(cur) && /^no\b/i.test(want)) return false;
             return true;
         }
-        return true;
+        if (want) return valuesMatch(want, cur, kind);
+        return false;
     }
 
     /** Resolve kind from label when scrape misclassified contractor/prior-employer as question. */
@@ -1390,20 +1391,6 @@
             // No answer generated and field still empty → incomplete (esp. essays).
             if (!w && (field?.type === 'textarea' || kind === 'question')) return false;
             return false;
-        }
-        // Real option already showing — do not reopen the same select forever.
-        if (isSelectLikeField(field)) {
-            const polarity = kind === 'disability_status'
-                || kind === 'requires_sponsorship'
-                || kind === 'previous_employer_no'
-                || kind === 'hispanic_latino'
-                || kind === 'sanctioned_countries_no'
-                || kind === 'work_authorization'
-                || labelLooksLikeConflictNo(String(field?.label || ''))
-                || labelLooksLikeWorkAuthYes(String(field?.label || ''))
-                || labelLooksLikeSponsorship(String(field?.label || ''))
-                || labelLooksLikeFormerEmployee(String(field?.label || ''));
-            if (!polarity) return true;
         }
         if (kind === 'phone') return phoneDigits(got).length >= 7;
         if (kind === 'work_authorization' || labelLooksLikeWorkAuthYes(String(field?.label || ''))) {
@@ -2911,8 +2898,8 @@
                 const direct = await pickVisibleMenuOption(el, want, choiceKind || kind);
                 if (direct?.ok) {
                     try { window.__lumiHighlightFilled?.(el); } catch (_) { /* ignore */ }
+                    return { ...direct, strategy: 'visible_option' };
                 }
-                return { ...(direct || { ok: false, chosen: '' }), strategy: 'visible_option' };
             }
             let res = await fillCombobox(
                 el,
@@ -3140,8 +3127,14 @@
             if (field.type === 'textarea' || kind === 'question') {
                 wanted = fallbackEssayForQuestion(lab, profile, jobDescription)
                     || skillDescribeAnswer(profile, lab);
-            } else if (isSelectLikeField(field)) {
-                wanted = labelLooksLikeHardNo(lab) ? 'No' : 'Yes';
+            } else if (isSelectLikeField(field) && labelLooksLikeHardNo(lab)) {
+                wanted = 'No';
+            } else if (
+                isSelectLikeField(field)
+                && /\b(do you|have you|are you|will you|can you)\b/i.test(lab)
+                && !/\b(which|select one|describe|list|choose which)\b/i.test(lab)
+            ) {
+                wanted = 'Yes';
             }
         }
         return String(wanted || '').trim();
@@ -4008,10 +4001,22 @@
                 let chosen = '';
                 let strategy = '';
                 let error = '';
-                const maxTries = isSelectLikeField(field) ? 1 : MAX_RETRIES;
+                const maxTries = isSelectLikeField(field) ? 2 : MAX_RETRIES;
                 for (let attempt = 1; attempt <= maxTries; attempt++) {
                     if (!wanted && field.required) {
-                        error = 'no_value';
+                        noteAttempt({
+                            application_id: applicationId,
+                            page_index: pages,
+                            field_id: field.id,
+                            field_label: field.label,
+                            field_kind: field.kind,
+                            wanted: '',
+                            chosen: String(readCurrentValue(field) || ''),
+                            ok: false,
+                            strategy: 'none',
+                            attempt_n: attempt,
+                            error: 'no_value'
+                        });
                         break;
                     }
                     const res = await fillOne(field, wanted, attempt, profile);
@@ -4019,15 +4024,21 @@
                     chosen = res.chosen || chosen;
                     await sleep(120);
                     const got = readCurrentValue(field);
-                    const selectDone = isSelectLikeField(field) && !isPlaceholderValue(got || chosen);
-                    if (res?.ok || valuesMatch(wanted, got || chosen, field.kind) || selectDone) {
+                    const shown = String(got || chosen || '').trim();
+                    const landed = !!wanted
+                        && !isPlaceholderValue(shown)
+                        && valuesMatch(wanted, shown, effectiveFieldKind(field) || field.kind);
+                    if (landed) {
                         ok = true;
                         chosen = got || chosen;
                         noteAttempt({
                             application_id: applicationId,
                             page_index: pages,
                             field_id: field.id,
+                            field_label: field.label,
                             field_kind: field.kind,
+                            wanted: wanted || '',
+                            chosen: chosen || '',
                             ok: true,
                             strategy,
                             attempt_n: attempt
@@ -4041,7 +4052,10 @@
                             application_id: applicationId,
                             page_index: pages,
                             field_id: field.id,
+                            field_label: field.label,
                             field_kind: field.kind,
+                            wanted: wanted || '',
+                            chosen: String(readCurrentValue(field) || chosen || ''),
                             ok: false,
                             strategy,
                             attempt_n: attempt,
@@ -4119,13 +4133,14 @@
                         if (locField && (!locWant || /^(yes|no)$/i.test(locWant.split(',')[0].trim()))) {
                             continue;
                         }
-                        const r = await fillOne(
-                            f,
-                            locField ? locWant : (wanted || (isSelectLikeField(f) ? 'Yes' : '')),
-                            2 + round,
-                            profile
-                        );
-                        if (r?.ok && !isPlaceholderValue(readCurrentValue(f))) n += 1;
+                        const answer = locField ? locWant : wanted;
+                        if (!answer) continue;
+                        const r = await fillOne(f, answer, 2 + round, profile);
+                        const shown = String(readCurrentValue(f) || r?.chosen || '').trim();
+                        if (!isPlaceholderValue(shown)
+                            && valuesMatch(answer, shown, effectiveFieldKind(f) || f.kind)) {
+                            n += 1;
+                        }
                         closeOpenSelectMenus();
                         await sleep(120);
                     }

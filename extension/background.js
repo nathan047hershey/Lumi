@@ -2976,6 +2976,23 @@ async function findLiveApplyTabForUrl(wantedUrl) {
 const intentionalCloseTabs = new Set();
 const fillProgressByApp = new Map();
 const fieldAttemptBuffer = new Map();
+const fieldAttemptSaved = new Map();
+
+function mapFieldAttempt(row, applicationId) {
+    return {
+        application_id: row?.application_id || applicationId,
+        page_index: row?.page_index,
+        field_id: row?.field_id,
+        field_label: row?.field_label || row?.label || '',
+        field_kind: row?.field_kind,
+        wanted: row?.wanted || '',
+        chosen: row?.chosen || '',
+        ok: row?.ok,
+        strategy: row?.strategy,
+        attempt_n: row?.attempt_n,
+        error: row?.error
+    };
+}
 
 async function closeBidderTab(tabId) {
     if (!tabId) return;
@@ -3001,7 +3018,8 @@ async function flushFieldAttempts(applicationId) {
     const rows = fieldAttemptBuffer.get(id);
     if (!id || !rows?.length) return;
     fieldAttemptBuffer.delete(id);
-    await logBidderFieldAttempts(id, rows).catch(() => {});
+    fieldAttemptSaved.set(id, (fieldAttemptSaved.get(id) || 0) + rows.length);
+    await logBidderFieldAttempts(id, rows.map((row) => mapFieldAttempt(row, id))).catch(() => {});
 }
 
 const successFinishStarted = new Set();
@@ -8592,19 +8610,18 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             });
         }
 
-        fieldAttemptBuffer.delete(Number(item.id));
-        if (Array.isArray(result.attempts) && result.attempts.length) {
+        await flushFieldAttempts(item.id).catch(() => {});
+        const savedAttempts = fieldAttemptSaved.get(Number(item.id)) || 0;
+        fieldAttemptSaved.delete(Number(item.id));
+        const remainingAttempts = Array.isArray(result.attempts)
+            ? result.attempts.slice(savedAttempts)
+            : [];
+        if (remainingAttempts.length) {
             try {
-                await logBidderFieldAttempts(item.id, result.attempts.map((row) => ({
-                    application_id: row?.application_id,
-                    page_index: row?.page_index,
-                    field_id: row?.field_id,
-                    field_kind: row?.field_kind,
-                    ok: row?.ok,
-                    strategy: row?.strategy,
-                    attempt_n: row?.attempt_n,
-                    error: row?.error
-                })));
+                await logBidderFieldAttempts(
+                    item.id,
+                    remainingAttempts.map((row) => mapFieldAttempt(row, item.id))
+                );
             } catch (err) {
                 console.warn('[bidder] field attempts', err);
             }
@@ -9050,16 +9067,7 @@ function handleExtensionMessage(msg, sender, sendResponse) {
         const row = msg.attempt;
         if (id && row) {
             const list = fieldAttemptBuffer.get(id) || [];
-            list.push({
-                application_id: row.application_id || id,
-                page_index: row.page_index,
-                field_id: row.field_id,
-                field_kind: row.field_kind,
-                ok: row.ok,
-                strategy: row.strategy,
-                attempt_n: row.attempt_n,
-                error: row.error
-            });
+            list.push(mapFieldAttempt(row, id));
             fieldAttemptBuffer.set(id, list);
             if (list.length >= 8) flushFieldAttempts(id).catch(() => {});
         }

@@ -724,9 +724,13 @@ function listExistingScreenshots(courseId, applicationId) {
     const byStage = new Map();
     for (const s of shots) {
         const name = path.basename(String(s.file_path || `${s.stage || 'shot'}.png`));
+        const hasBlob = Number(s.has_blob) === 1;
+        // On Vercel the screenshot file lives on one instance's /tmp. Other
+        // instances 404 it. Only advertise a frame whose bytes are in SQLite.
+        if (process.env.VERCEL && !hasBlob) continue;
         const disk = artifacts ? artifacts.readScreenshotFile(applicationId, name) : null;
         const absOk = s.file_path && fs.existsSync(s.file_path);
-        if (!disk && !absOk && Number(s.has_blob) !== 1) continue;
+        if (!disk && !absOk && !hasBlob) continue;
         byStage.set(String(s.stage || 'shot'), {
             ...s,
             filename: name,

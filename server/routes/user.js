@@ -3710,7 +3710,7 @@ router.get('/bid-courses/:id', (req, res) => {
                 filename: s.filename || path.basename(s.file_path),
                 url: `/user/bid-courses/${course.id}/screenshots/${encodeURIComponent(s.filename || path.basename(s.file_path))}`
             })),
-            disk_screenshots: diskShots.map((s) => ({
+            disk_screenshots: process.env.VERCEL ? [] : diskShots.map((s) => ({
                 stage: s.stage,
                 filename: s.filename,
                 updated_ms: (() => {
@@ -3882,11 +3882,13 @@ router.get('/bid-courses/:id/screenshots/:filename', (req, res) => {
             : getOne(`SELECT * FROM bid_courses WHERE id = ? AND user_id = ?`, [id, req.user.id]);
         if (!course) return res.status(404).json({ error: 'Course not found' });
         const artifacts = require('../services/bidderArtifactService');
+        const filename = path.basename(String(req.params.filename || ''));
+        const stage = filename.replace(/\.[^.]+$/, '');
         const row = getOne(
             `SELECT file_path, image_blob FROM bid_course_screenshots
-             WHERE course_id = ? AND (file_path LIKE ? OR file_path LIKE ?)
+             WHERE course_id = ? AND (stage = ? OR file_path LIKE ? OR file_path LIKE ?)
              ORDER BY id DESC LIMIT 1`,
-            [course.id, `%${req.params.filename}`, `%${path.basename(req.params.filename)}`]
+            [course.id, stage, `%${filename}`, `%${path.basename(filename)}`]
         );
         let bytes = artifacts.readScreenshotBytes(
             course.application_id,
@@ -3984,11 +3986,16 @@ router.post('/bid-courses/screenshot', (req, res) => {
             jobRole: app.job_role || undefined,
             skipEvent: true
         });
-        const saved = artifacts.saveScreenshot(applicationId, stage, body.image_base64);
         let imageBlob = String(body.image_base64 || '');
         const dataUrl = imageBlob.match(/^data:image\/\w+;base64,(.+)$/);
         if (dataUrl) imageBlob = dataUrl[1];
-        if (imageBlob.length > 8000000) imageBlob = '';
+        if (!imageBlob || imageBlob.length < 32) {
+            return res.status(400).json({ error: 'image_base64 is required' });
+        }
+        if (imageBlob.length > 1800000) {
+            return res.status(413).json({ error: 'screenshot_too_large' });
+        }
+        const saved = artifacts.saveScreenshot(applicationId, stage, imageBlob);
         // Upsert one DB row per stage (overwrite live.png path) instead of endless inserts.
         const existingShot = getOne(
             `SELECT id FROM bid_course_screenshots WHERE course_id = ? AND stage = ? ORDER BY id DESC LIMIT 1`,

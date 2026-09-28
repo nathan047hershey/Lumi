@@ -995,7 +995,7 @@ router.get('/bid-courses/:id', (req, res) => {
                 filename: s.filename || path.basename(s.file_path),
                 url: `/admin/bid-courses/${course.id}/screenshots/${encodeURIComponent(s.filename || path.basename(s.file_path))}`
             })),
-            disk_screenshots: diskShots.map((s) => ({
+            disk_screenshots: process.env.VERCEL ? [] : diskShots.map((s) => ({
                 stage: s.stage,
                 filename: s.filename,
                 url: `/admin/bid-courses/${course.id}/screenshots/${encodeURIComponent(s.filename)}`
@@ -1050,11 +1050,13 @@ router.get('/bid-courses/:id/screenshots/:filename', (req, res) => {
         const artifacts = require('../services/bidderArtifactService');
         const course = getOne(`SELECT * FROM bid_courses WHERE id = ?`, [id]);
         if (!course) return res.status(404).json({ error: 'Course not found' });
+        const filename = path.basename(String(req.params.filename || ''));
+        const stage = filename.replace(/\.[^.]+$/, '');
         const row = getOne(
             `SELECT file_path, image_blob FROM bid_course_screenshots
-             WHERE course_id = ? AND (file_path LIKE ? OR file_path LIKE ?)
+             WHERE course_id = ? AND (stage = ? OR file_path LIKE ? OR file_path LIKE ?)
              ORDER BY id DESC LIMIT 1`,
-            [course.id, `%${req.params.filename}`, `%${path.basename(req.params.filename)}`]
+            [course.id, stage, `%${filename}`, `%${path.basename(filename)}`]
         );
         let bytes = artifacts.readScreenshotBytes(
             course.application_id,
