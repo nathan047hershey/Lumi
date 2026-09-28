@@ -552,6 +552,9 @@ export async function releasePageDebugger(tabId) {
     pageDebuggerRefs.delete(tabId);
     pageDebuggerTabs.delete(tabId);
     try {
+        await chrome.debugger.sendCommand({ tabId }, 'Emulation.clearDeviceMetricsOverride');
+    } catch (_) { /* no override was set */ }
+    try {
         await chrome.debugger.detach({ tabId });
     } catch (_) { /* ignore */ }
 }
@@ -915,6 +918,7 @@ export async function setFileInputViaDebugger(tabId, file) {
     if (!attached) return { ok: false, reason: 'no_debugger' };
 
     try {
+        await chrome.debugger.sendCommand({ tabId }, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
         let absPath = String(file?.localPath || '').trim();
         if (!absPath) {
             if (!base64) return { ok: false, reason: 'missing_file' };
@@ -1054,105 +1058,56 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
     try {
         await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
     } catch (_) { /* Page domain may already be enabled */ }
-    let metricsOverride = false;
     try {
-        // A background tab often reports only the viewport until the surface is tall.
-        try {
-            await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
-                width: 1280,
-                height: 8000,
-                deviceScaleFactor: 1,
-                mobile: false,
-                // Layout size only. A visible override paints a gray gutter on the right of the window.
-                dontSetVisibleSize: true
-            });
-            metricsOverride = true;
-            await new Promise((r) => setTimeout(r, 160));
-        } catch (_) { /* capture still tries the layout tree */ }
+        // Do not call Emulation.setDeviceMetricsOverride. It letterboxes the window
+        // (gray bar on the right) and reflows the form so the fill clicks miss.
+        await chrome.debugger.sendCommand({ tabId }, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
         const extent = await measurePageExtent(tabId);
         const frameTreeH = await measureFrameTreeHeight(tabId);
-        const fullH = Math.max(
-            900,
+        const width = Math.max(800, Math.min(1600, Math.ceil(Number(extent?.docW) || 1200)));
+        const height = Math.max(
+            700,
             Math.min(
-                FULL_PAGE_CAP,
+                6000,
                 Math.ceil(Math.max(
                     Number(extent?.docH) || 0,
                     Number(extent?.frameH) || 0,
                     Number(frameTreeH) || 0,
-                    Number(scrollHeight) || 0
+                    Number(scrollHeight) || 0,
+                    900
                 ))
             )
         );
-        return await withFullFormHeight(tabId, fullH, async (pageH) => {
-            let metrics = null;
-            try {
-                metrics = await chrome.debugger.sendCommand({ tabId }, 'Page.getLayoutMetrics');
-            } catch (_) { /* metrics optional */ }
-            const css = metrics?.cssContentSize || metrics?.contentSize || {};
-            const width = Math.max(800, Math.min(1400, Math.ceil(Number(css.width) || Number(extent?.docW) || 1200)));
-            const height = Math.max(
-                fullH,
-                Math.min(FULL_PAGE_CAP, Math.ceil(Number(css.height) || Number(pageH) || fullH))
-            );
-            if (metricsOverride) {
+        const maxB64 = 900000;
+        const grab = async (quality, scale) => {
+            const shots = [
+                { format: 'jpeg', quality, captureBeyondViewport: true, fromSurface: false },
+                scale < 1
+                    ? { format: 'jpeg', quality, fromSurface: false, clip: { x: 0, y: 0, width, height, scale } }
+                    : null,
+                { format: 'jpeg', quality, fromSurface: true }
+            ].filter(Boolean);
+            for (const params of shots) {
                 try {
-                    await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
-                        width,
-                        height,
-                        deviceScaleFactor: 1,
-                        mobile: false,
-                        dontSetVisibleSize: true
-                    });
-                    await new Promise((r) => setTimeout(r, 120));
-                } catch (_) { /* keep the earlier override */ }
-            }
-            await evalInTab(tabId, `(() => { try { window.scrollTo(0, 0); } catch (_) {} return true; })()`).catch(() => {});
-            // Keep the frame under ~900KB so the API can store the bytes in SQLite.
-            // A larger full-page JPEG is dropped on Vercel and the monitor then 404s.
-            const maxB64 = 900000;
-            const clip = { x: 0, y: 0, width, height, scale: 1 };
-            const grab = async (quality, useClip) => {
-                const shots = [
-                    { format: 'jpeg', quality, captureBeyondViewport: true, fromSurface: false },
-                    useClip
-                        ? { format: 'jpeg', quality, fromSurface: false, clip: useClip }
-                        : null,
-                    { format: 'jpeg', quality, fromSurface: true }
-                ].filter(Boolean);
-                for (const params of shots) {
-                    try {
-                        const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', params);
-                        if (result?.data && result.data.length > 800) return result.data;
-                    } catch (err) {
-                        const msg = String(err?.message || err || '');
-                        if (/showing error page|chrome-error/i.test(msg)) {
-                            throw new Error('cannot capture Chrome error page (site failed to load)');
-                        }
+                    const result = await chrome.debugger.sendCommand({ tabId }, 'Page.captureScreenshot', params);
+                    if (result?.data && result.data.length > 800) return result.data;
+                } catch (err) {
+                    const msg = String(err?.message || err || '');
+                    if (/showing error page|chrome-error/i.test(msg)) {
+                        throw new Error('cannot capture Chrome error page (site failed to load)');
                     }
                 }
-                return '';
-            };
-            let data = await grab(40, clip);
-            if (data.length > maxB64) data = await grab(22, clip) || data;
-            if (data.length > maxB64) {
-                data = await grab(14, {
-                    x: 0,
-                    y: 0,
-                    width,
-                    height: Math.min(height, 5200),
-                    scale: 0.7
-                }) || data;
             }
-            if (!data || data.length > 1700000) return '';
-            return `data:image/jpeg;base64,${data}`;
-        });
+            return '';
+        };
+        let data = await grab(40, 1);
+        if (data.length > maxB64) data = await grab(22, 0.7) || data;
+        if (!data || data.length > 1700000) return '';
+        return `data:image/jpeg;base64,${data}`;
     } catch (err) {
         if (/chrome error page/i.test(String(err?.message || err))) throw err;
         return '';
     } finally {
-        if (metricsOverride) {
-            await chrome.debugger.sendCommand({ tabId }, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
-        }
         await releasePageDebugger(tabId);
     }
 }
@@ -1277,6 +1232,7 @@ export async function ensureUsDialCodeTrusted(tabId) {
 
     try {
         await attachPageDebugger(tabId);
+        await chrome.debugger.sendCommand(target, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
 
         const already = await evaluate(`(() => {
             const shell = document.querySelector('.phone-input__country .select-shell')
