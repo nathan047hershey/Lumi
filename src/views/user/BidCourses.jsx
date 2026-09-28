@@ -145,6 +145,7 @@ function BidCourses({ embedded = false }) {
     const [detail, setDetail] = useState(null);
     const [loading, setLoading] = useState(true);
     const [error, setError] = useState('');
+    const [detailMissing, setDetailMissing] = useState(false);
     const [pageTab, setPageTab] = useState('review');
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [teachSeed, setTeachSeed] = useState({ question: '', answer: '' });
@@ -206,12 +207,21 @@ function BidCourses({ embedded = false }) {
         }
         try {
             setError('');
+            setDetailMissing(false);
             const { data } = await api.getBidCourse(courseId);
             setDetail(data);
         } catch (err) {
-            setError(err.response?.data?.error || err.message || 'Failed to load course');
+            const msg = err.response?.data?.error || err.message || 'Failed to load course';
+            setDetail(null);
+            if (/not found/i.test(msg)) {
+                setError('');
+                setDetailMissing(true);
+                navigate(listPath, { replace: true });
+                return;
+            }
+            setError(msg);
         }
-    }, [api]);
+    }, [api, navigate, listPath]);
 
     useEffect(() => {
         loadList();
@@ -221,7 +231,10 @@ function BidCourses({ embedded = false }) {
 
     useEffect(() => {
         if (id) loadDetail(id);
-        else setDetail(null);
+        else {
+            setDetail(null);
+            setDetailMissing(false);
+        }
     }, [id, loadDetail]);
 
     const decorated = useMemo(() => (
@@ -405,7 +418,7 @@ function BidCourses({ embedded = false }) {
                         data-testid="bid-course-list"
                         className={cn(
                         'flex min-h-0 flex-col overflow-hidden lumi-panel',
-                        id ? 'hidden lg:flex' : 'flex'
+                        id && !detailMissing ? 'hidden lg:flex' : 'flex'
                     )}
                     >
                         <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/[0.06] px-3 py-2.5">
@@ -498,10 +511,10 @@ function BidCourses({ embedded = false }) {
                         data-testid="bid-course-detail"
                         className={cn(
                         'flex min-h-0 flex-col overflow-hidden lumi-panel',
-                        !id ? 'hidden min-h-[16rem] lg:flex' : 'flex'
+                        !id || detailMissing ? 'hidden min-h-[16rem] lg:flex' : 'flex'
                     )}
                     >
-                        {!id && (
+                        {(!id || detailMissing) && (
                             <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 py-16 text-center">
                                 <p className="text-sm font-medium text-white/70">Select a course</p>
                                 <p className="max-w-sm text-xs text-white/40">
@@ -509,7 +522,7 @@ function BidCourses({ embedded = false }) {
                                 </p>
                             </div>
                         )}
-                        {id && (
+                        {id && !detailMissing && (
                             <ModalTabs
                                 value={pageTab}
                                 onValueChange={setPageTab}
@@ -522,8 +535,11 @@ function BidCourses({ embedded = false }) {
 
                                 <ModalTabsContent value="review">
                                     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
-                                        {!detail && (
+                                        {!detail && !error && (
                                             <p className="text-sm text-muted-foreground">Loading course…</p>
+                                        )}
+                                        {!detail && error && (
+                                            <p className="text-sm text-rose-300">{error}</p>
                                         )}
                                         {detail && detailRun && (
                                             <>
@@ -610,8 +626,11 @@ function BidCourses({ embedded = false }) {
 
                                 <ModalTabsContent value="activity">
                                     <div className="min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
-                                        {!detail && (
+                                        {!detail && !error && (
                                             <p className="text-sm text-muted-foreground">Loading course…</p>
+                                        )}
+                                        {!detail && error && (
+                                            <p className="text-sm text-rose-300">{error}</p>
                                         )}
                                         {detail && (
                                             <>
