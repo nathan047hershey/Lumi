@@ -1062,7 +1062,9 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
                 width: 1280,
                 height: 8000,
                 deviceScaleFactor: 1,
-                mobile: false
+                mobile: false,
+                // Layout size only. A visible override paints a gray gutter on the right of the window.
+                dontSetVisibleSize: true
             });
             metricsOverride = true;
             await new Promise((r) => setTimeout(r, 160));
@@ -1098,7 +1100,8 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
                         width,
                         height,
                         deviceScaleFactor: 1,
-                        mobile: false
+                        mobile: false,
+                        dontSetVisibleSize: true
                     });
                     await new Promise((r) => setTimeout(r, 120));
                 } catch (_) { /* keep the earlier override */ }
@@ -1660,6 +1663,7 @@ export async function pollDetectSubmitSuccess(tabId, {
     const gap = Math.max(400, Number(gapMs) || 800);
     let attempts = 0;
     let last = { ok: false, reason: 'no_poll' };
+    let processSince = 0;
     while (Date.now() - start < total) {
         attempts += 1;
         last = await detectSubmitSuccessDetail(tabId, { formReplacedAfterAttempt });
@@ -1679,7 +1683,32 @@ export async function pollDetectSubmitSuccess(tabId, {
                 sample: last.sample
             };
         }
+        // Greenhouse's processing banner sticks. Wait until it has held ~4s so a
+        // slow success page is not treated as the same error.
+        if (last?.reason === 'greenhouse_process_error') {
+            if (!processSince) processSince = Date.now();
+            if (Date.now() - processSince >= 4000) {
+                return {
+                    ok: false,
+                    reason: 'greenhouse_process_error',
+                    attempts,
+                    elapsedMs: Date.now() - start,
+                    sample: last.sample
+                };
+            }
+        } else {
+            processSince = 0;
+        }
         await new Promise((r) => setTimeout(r, gap));
+    }
+    if (last?.reason === 'greenhouse_process_error') {
+        return {
+            ok: false,
+            reason: 'greenhouse_process_error',
+            attempts,
+            elapsedMs: Date.now() - start,
+            sample: last.sample
+        };
     }
     return {
         ok: false,

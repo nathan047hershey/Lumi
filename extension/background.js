@@ -1826,6 +1826,94 @@ async function copyJobToClipboard(tabId, job) {
     }
 }
 
+async function hardReloadApplyTab(tabId) {
+    await new Promise((resolve, reject) => {
+        let sawLoading = false;
+        const timer = setTimeout(() => {
+            chrome.tabs.onUpdated.removeListener(listener);
+            reject(new Error('Greenhouse reload timed out'));
+        }, 30000);
+        function listener(id, info) {
+            if (id !== tabId) return;
+            if (info.status === 'loading') sawLoading = true;
+            if (sawLoading && info.status === 'complete') {
+                clearTimeout(timer);
+                chrome.tabs.onUpdated.removeListener(listener);
+                resolve();
+            }
+        }
+        chrome.tabs.onUpdated.addListener(listener);
+        chrome.tabs.reload(tabId, { bypassCache: true }).catch((err) => {
+            clearTimeout(timer);
+            chrome.tabs.onUpdated.removeListener(listener);
+            reject(err);
+        });
+    });
+    await new Promise((r) => setTimeout(r, 800));
+}
+
+/**
+ * Greenhouse often answers the first Submit with
+ * "There was an error processing your application."
+ * Click Submit again. If the same banner stays, hard-refresh and refill once.
+ */
+async function recoverGreenhouseProcessError(tabId, item, prefs) {
+    let poll = { ok: false, reason: 'greenhouse_process_error' };
+    for (let attempt = 1; attempt <= 2; attempt += 1) {
+        await setQueueState({
+            coachStatus: `Greenhouse processing error — clicking Submit again (${attempt})…`,
+            coachAt: Date.now()
+        }).catch(() => {});
+        let sub = await sendTabMessage(tabId, { type: 'BIDDER_ENGINE_SUBMIT' }).catch(() => null);
+        if (!sub?.clicked) {
+            sub = await sendTabMessage(tabId, { type: 'CLICK_SUBMIT' }).catch(() => null);
+        }
+        await logCourseEvent(item.id, 'submit_clicked', {
+            via: 'greenhouse_process_retry',
+            attempt,
+            clicked: !!sub?.clicked
+        }).catch(() => {});
+        poll = await pollDetectSubmitSuccess(tabId, {
+            totalMs: SUBMIT_SUCCESS_POLL_MS,
+            gapMs: 800
+        });
+        if (poll.ok || poll.reason !== 'greenhouse_process_error') return poll;
+    }
+
+    await setQueueState({
+        coachStatus: 'Same Greenhouse error — refreshing the page and filling again…',
+        coachAt: Date.now()
+    }).catch(() => {});
+    await logCourseEvent(item.id, 'greenhouse_hard_refresh', {
+        reason: 'process_error_persisted'
+    }).catch(() => {});
+    await hardReloadApplyTab(tabId);
+    const scriptsOk = await ensureScripts(tabId);
+    if (!scriptsOk) return { ok: false, reason: 'greenhouse_process_error' };
+    await ensureApplyFormVisible(tabId).catch(() => {});
+    await runBidderFillOnTab(tabId, item, {
+        ...prefs,
+        bidDeadline: Date.now() + 90000,
+        autoSubmit: false
+    }).catch((err) => {
+        console.warn('[bidder] greenhouse refresh refill', err?.message || err);
+        return null;
+    });
+    let sub = await sendTabMessage(tabId, { type: 'BIDDER_ENGINE_SUBMIT' }).catch(() => null);
+    if (!sub?.clicked) {
+        sub = await sendTabMessage(tabId, { type: 'CLICK_SUBMIT' }).catch(() => null);
+    }
+    await logCourseEvent(item.id, 'submit_clicked', {
+        via: 'greenhouse_refresh_refill',
+        clicked: !!sub?.clicked
+    }).catch(() => {});
+    if (!sub?.clicked) return { ok: false, reason: 'greenhouse_process_error' };
+    return pollDetectSubmitSuccess(tabId, {
+        totalMs: SUBMIT_SUCCESS_POLL_MS,
+        gapMs: 800
+    });
+}
+
 async function waitTabComplete(tabId, timeoutMs = 30000) {
     const existing = await chrome.tabs.get(tabId);
     if (existing.status === 'complete') return;
@@ -4845,6 +4933,16 @@ async function processReadyQueue(opts = {}) {
                     totalMs: SUBMIT_SUCCESS_POLL_MS,
                     gapMs: 800
                 });
+                if (!poll.ok && poll.reason === 'greenhouse_process_error') {
+                    await logCourseEvent(item.id, 'greenhouse_process_error', {
+                        sample: String(poll.sample || '').slice(0, 160)
+                    }).catch(() => {});
+                    try {
+                        poll = await recoverGreenhouseProcessError(opened.tabId, item, prefs);
+                    } catch (ghErr) {
+                        console.warn('[bidder] greenhouse process retry', ghErr?.message || ghErr);
+                    }
+                }
                 // Validation errors → one re-fill of missing labels + one resubmit.
                 if (!poll.ok && poll.reason === 'validation_errors') {
                     await logCourseEvent(item.id, 'submit_validation', {

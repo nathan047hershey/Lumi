@@ -12,6 +12,9 @@ export const SUCCESS_HEADING_RE = /^(?:application\s+)?(?:submitted|received|com
  */
 export const SUCCESS_NEGATIVE_RE = /\b(?:missing\s+entry\s+for\s+required\s+field|please\s+(?:complete|fill|answer)\s+(?:all\s+)?required|required\s+field(?:s)?\s+(?:are\s+)?missing|field\s+is\s+required|this\s+field\s+is\s+required|form\s+contain(?:s)?\s+errors?|fix\s+out\s+this\s+field|you\s+must\s+(?:select|answer|complete))\b/i;
 
+/** Greenhouse server banner. The form is still filled; another Submit click often clears it. */
+export const GH_PROCESS_ERROR_RE = /there was an error processing your application/i;
+
 /**
  * Confirmation copy that beats leftover Track-application / sign-in fields.
  * Includes Greenhouse "Thank you for applying to {Company}!".
@@ -65,6 +68,9 @@ export function evaluateSubmitSuccessPage({
     submitAccepted = false
 } = {}) {
     const body = String(text || '');
+    if (GH_PROCESS_ERROR_RE.test(body)) {
+        return { ok: false, reason: 'greenhouse_process_error' };
+    }
     const heads = headingList(headings);
     const headingHit = heads.some((h) => SUCCESS_HEADING_RE.test(h));
     const bodyHit = SUCCESS_RE.test(body);
@@ -99,6 +105,7 @@ export function evaluateSubmitSuccessPage({
 export function pickSubmitSuccessResult(frameResults) {
     const list = Array.isArray(frameResults) ? frameResults.filter(Boolean) : [];
     let bestFail = { ok: false, reason: 'no_result' };
+    let processFail = null;
     for (const signals of list) {
         const ev = evaluateSubmitSuccessPage(signals);
         const sample = String(signals?.text || signals?.sample || '').slice(0, 160);
@@ -110,11 +117,12 @@ export function pickSubmitSuccessResult(frameResults) {
             emptyVisibleFields: signals?.emptyVisibleFields
         };
         if (ev.ok) return packed;
-        if (ev.reason === 'validation_errors' || ev.reason === 'form_still_open') {
+        if (ev.reason === 'greenhouse_process_error') processFail = packed;
+        else if (ev.reason === 'validation_errors' || ev.reason === 'form_still_open') {
             bestFail = packed;
         } else if (bestFail.reason === 'no_result' || bestFail.reason === 'no_match') {
             bestFail = packed;
         }
     }
-    return bestFail;
+    return processFail || bestFail;
 }
