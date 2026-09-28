@@ -4037,6 +4037,9 @@ router.post('/bid-courses/package', (req, res) => {
 
         const artifacts = require('../services/bidderArtifactService');
         const bidCourseService = require('../services/bidCourseService');
+        const incomingAnswers = Array.isArray(body.answers)
+            ? body.answers.filter((row) => row && (row.label || row.id) && String(row.answer || row.value || '').trim())
+            : [];
         bidCourseService.upsertCourse({
             applicationId,
             profileId: app.profile_id,
@@ -4044,7 +4047,7 @@ router.post('/bid-courses/package', (req, res) => {
             jobUrl: app.job_url,
             companyName: app.company_name,
             jobRole: app.job_role,
-            answers: body.answers,
+            answers: incomingAnswers.length ? incomingAnswers : undefined,
             eventType: 'package_saved',
             eventMeta: {
                 has_answers: Array.isArray(body.answers),
@@ -4215,8 +4218,11 @@ function listBidderReadyHandler(req, res) {
         ${profileClause}
         ${linkClause}
         AND a.generation_status = 'ready'
-        AND (
-          ${rawIds ? '1' : "COALESCE(a.status, 'pending') = 'pending'"}
+        AND COALESCE(a.status, 'pending') NOT IN ('applied', 'interview')
+        AND NOT EXISTS (
+          SELECT 1 FROM bid_courses bc
+           WHERE bc.application_id = a.id
+             AND (bc.outcome IN ('applied', 'interview') OR bc.applied_at IS NOT NULL)
         )
         AND (
           ${rawIds ? '1' : `(

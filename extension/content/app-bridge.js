@@ -54,7 +54,22 @@
             extensionId: runtimeId,
             already: true
         }, '*');
+        openPlatformSocket();
         return;
+    }
+
+    function openPlatformSocket() {
+        if (window.__LUMI_PLATFORM_PORT__ || !extAlive()) return;
+        let port = null;
+        try {
+            port = chrome.runtime.connect({ name: 'lumi-platform' });
+        } catch (_) {
+            return;
+        }
+        window.__LUMI_PLATFORM_PORT__ = port;
+        port.onDisconnect.addListener(() => {
+            if (window.__LUMI_PLATFORM_PORT__ === port) window.__LUMI_PLATFORM_PORT__ = null;
+        });
     }
 
     // Drop stale bind so a new listener can take over.
@@ -347,6 +362,7 @@
         }
     });
 
+    openPlatformSocket();
     window.postMessage({
         type: 'JOB_APPLY_BIDDER_BRIDGE_READY',
         version,

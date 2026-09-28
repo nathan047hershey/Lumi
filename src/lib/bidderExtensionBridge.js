@@ -171,6 +171,14 @@ export async function reinjectLumiBridge(timeoutMs = 8000) {
  */
 export function sendBidderExtensionCommand(type, timeoutMs = 8000, extra = {}) {
     const run = async () => {
+        if (type === 'JOB_APPLY_BIDDER_PING') {
+            try {
+                return await firstSuccess([
+                    sendViaPostMessage(type, Math.min(timeoutMs, 3500), extra),
+                    sendViaExternal('BIDDER_PING', extra, Math.min(timeoutMs, 3500))
+                ]);
+            } catch (_) { /* reinject below */ }
+        }
         try {
             return await sendViaPostMessage(type, Math.min(timeoutMs, 4000), extra);
         } catch (firstErr) {
@@ -211,6 +219,106 @@ export function getLumiBridgeVersion() {
     } catch {
         return '';
     }
+}
+
+function firstSuccess(promises) {
+    return new Promise((resolve, reject) => {
+        const list = promises.filter(Boolean);
+        if (!list.length) {
+            reject(new Error('no_channel'));
+            return;
+        }
+        let pending = list.length;
+        let lastErr = null;
+        for (const promise of list) {
+            Promise.resolve(promise).then(resolve, (err) => {
+                lastErr = err;
+                pending -= 1;
+                if (pending === 0) reject(lastErr || new Error('no_channel'));
+            });
+        }
+    });
+}
+
+const PLATFORM_PORT = 'lumi-platform';
+
+/**
+ * One Chrome socket to the extension for the whole signed-in session.
+ * The port stays open. A new socket is opened only after that one drops.
+ */
+export function keepLumiExtensionConnected() {
+    if (typeof window === 'undefined') return () => {};
+    let stopped = false;
+    let port = null;
+    let retryTimer = null;
+    let attempt = 0;
+
+    const publishDown = () => {
+        window.postMessage({ type: 'JOB_APPLY_BIDDER_BRIDGE_DOWN' }, '*');
+    };
+
+    const schedule = () => {
+        if (stopped || retryTimer) return;
+        attempt += 1;
+        const wait = Math.min(30000, 1000 * (2 ** Math.min(attempt, 5)));
+        retryTimer = setTimeout(() => {
+            retryTimer = null;
+            connect();
+        }, wait);
+    };
+
+    const connect = () => {
+        if (stopped || port) return;
+        const extensionId = getStoredExtensionId();
+        if (!extensionId || !hasExternalRuntime() || typeof chrome.runtime.connect !== 'function') return;
+        try {
+            port = chrome.runtime.connect(extensionId, { name: PLATFORM_PORT });
+        } catch (_) {
+            port = null;
+            schedule();
+            return;
+        }
+        port.onMessage.addListener((msg) => {
+            if (!msg || msg.type !== 'hello' || msg.ok === false) return;
+            attempt = 0;
+            rememberExtensionMeta(msg.extensionId || extensionId, msg.version);
+            window.postMessage({
+                type: 'JOB_APPLY_BIDDER_BRIDGE_READY',
+                version: msg.version || '',
+                extensionId: msg.extensionId || extensionId,
+                socket: true
+            }, '*');
+        });
+        port.onDisconnect.addListener(() => {
+            port = null;
+            publishDown();
+            schedule();
+        });
+    };
+
+    connect();
+    const unlisten = listenForLumiBridgeReady(() => {
+        if (!port) connect();
+    });
+    return () => {
+        stopped = true;
+        if (retryTimer) clearTimeout(retryTimer);
+        try { port?.disconnect(); } catch (_) { /* already closed */ }
+        port = null;
+        unlisten();
+    };
+}
+
+/** Fires only when the platform socket closes. */
+export function listenForLumiBridgeDown(onDown) {
+    if (typeof window === 'undefined' || typeof onDown !== 'function') return () => {};
+    const handler = (event) => {
+        if (event.source !== window) return;
+        if (event.data?.type !== 'JOB_APPLY_BIDDER_BRIDGE_DOWN') return;
+        onDown();
+    };
+    window.addEventListener('message', handler);
+    return () => window.removeEventListener('message', handler);
 }
 
 /** Listen for bridge ready / version bumps after reinject. */

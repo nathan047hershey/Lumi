@@ -18,10 +18,6 @@ function cmpVer(a, b) {
     return 0;
 }
 
-function isLoopbackUrl(url) {
-    return /localhost|127\.0\.0\.1/i.test(String(url || ''));
-}
-
 /** Prefer an open Lumi desk tab (especially Vercel) over stale localhost :9017 settings. */
 export async function adoptDeskUrlsFromTabs() {
     let tabs = [];
@@ -35,7 +31,7 @@ export async function adoptDeskUrlsFromTabs() {
             const u = new URL(tab.url || '');
             if (!/^https?:$/i.test(u.protocol)) continue;
             const host = u.hostname.toLowerCase();
-            if (host.endsWith('.vercel.app') || host.endsWith('.vercel.sh')) {
+            if (host.endsWith('.vercel.app') || host.endsWith('.vercel.sh') || host === 'neptunemart.space' || host.endsWith('.neptunemart.space')) {
                 const origin = `${u.protocol}//${u.hostname}`;
                 const patch = {
                     apiBaseUrl: `${origin}/api`,
@@ -52,8 +48,8 @@ export async function adoptDeskUrlsFromTabs() {
 function isHttpOnlyLiveHost(apiBaseUrl) {
     const base = String(apiBaseUrl || '');
     if (!base) return true;
-    if (/vercel\.app|vercel\.sh|netlify\.app|cloudflare\.pages/i.test(base)) return true;
-    if (/:(3000)(?:\/|$)/.test(base) || /\/api\/?$/.test(base)) return true;
+    if (/vercel\.app|vercel\.sh|neptunemart\.space|netlify\.app|cloudflare\.pages/i.test(base)) return true;
+    if (/:(3000)(?:\/|$)/.test(base)) return true;
     return false;
 }
 
@@ -125,26 +121,12 @@ async function fetchVersion(apiBaseUrl) {
     }
 }
 
-async function pollVersionHttp() {
-    const settings = await getSettings();
-    const data = await fetchVersion(settings.apiBaseUrl);
-    if (!data) {
-        await mark('offline', {
-            lumiLiveError: `Cannot reach ${settings.apiBaseUrl}. Set API to https://YOUR-APP.vercel.app/api`,
-            lumiLiveMode: 'http'
-        });
-        return null;
-    }
-    await onServerVersion(data.version || '', true);
-    await mark(
-        socket && socket.readyState === 1 ? 'connected' : 'connected',
-        { lumiLiveMode: 'http', lumiLiveError: '' }
-    );
-    return data;
-}
-
-function startHttpPoll() {
+function usePortLink() {
     httpOnlyMode = true;
+    if (pollTimer) {
+        clearInterval(pollTimer);
+        pollTimer = null;
+    }
     if (socket) {
         try { socket.close(); } catch { /* ignore */ }
         socket = null;
@@ -153,12 +135,7 @@ function startHttpPoll() {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;
     }
-    pollVersionHttp().catch(() => {});
-    if (!pollTimer) {
-        pollTimer = setInterval(() => {
-            pollVersionHttp().catch(() => {});
-        }, 60000);
-    }
+    return mark('connected', { lumiLiveMode: 'port', lumiLiveError: '' });
 }
 
 function scheduleReconnect() {
@@ -182,36 +159,37 @@ export async function connectLiveLink() {
     const settings = await getSettings();
     const api = normalizeBaseUrl(adopted?.apiBaseUrl || settings.apiBaseUrl);
 
-    if (isHttpOnlyLiveHost(api) || isLoopbackUrl(api)) {
-        // Loopback :9017 with no local server → never touch WebSocket (stops console spam).
-        startHttpPoll();
+    if (isHttpOnlyLiveHost(api)) {
+        // Vercel cannot hold /extension/live. The open Chrome port is the link.
+        await usePortLink();
         return;
     }
 
+    if (socket && (socket.readyState === 0 || socket.readyState === 1)) return;
+
     const version = await fetchVersion(api);
     if (!version) {
-        startHttpPoll();
+        await mark('offline', { lumiLiveMode: 'ws', lumiLiveError: 'version endpoint unreachable' });
+        scheduleReconnect();
         return;
     }
     await onServerVersion(version.version || '', true);
 
     if (!version.socket || version.liveMode === 'http') {
-        startHttpPoll();
+        await usePortLink();
         return;
     }
 
-    const url = wsUrlFromApi(api);
+    const url = version.socket.startsWith('ws') ? version.socket : wsUrlFromApi(api);
     if (!url) {
-        startHttpPoll();
+        await usePortLink();
         return;
     }
-    if (socket && (socket.readyState === 0 || socket.readyState === 1)) return;
-
     try {
         socket = new WebSocket(url);
     } catch (err) {
         await mark('offline', { lumiLiveError: err?.message || String(err) });
-        startHttpPoll();
+        await usePortLink();
         return;
     }
 
@@ -233,7 +211,7 @@ export async function connectLiveLink() {
     socket.onclose = () => {
         socket = null;
         if (!opened) {
-            startHttpPoll();
+            usePortLink().catch(() => {});
             return;
         }
         mark('offline');
@@ -250,14 +228,9 @@ export function startLiveLink() {
         });
     } catch { /* alarms optional */ }
     setInterval(() => {
-        if (httpOnlyMode) {
-            pollVersionHttp().catch(() => {});
-            return;
-        }
+        if (httpOnlyMode) return;
         if (socket && socket.readyState === 1) {
             try { socket.send(JSON.stringify({ type: 'ping', version: LOCAL_VER() })); } catch { /* ignore */ }
-        } else {
-            connectLiveLink().catch(() => {});
         }
     }, 25000);
 }

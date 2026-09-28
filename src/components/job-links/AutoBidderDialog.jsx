@@ -42,7 +42,7 @@ import {
     ModalTabsList,
     ModalTabsTrigger
 } from '@/components/ui/modal-tabs';
-import { sendBidderExtensionCommand, getLumiBridgeVersion, listenForLumiBridgeReady, listenForBidderQueuePush, reinjectLumiBridge } from '@/lib/bidderExtensionBridge';
+import { sendBidderExtensionCommand, getLumiBridgeVersion, listenForLumiBridgeReady, listenForLumiBridgeDown, listenForBidderQueuePush, reinjectLumiBridge } from '@/lib/bidderExtensionBridge';
 import {
     loadLumiBidderPrefs,
     processQueuePrefsPayload,
@@ -125,24 +125,8 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
     const [err, setErr] = useState('');
     const [loading, setLoading] = useState(false);
     const prevObjectUrlRef = useRef('');
-    const identityRef = useRef('');
 
     useEffect(() => {
-        const identity = `${courseId || ''}|${filename || ''}`;
-        const courseChanged = identityRef.current !== identity;
-        identityRef.current = identity;
-
-        // Only drop the prior frame when the course/file changes — refreshKey
-        // must keep showing the last image until the new blob arrives.
-        if (courseChanged) {
-            if (prevObjectUrlRef.current) {
-                try { URL.revokeObjectURL(prevObjectUrlRef.current); } catch (_) { /* ignore */ }
-                prevObjectUrlRef.current = '';
-            }
-            setSrc('');
-            setErr('');
-        }
-
         if (!courseId || !filename) {
             setLoading(false);
             return undefined;
@@ -170,6 +154,7 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
                     try { URL.revokeObjectURL(objectUrl); } catch (_) { /* ignore */ }
                     return;
                 }
+                // Swap only after the next image is decoded into a blob URL.
                 const old = prevObjectUrlRef.current;
                 prevObjectUrlRef.current = objectUrl;
                 setSrc(objectUrl);
@@ -178,11 +163,7 @@ function useScreenshotSrc(courseId, filename, isAdmin, refreshKey = 0) {
                     try { URL.revokeObjectURL(old); } catch (_) { /* ignore */ }
                 }
             } catch (e) {
-                if (alive) {
-                    // Keep the previous frame on refresh failure.
-                    if (courseChanged) setSrc('');
-                    setErr(e?.message || 'load failed');
-                }
+                if (alive) setErr(e?.message || 'load failed');
             } finally {
                 if (alive) setLoading(false);
             }
@@ -603,10 +584,12 @@ function profileLabel(p) {
     return stacks ? `${base} (${stacks})` : base;
 }
 
-function latestCourseFor(courses, { jobLinkId, profileId } = {}) {
+function latestCourseFor(courses, { jobLinkId, profileId, applicationId } = {}) {
     const rows = (courses || []).filter((c) => {
-        if (jobLinkId != null && Number(c.job_link_id) !== Number(jobLinkId)) return false;
         if (profileId != null && Number(c.profile_id) !== Number(profileId)) return false;
+        const linkMatch = jobLinkId != null && Number(c.job_link_id) === Number(jobLinkId);
+        const appMatch = applicationId != null && Number(c.application_id) === Number(applicationId);
+        if (jobLinkId != null || applicationId != null) return linkMatch || appMatch;
         return true;
     });
     if (!rows.length) return null;
@@ -617,8 +600,23 @@ function latestCourseFor(courses, { jobLinkId, profileId } = {}) {
     return rows[0];
 }
 
-function linkOutcomeForProfile(courses, jobLinkId, profileId, ready) {
-    const course = latestCourseFor(courses, { jobLinkId, profileId });
+function profileChipForLink(link, profileId) {
+    return (link?.available_profiles || []).find((p) => Number(p.profile_id) === Number(profileId)) || null;
+}
+
+function linkOutcomeForProfile(courses, jobLinkId, profileId, ready, link) {
+    const chip = profileChipForLink(link, profileId);
+    const chipApplied = chip?.status === 'applied'
+        || chip?.bid_applied
+        || chip?.bid_outcome === 'applied';
+    if (chipApplied) {
+        return { kind: 'success', short: 'APPLIED', label: 'Already applied with this profile' };
+    }
+    const course = latestCourseFor(courses, {
+        jobLinkId,
+        profileId,
+        applicationId: chip?.application_id
+    });
     if (course) return courseRunStatus(course);
     if (ready) return { kind: 'unknown', short: 'CV READY', label: 'Ready CV — not bid yet' };
     return { kind: 'unknown', short: 'NO CV', label: 'No ready CV for this profile' };
@@ -1166,7 +1164,7 @@ export default function AutoBidderDialog({
     const pingLumi = useCallback(async () => {
         // Fast ping first — sendBidderExtensionCommand reinjects only if the bridge is dead.
         try {
-            const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_PING', 2500);
+            const res = await sendBidderExtensionCommand('JOB_APPLY_BIDDER_PING', 6000);
             const ver = res?.version || res?.result?.version || getLumiBridgeVersion() || '';
             setLumiVersion(ver || '');
             setLumiOk(versionAtLeast(ver, MIN_LUMI_VERSION));
@@ -1453,6 +1451,19 @@ export default function AutoBidderDialog({
                 const sameCourse = prev?.course?.id
                     && data?.course?.id
                     && String(prev.course.id) === String(data.course.id);
+                if (sameCourse && opts.silent) {
+                    if (!shots.length && (prev.screenshots || []).length) {
+                        data.screenshots = prev.screenshots;
+                    }
+                    if (!(data.field_attempts || []).length && (prev.field_attempts || []).length) {
+                        data.field_attempts = prev.field_attempts;
+                    }
+                    const prevAnswers = prev.course?.answers || [];
+                    const nextAnswers = data.course?.answers || [];
+                    if (!nextAnswers.length && prevAnswers.length && data.course) {
+                        data.course = { ...data.course, answers: prevAnswers };
+                    }
+                }
                 const keepSuccess = !!sameCourse && (
                     successLatchRef.current
                     || prev?.course?.outcome === 'applied'
@@ -1520,13 +1531,18 @@ export default function AutoBidderDialog({
 
     // When Lumi reinjects after Reload, pick up the new version without a page refresh.
     useEffect(() => {
-        if (!open) return undefined;
-        return listenForLumiBridgeReady(({ version }) => {
+        if (!open && !monitorActive) return undefined;
+        const unlistenReady = listenForLumiBridgeReady(({ version }) => {
             if (!version) return;
             setLumiVersion(version);
             setLumiOk(versionAtLeast(version, MIN_LUMI_VERSION));
         });
-    }, [open]);
+        const unlistenDown = listenForLumiBridgeDown(() => setLumiOk(false));
+        return () => {
+            unlistenReady();
+            unlistenDown();
+        };
+    }, [open, monitorActive]);
 
     useEffect(() => {
         if (!open && !monitorActive) return;
@@ -1592,9 +1608,11 @@ export default function AutoBidderDialog({
         const shotChanged = !!(shotAt && shotAt !== prevLiveShotAtRef.current);
         if (shotAt) prevLiveShotAtRef.current = shotAt;
         // Shot already uploaded → refresh now. Status-only → short wait for capture.
-        const delay = shotChanged ? 0 : 200;
+        // Wait until the capture is stored, then refresh. Status ticks do not
+        // replace the image; only a new shot does, and the old frame stays up.
+        const delay = shotChanged ? 1200 : 2500;
         const t = setTimeout(() => {
-            loadDetail(selectedId, { silent: true, bumpLive: true });
+            loadDetail(selectedId, { silent: true, bumpLive: shotChanged });
         }, delay);
         return () => clearTimeout(t);
     }, [
@@ -2774,6 +2792,16 @@ export default function AutoBidderDialog({
         ? monitorFrames[Math.min(monitorFrameIndex, monitorFrames.length - 1)]
         : null;
 
+    const coursesForMarks = useMemo(() => {
+        const live = detail?.course;
+        if (!live || String(live.outcome || '').toLowerCase() !== 'applied') return courses;
+        const idx = courses.findIndex((c) => String(c.id) === String(live.id));
+        if (idx < 0) return [live, ...courses];
+        const next = courses.slice();
+        next[idx] = { ...courses[idx], ...live, outcome: 'applied' };
+        return next;
+    }, [courses, detail]);
+
     const courseIdForShots = (
         detail?.course?.id && String(detail.course.id) === String(selectedId)
     ) ? detail.course.id : null;
@@ -3227,7 +3255,7 @@ export default function AutoBidderDialog({
                                 profileLabel={profileLabel}
                                 profileStatusSuffix={profileStatusSuffix}
                                 profileBidOutcome={profileBidOutcome}
-                                courses={courses}
+                                courses={coursesForMarks}
                                 jobLinkIds={jobLinkIds}
                                 readyPreview={readyPreview}
                                 bidReadyItems={bidReady}
@@ -3643,7 +3671,7 @@ export default function AutoBidderDialog({
                                             <div className="grid grid-cols-1 gap-4">
                                                 {reviewShots.map((s) => (
                                                     <AuthShot
-                                                        key={`${courseIdForShots}-${s.stage}-${s.filename}-${s.updated_ms || s.created_at || ''}`}
+                                                        key={`${courseIdForShots}-${s.stage}-${s.filename}`}
                                                         courseId={courseIdForShots}
                                                         filename={s.filename}
                                                         stage={s.stage}

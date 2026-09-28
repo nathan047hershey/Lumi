@@ -3056,7 +3056,11 @@ async function finishSuccessfulBid({
     endQueue = true
 } = {}) {
     const key = String(applicationId || tabId || '');
-    if (!key || successFinishStarted.has(key)) return;
+    if (!key) return;
+    if (successFinishStarted.has(key)) {
+        if (endQueue) await redirectToJobLinks();
+        return;
+    }
     successFinishStarted.add(key);
     await setQueueState(endQueue
         ? {
@@ -3715,8 +3719,10 @@ async function processReadyQueue(opts = {}) {
                 item.open_url = opts.openUrls[i];
             }
             if (String(item.status || '').toLowerCase() === 'applied') {
-                await clearFalseApplicationSuccess(item.id).catch(() => {});
-                item.status = 'pending';
+                await logCourseEvent(item.id, 'already_applied', {
+                    reason: 'one_profile_one_job'
+                }).catch(() => {});
+                continue;
             }
             if (selectedProfileId && Number(item.profile_id) !== selectedProfileId) {
                 await logCourseEvent(item.id, 'wrong_profile_blocked', {
@@ -4616,7 +4622,7 @@ async function processReadyQueue(opts = {}) {
                 eventType: 'run_verifying'
             }).catch(() => {});
             const fillIncompleteEarly = isFillIncomplete(fillStats);
-            await savePackage(item.id, [], {
+            await savePackage(item.id, fillStats?.answersList || [], {
                 filled: fillStats?.filled,
                 company: item.company_name,
                 role: item.job_role,
@@ -5264,11 +5270,17 @@ async function processReadyQueue(opts = {}) {
             openTabs.delete(tid);
         }
         const reviewHoldCount = manualReviewTabs.size;
-        if (!reviewHoldCount) {
+        const otpHoldCount = holdEmailOtpTabs.size;
+        if (!reviewHoldCount && !otpHoldCount) {
+            const ended = await getQueueState().catch(() => null);
+            const succeeded = /success|marked_applied|submit_success/i.test(
+                `${ended?.runState || ''} ${ended?.lastStatusEvent || ''}`
+            );
+            if (succeeded) await redirectToJobLinks();
+            else await refocusStayInAppHome();
+        } else if (!reviewHoldCount) {
             await refocusStayInAppHome();
         }
-
-        const otpHoldCount = holdEmailOtpTabs.size;
         const firstOtpTab = otpHoldCount ? [...holdEmailOtpTabs.keys()][0] : null;
         const firstOtpItem = firstOtpTab ? holdEmailOtpTabs.get(firstOtpTab) : null;
         const firstReviewTab = reviewHoldCount ? [...manualReviewTabs.keys()][0] : null;
@@ -8724,7 +8736,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
             });
         }
 
-        await savePackage(item.id, [], {
+        await savePackage(item.id, result.filledAnswers || [], {
             engine: engineLabel,
             filled: result.filled,
             requiredComplete: result.requiredComplete,
@@ -8735,7 +8747,7 @@ async function runBidderFillOnTabInner(tabId, item, prefs) {
         return {
             filled: result.filled || 0,
             submitClicked: !!result.submitClicked,
-            answersList: [],
+            answersList: result.filledAnswers || [],
             questionsList: [],
             submitStats: { clicked: !!result.submitClicked },
             engine: engineLabel,
@@ -11162,6 +11174,35 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
     return keep === true;
 });
 
+function bindPlatformSocket(port) {
+    if (port?.name !== 'lumi-platform') return;
+    try {
+        port.postMessage({
+            type: 'hello',
+            ok: true,
+            version: chrome.runtime.getManifest()?.version || '0',
+            extensionId: chrome.runtime.id
+        });
+    } catch (_) { /* socket already closed */ }
+}
+
+chrome.runtime.onConnect.addListener(bindPlatformSocket);
+chrome.runtime.onConnectExternal.addListener((port) => {
+    const origin = String(port.sender?.origin || port.sender?.url || '');
+    if (!isAllowedAppOrigin(origin)) {
+        try { port.disconnect(); } catch (_) { /* ignore */ }
+        return;
+    }
+    bindPlatformSocket(port);
+});
+
 // When the service worker wakes after an update/reload, try once.
 reinjectAppBridgeIntoAppTabs().catch(() => {});
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+    if (info.status !== 'complete' || !tab?.url || !isAppUrl(tab.url)) return;
+    chrome.scripting.executeScript({
+        target: { tabId },
+        files: ['content/app-bridge.js']
+    }).catch(() => {});
+});
 startLiveLink();

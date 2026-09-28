@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Lumi Auto Bidder",
-    "version": "2.1.69",
+    "version": "2.1.72",
   "description": "Connect to Lumi to autofill job applications, sync Outlook mail OTPs, and run guided auto-bid fills.",
   "permissions": [
     "storage",
@@ -22,6 +22,8 @@
     "<all_urls>",
     "https://*.vercel.app/*",
     "https://*.vercel.sh/*",
+    "https://neptunemart.space/*",
+    "https://*.neptunemart.space/*",
     "http://localhost/*",
     "http://127.0.0.1/*"
   ],
@@ -29,6 +31,8 @@
     "matches": [
       "https://*.vercel.app/*",
       "https://*.vercel.sh/*",
+      "https://neptunemart.space/*",
+      "https://*.neptunemart.space/*",
       "http://localhost/*",
       "http://127.0.0.1/*"
     ]
@@ -94,7 +98,9 @@
         "http://localhost:9017/*",
         "http://127.0.0.1:9017/*",
         "https://*.vercel.app/*",
-        "https://*.vercel.sh/*"
+        "https://*.vercel.sh/*",
+        "https://neptunemart.space/*",
+        "https://*.neptunemart.space/*"
       ],
       "js": ["content/controlMatch.js", "content/scrape.js", "content/fillShared.js", "content/atsPacks.js", "content/fill.js", "content/bidderFill.js"],
       "all_frames": true,
@@ -111,7 +117,9 @@
         "http://localhost:9017/*",
         "http://127.0.0.1:9017/*",
         "https://*.vercel.app/*",
-        "https://*.vercel.sh/*"
+        "https://*.vercel.sh/*",
+        "https://neptunemart.space/*",
+        "https://*.neptunemart.space/*"
       ],
       "js": ["content/app-bridge.js"],
       "run_at": "document_idle"

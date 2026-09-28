@@ -839,9 +839,64 @@ async function evalInTab(tabId, expression) {
     return res?.result?.value;
 }
 
+const FULL_PAGE_CAP = 16000;
+
+/** Document height plus any same-origin apply iframe, after layout. */
+async function measurePageExtent(tabId) {
+    const info = await evalInTab(tabId, `(() => {
+        const root = document.documentElement;
+        const body = document.body;
+        const docH = Math.max(root?.scrollHeight || 0, body?.scrollHeight || 0, root?.offsetHeight || 0);
+        const docW = Math.max(root?.scrollWidth || 0, body?.scrollWidth || 0, 800);
+        let frameH = 0;
+        for (const f of document.querySelectorAll('iframe')) {
+            let inner = 0;
+            try {
+                const d = f.contentDocument;
+                if (d) inner = Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0);
+            } catch (_) { /* cross-origin frame keeps its own box */ }
+            const top = f.getBoundingClientRect?.().top || 0;
+            frameH = Math.max(frameH, inner, f.scrollHeight || 0, Math.ceil(top + (f.offsetHeight || 0)));
+        }
+        return { docH, docW, frameH };
+    })()`);
+    return info || { docH: 0, docW: 1200, frameH: 0 };
+}
+
+/** Height of every frame, including a cross-origin Greenhouse embed. */
+async function measureFrameTreeHeight(tabId) {
+    let maxH = 0;
+    try {
+        const tree = await chrome.debugger.sendCommand({ tabId }, 'Page.getFrameTree');
+        const frames = [];
+        const walk = (node) => {
+            if (node?.frame?.id) frames.push(node.frame.id);
+            for (const child of node?.childFrames || []) walk(child);
+        };
+        walk(tree?.frameTree);
+        for (const frameId of frames) {
+            try {
+                const world = await chrome.debugger.sendCommand({ tabId }, 'Page.createIsolatedWorld', {
+                    frameId,
+                    worldName: 'lumi-page-measure'
+                });
+                const contextId = world?.executionContextId;
+                if (!contextId) continue;
+                const res = await chrome.debugger.sendCommand({ tabId }, 'Runtime.evaluate', {
+                    contextId,
+                    returnByValue: true,
+                    expression: 'Math.max(document.documentElement?.scrollHeight||0, document.body?.scrollHeight||0)'
+                });
+                maxH = Math.max(maxH, Number(res?.result?.value) || 0);
+            } catch (_) { /* frame may already be gone */ }
+        }
+    } catch (_) { /* frame tree is optional */ }
+    return maxH;
+}
+
 /** Stretch a Greenhouse/ATS iframe to its form height, capture, then put the height back. */
 async function withFullFormHeight(tabId, scrollHeight, run) {
-    const px = Math.max(900, Math.min(14000, Number(scrollHeight) || 0));
+    const px = Math.max(900, Math.min(FULL_PAGE_CAP, Number(scrollHeight) || 0));
     let stretched = false;
     try {
         const info = await evalInTab(tabId, `(() => {
@@ -850,9 +905,15 @@ async function withFullFormHeight(tabId, scrollHeight, run) {
             const target = frames.find((f) => /greenhouse|job_app|lever|ashby|myworkday|icims/i.test(f.src || ''))
                 || null;
             if (target) {
+                let inner = 0;
+                try {
+                    const d = target.contentDocument;
+                    if (d) inner = Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0);
+                } catch (_) { /* cross-origin: use the measured page height */ }
+                const h = Math.min(${FULL_PAGE_CAP}, Math.max(px, inner || 0));
                 target.dataset.lumiPrevH = target.style.height || '';
-                target.style.height = px + 'px';
-                return { stretched: true };
+                target.style.height = h + 'px';
+                return { stretched: true, pageH: h };
             }
             return { stretched: false, pageH: Math.max(document.documentElement.scrollHeight || 0, px) };
         })()`);
@@ -880,29 +941,67 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
     try {
         await chrome.debugger.sendCommand({ tabId }, 'Page.enable');
     } catch (_) { /* Page domain may already be enabled */ }
+    let metricsOverride = false;
     try {
-        return await withFullFormHeight(tabId, scrollHeight, async (pageH) => {
+        // A background tab often reports only the viewport until the surface is tall.
+        try {
+            await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
+                width: 1280,
+                height: 8000,
+                deviceScaleFactor: 1,
+                mobile: false
+            });
+            metricsOverride = true;
+            await new Promise((r) => setTimeout(r, 160));
+        } catch (_) { /* capture still tries the layout tree */ }
+        const extent = await measurePageExtent(tabId);
+        const frameTreeH = await measureFrameTreeHeight(tabId);
+        const fullH = Math.max(
+            900,
+            Math.min(
+                FULL_PAGE_CAP,
+                Math.ceil(Math.max(
+                    Number(extent?.docH) || 0,
+                    Number(extent?.frameH) || 0,
+                    Number(frameTreeH) || 0,
+                    Number(scrollHeight) || 0
+                ))
+            )
+        );
+        return await withFullFormHeight(tabId, fullH, async (pageH) => {
             let metrics = null;
             try {
                 metrics = await chrome.debugger.sendCommand({ tabId }, 'Page.getLayoutMetrics');
             } catch (_) { /* metrics optional */ }
             const css = metrics?.cssContentSize || metrics?.contentSize || {};
-            const width = Math.max(800, Math.min(1400, Math.ceil(Number(css.width) || 1200)));
+            const width = Math.max(800, Math.min(1400, Math.ceil(Number(css.width) || Number(extent?.docW) || 1200)));
             const height = Math.max(
-                900,
-                Math.min(14000, Math.ceil(Number(css.height) || Number(pageH) || Number(scrollHeight) || 1600))
+                fullH,
+                Math.min(FULL_PAGE_CAP, Math.ceil(Number(css.height) || Number(pageH) || fullH))
             );
+            if (metricsOverride) {
+                try {
+                    await chrome.debugger.sendCommand({ tabId }, 'Emulation.setDeviceMetricsOverride', {
+                        width,
+                        height,
+                        deviceScaleFactor: 1,
+                        mobile: false
+                    });
+                    await new Promise((r) => setTimeout(r, 120));
+                } catch (_) { /* keep the earlier override */ }
+            }
+            await evalInTab(tabId, `(() => { try { window.scrollTo(0, 0); } catch (_) {} return true; })()`).catch(() => {});
             // clip and captureBeyondViewport cannot be combined — Chrome rejects that call.
             // fromSurface fails on a tab that was never focused, so try the layout tree first.
             const shots = [
-                { format: 'jpeg', quality: 52, captureBeyondViewport: true, fromSurface: false },
+                { format: 'jpeg', quality: 48, captureBeyondViewport: true, fromSurface: false },
                 {
                     format: 'jpeg',
-                    quality: 50,
+                    quality: 46,
                     fromSurface: false,
-                    clip: { x: 0, y: 0, width, height: Math.min(height, 5000), scale: 1 }
+                    clip: { x: 0, y: 0, width, height, scale: 1 }
                 },
-                { format: 'jpeg', quality: 48, fromSurface: true }
+                { format: 'jpeg', quality: 44, fromSurface: true }
             ];
             for (const params of shots) {
                 try {
@@ -922,6 +1021,10 @@ async function captureViaDebugger(tabId, scrollHeight = 0) {
     } catch (err) {
         if (/chrome error page/i.test(String(err?.message || err))) throw err;
         return '';
+    } finally {
+        if (metricsOverride) {
+            await chrome.debugger.sendCommand({ tabId }, 'Emulation.clearDeviceMetricsOverride').catch(() => {});
+        }
     }
 }
 

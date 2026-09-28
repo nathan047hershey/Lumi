@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { NavLink, useLocation, useNavigate } from '@/next/router';
 import {
     Bot,
@@ -22,6 +22,7 @@ import {
     Mail
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
+import { keepLumiExtensionConnected } from '@/lib/bidderExtensionBridge';
 import BuildStamp from '@/components/BuildStamp';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -303,6 +304,8 @@ function Layout({ children }) {
             </div>
         </aside>
     );
+
+    useEffect(() => keepLumiExtensionConnected(), []);
 
     return (
         <div className="lumi-app flex h-screen overflow-hidden bg-[hsl(222_28%_6%)] text-white">

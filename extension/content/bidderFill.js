@@ -4325,8 +4325,18 @@
         }
 
         noteProgress();
+        const filledAnswers = collectFields()
+            .filter((f) => f && f.type !== 'password' && f.type !== 'hidden')
+            .map((f) => ({
+                id: f.id || '',
+                label: String(f.label || '').replace(/\s+/g, ' ').trim().slice(0, 180),
+                answer: String(readCurrentValue(f) || '').replace(/\s+/g, ' ').trim().slice(0, 500)
+            }))
+            .filter((row) => row.label && row.answer && !isPlaceholderValue(row.answer))
+            .slice(0, 60);
         return {
             ok: requiredComplete,
+            filledAnswers,
             engine: ENGINE,
             ats,
             filled,

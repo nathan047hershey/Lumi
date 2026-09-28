@@ -35,7 +35,7 @@ function publicBase(req) {
 
 function isServerlessOrNextHost(host) {
     const h = String(host || '');
-    if (/\.vercel\.app|\.vercel\.sh/i.test(h)) return true;
+    if (/\.vercel\.app|\.vercel\.sh|neptunemart\.space/i.test(h)) return true;
     // Next.js dev/prod on :3000 — no Express upgrade for /extension/live
     if (/:(3000)(?:$|,)/.test(h) || /^localhost:3000$/i.test(h) || /^127\.0\.0\.1:3000$/i.test(h)) {
         return true;

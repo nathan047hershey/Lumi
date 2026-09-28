@@ -49,7 +49,9 @@ export const APP_TAB_QUERY_PATTERNS = [
     'http://*:4173/*',
     'http://*:9017/*',
     'https://*.vercel.app/*',
-    'https://*.vercel.sh/*'
+    'https://*.vercel.sh/*',
+    'https://neptunemart.space/*',
+    'https://*.neptunemart.space/*'
 ];
 
 export function appOpenHint(frontendBaseUrl = '') {

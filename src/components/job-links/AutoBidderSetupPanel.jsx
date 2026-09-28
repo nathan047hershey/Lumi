@@ -227,7 +227,7 @@ export default function AutoBidderSetupPanel({
                             {selectedLinks.map((l) => {
                                 const ready = readyPreview.some((r) => Number(r.job_link_id) === Number(l.id));
                                 const ats = detectAtsFromUrl(primaryJobUrl(l));
-                                const outcome = linkOutcomeForProfile(courses, l.id, profileId, ready);
+                                const outcome = linkOutcomeForProfile(courses, l.id, profileId, ready, l);
                                 return (
                                     <li
                                         key={l.id}
